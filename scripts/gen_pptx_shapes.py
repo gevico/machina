@@ -26,9 +26,14 @@ FONT_CN = "微软雅黑"
 FONT_CODE = "Consolas"
 FOOTER_TEXT = "OS2ATC 2026 · AI 辅助编程分论坛"
 TOTAL_SLIDES = 18
-IMG_BG = os.environ.get("PPTX_BG", "/tmp/pptx_bg.png")
-IMG_LOGO = os.environ.get("PPTX_LOGO", "/tmp/pptx_logo.png")
-IMG_LOGO2 = os.environ.get("PPTX_LOGO2", "/tmp/pptx_logo2.png")
+_ASSETS = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                       "assets")
+IMG_BG = os.environ.get("PPTX_BG",
+                        os.path.join(_ASSETS, "bg.png"))
+IMG_LOGO = os.environ.get("PPTX_LOGO",
+                          os.path.join(_ASSETS, "logo.png"))
+IMG_LOGO2 = os.environ.get("PPTX_LOGO2",
+                           os.path.join(_ASSETS, "logo2.png"))
 
 E = Emu  # shorthand
 
