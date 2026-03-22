@@ -3,6 +3,8 @@ Generate os2atc-2026.pptx with native PowerPoint shapes
 instead of ASCII art code blocks.
 """
 
+import os
+
 from pptx import Presentation
 from pptx.util import Pt, Emu, Cm
 from pptx.dml.color import RGBColor
@@ -24,8 +26,26 @@ FONT_CN = "微软雅黑"
 FONT_CODE = "Consolas"
 FOOTER_TEXT = "OS2ATC 2026 · AI 辅助编程分论坛"
 TOTAL_SLIDES = 18
+IMG_BG = os.environ.get("PPTX_BG", "/tmp/pptx_bg.png")
+IMG_LOGO = os.environ.get("PPTX_LOGO", "/tmp/pptx_logo.png")
+IMG_LOGO2 = os.environ.get("PPTX_LOGO2", "/tmp/pptx_logo2.png")
 
 E = Emu  # shorthand
+
+_img_warned = set()
+
+
+def safe_add_picture(sl, path, left, top, width, height=None):
+    """Add picture if file exists, skip with warning otherwise."""
+    if not os.path.exists(path):
+        if path not in _img_warned:
+            print(f"  warn: {path} not found, skipping")
+            _img_warned.add(path)
+        return
+    args = [path, left, top, width]
+    if height is not None:
+        args.append(height)
+    sl.shapes.add_picture(*args)
 
 
 # ============================================================
@@ -79,9 +99,9 @@ def add_footer(sl, n, total):
 
 
 def add_logo(sl):
-    sl.shapes.add_picture("/tmp/pptx_logo2.png",
-                          E(10260000), E(108000),
-                          E(1368000), E(570610))
+    safe_add_picture(sl, IMG_LOGO2,
+                     E(10260000), E(108000),
+                     E(1368000), E(570610))
 
 
 def add_highlight_box(sl, text, left=540000, top=5400000,
@@ -991,11 +1011,11 @@ def build():
 
     # SLIDE 1: Cover
     sl = add_blank_slide(prs)
-    sl.shapes.add_picture("/tmp/pptx_bg.png", 0, 0,
-                          SLIDE_W, SLIDE_H)
-    sl.shapes.add_picture("/tmp/pptx_logo.png",
-                          E(720000), E(540000),
-                          E(1800000), E(750802))
+    safe_add_picture(sl, IMG_BG, 0, 0,
+                     SLIDE_W, SLIDE_H)
+    safe_add_picture(sl, IMG_LOGO,
+                     E(720000), E(540000),
+                     E(1800000), E(750802))
     t = add_textbox(sl, 720000, 1620000, 7200000, 900000)
     set_run(t.text_frame.paragraphs[0], "tcg-rs",
             font_name=FONT_CODE, size=Pt(52),
@@ -1268,11 +1288,11 @@ def build():
 
     # SLIDE 18: Q&A
     sl = add_blank_slide(prs)
-    sl.shapes.add_picture("/tmp/pptx_bg.png", 0, 0,
-                          SLIDE_W, SLIDE_H)
-    sl.shapes.add_picture("/tmp/pptx_logo.png",
-                          E(720000), E(540000),
-                          E(1800000), E(750802))
+    safe_add_picture(sl, IMG_BG, 0, 0,
+                     SLIDE_W, SLIDE_H)
+    safe_add_picture(sl, IMG_LOGO,
+                     E(720000), E(540000),
+                     E(1800000), E(750802))
     t = add_textbox(sl, 720000, 2160000, 7200000, 900000)
     set_run(t.text_frame.paragraphs[0], "谢谢！",
             size=Pt(52), bold=True, color=ACCENT)

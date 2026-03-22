@@ -6,6 +6,8 @@ All ASCII diagrams are built with helper functions to
 guarantee box alignment. No hand-counted spaces.
 """
 
+import os
+
 from pptx import Presentation
 from pptx.util import Pt, Emu
 from pptx.dml.color import RGBColor
@@ -25,6 +27,24 @@ FONT_CN = "微软雅黑"
 FONT_CODE = "Consolas"
 FOOTER_TEXT = "OS2ATC 2026 · AI 辅助编程分论坛"
 TOTAL_SLIDES = 18
+IMG_BG = os.environ.get("PPTX_BG", "/tmp/pptx_bg.png")
+IMG_LOGO = os.environ.get("PPTX_LOGO", "/tmp/pptx_logo.png")
+IMG_LOGO2 = os.environ.get("PPTX_LOGO2", "/tmp/pptx_logo2.png")
+
+_img_warned = set()
+
+
+def safe_add_picture(sl, path, left, top, width, height=None):
+    """Add picture if file exists, skip with warning otherwise."""
+    if not os.path.exists(path):
+        if path not in _img_warned:
+            print(f"  warn: {path} not found, skipping")
+            _img_warned.add(path)
+        return
+    args = [path, left, top, width]
+    if height is not None:
+        args.append(height)
+    sl.shapes.add_picture(*args)
 
 
 # ============================================================
@@ -813,8 +833,8 @@ def add_footer(slide, n, total):
 
 
 def add_logo(slide):
-    slide.shapes.add_picture(
-        "/tmp/pptx_logo2.png",
+    safe_add_picture(
+        slide, IMG_LOGO2,
         Emu(10260000), Emu(108000),
         Emu(1368000), Emu(570610))
 
@@ -1004,11 +1024,11 @@ def build():
 
     # SLIDE 1: Cover
     sl = add_blank_slide(prs)
-    sl.shapes.add_picture("/tmp/pptx_bg.png", 0, 0,
-                          SLIDE_W, SLIDE_H)
-    sl.shapes.add_picture("/tmp/pptx_logo.png",
-                          Emu(720000), Emu(540000),
-                          Emu(1800000), Emu(750802))
+    safe_add_picture(sl, IMG_BG, 0, 0,
+                     SLIDE_W, SLIDE_H)
+    safe_add_picture(sl, IMG_LOGO,
+                     Emu(720000), Emu(540000),
+                     Emu(1800000), Emu(750802))
     t = tb(sl, Emu(720000), Emu(1620000),
            Emu(7200000), Emu(900000))
     set_run(t.text_frame.paragraphs[0], "tcg-rs",
@@ -1339,11 +1359,11 @@ def build():
 
     # SLIDE 18: Q&A
     sl = add_blank_slide(prs)
-    sl.shapes.add_picture("/tmp/pptx_bg.png", 0, 0,
-                          SLIDE_W, SLIDE_H)
-    sl.shapes.add_picture("/tmp/pptx_logo.png",
-                          Emu(720000), Emu(540000),
-                          Emu(1800000), Emu(750802))
+    safe_add_picture(sl, IMG_BG, 0, 0,
+                     SLIDE_W, SLIDE_H)
+    safe_add_picture(sl, IMG_LOGO,
+                     Emu(720000), Emu(540000),
+                     Emu(1800000), Emu(750802))
     t = tb(sl, Emu(720000), Emu(2160000),
            Emu(7200000), Emu(900000))
     set_run(t.text_frame.paragraphs[0], "谢谢！",
