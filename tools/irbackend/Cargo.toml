@@ -1,12 +1,12 @@
 [package]
-name = "tcg-irbackend"
+name = "machina-irbackend"
 version = "0.1.0"
 edition = "2021"
 
 [[bin]]
-name = "tcg-irbackend"
+name = "machina-irbackend"
 path = "src/main.rs"
 
 [dependencies]
-tcg-core = { path = "../../core" }
-tcg-backend = { path = "../../backend" }
+machina-core = { path = "../../core" }
+machina-backend = { path = "../../backend" }

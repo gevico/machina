@@ -9,10 +9,10 @@ use std::fs;
 use std::io::{self, BufWriter, Write};
 use std::process;
 
-use tcg_backend::code_buffer::CodeBuffer;
-use tcg_backend::translate::translate;
-use tcg_backend::{HostCodeGen, X86_64CodeGen};
-use tcg_core::serialize;
+use machina_backend::code_buffer::CodeBuffer;
+use machina_backend::translate::translate;
+use machina_backend::{HostCodeGen, X86_64CodeGen};
+use machina_core::serialize;
 
 struct Args {
     ir_path: String,

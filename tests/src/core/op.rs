@@ -1,7 +1,7 @@
-use tcg_core::op::*;
-use tcg_core::opcode::Opcode;
-use tcg_core::temp::TempIdx;
-use tcg_core::types::{RegSet, Type};
+use machina_core::op::*;
+use machina_core::opcode::Opcode;
+use machina_core::temp::TempIdx;
+use machina_core::types::{RegSet, Type};
 
 #[test]
 fn op_new_defaults() {

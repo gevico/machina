@@ -10,14 +10,14 @@ use std::fs;
 use std::io::{self, BufWriter, Write};
 use std::process;
 
-use tcg_core::context::Context;
-use tcg_core::dump::dump_ops_with;
-use tcg_core::serialize;
-use tcg_core::TempIdx;
-use tcg_frontend::riscv::cpu::NUM_GPRS;
-use tcg_frontend::riscv::ext::RiscvCfg;
-use tcg_frontend::riscv::{RiscvDisasContext, RiscvTranslator};
-use tcg_frontend::{translator_loop, DisasJumpType, TranslatorOps};
+use machina_core::context::Context;
+use machina_core::dump::dump_ops_with;
+use machina_core::serialize;
+use machina_core::TempIdx;
+use machina_frontend::riscv::cpu::NUM_GPRS;
+use machina_frontend::riscv::ext::RiscvCfg;
+use machina_frontend::riscv::{RiscvDisasContext, RiscvTranslator};
+use machina_frontend::{translator_loop, DisasJumpType, TranslatorOps};
 
 const EM_RISCV: u16 = 243;
 
@@ -166,7 +166,7 @@ fn insn_annotation_riscv64(
         let half = (ptr as *const u16).read_unaligned();
         let len = if half & 0x3 != 0x3 { 2 } else { 4 };
         let data = std::slice::from_raw_parts(ptr, len);
-        let (asm, _) = tcg_disas::riscv::print_insn_riscv64(pc, data);
+        let (asm, _) = machina_disas::riscv::print_insn_riscv64(pc, data);
         if len == 2 {
             write!(w, "  {half:04x}      {asm}")
         } else {

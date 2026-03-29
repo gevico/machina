@@ -1,0 +1,8 @@
+[package]
+name = "machina-hw-intc"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+machina-core = { path = "../../core" }
+machina-hw-core = { path = "../core" }

@@ -11,6 +11,4 @@ mod frontend;
 #[cfg(test)]
 mod integration;
 #[cfg(test)]
-mod linux_user;
-#[cfg(test)]
 mod tools;

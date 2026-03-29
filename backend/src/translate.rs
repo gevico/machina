@@ -3,7 +3,7 @@ use crate::liveness::liveness_analysis;
 use crate::optimize::optimize;
 use crate::regalloc::regalloc_and_codegen;
 use crate::HostCodeGen;
-use tcg_core::Context;
+use machina_core::Context;
 
 /// Full translation pipeline: optimize → liveness → regalloc+codegen.
 /// Returns the offset where TB code starts in the buffer.
@@ -42,6 +42,6 @@ pub unsafe fn translate_and_execute(
     let raw = prologue_fn(env, tb_ptr);
     // Decode: strip the encoded TB index, return only the
     // exit code (slot number or exception code).
-    let (_, exit_code) = tcg_core::tb::decode_tb_exit(raw);
+    let (_, exit_code) = machina_core::tb::decode_tb_exit(raw);
     exit_code
 }

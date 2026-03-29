@@ -1,13 +1,12 @@
 [package]
-name = "tcg-tests"
+name = "machina-tests"
 version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-tcg-core = { path = "../core" }
-tcg-backend = { path = "../backend" }
-tcg-frontend = { path = "../frontend" }
-tcg-exec = { path = "../exec" }
-decode = { path = "../decode" }
-tcg-linux-user = { path = "../linux-user" }
+machina-core = { path = "../core" }
+machina-backend = { path = "../backend" }
+machina-frontend = { path = "../frontend" }
+machina-exec = { path = "../exec" }
+machina-decode = { path = "../decode" }
 libc = "0.2"

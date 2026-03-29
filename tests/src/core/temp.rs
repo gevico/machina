@@ -1,5 +1,5 @@
-use tcg_core::temp::*;
-use tcg_core::types::*;
+use machina_core::temp::*;
+use machina_core::types::*;
 
 #[test]
 fn temp_ebb_defaults() {

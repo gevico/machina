@@ -1,4 +1,4 @@
-use tcg_backend::code_buffer::CodeBuffer;
+use machina_backend::code_buffer::CodeBuffer;
 
 #[test]
 fn test_emit_and_read() {

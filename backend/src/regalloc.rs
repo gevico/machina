@@ -1,10 +1,10 @@
 use crate::code_buffer::CodeBuffer;
 use crate::constraint::OpConstraint;
 use crate::HostCodeGen;
-use tcg_core::label::RelocKind;
-use tcg_core::temp::TempKind;
-use tcg_core::types::{RegSet, TempVal};
-use tcg_core::{Context, OpFlags, Opcode, TempIdx, OPCODE_DEFS};
+use machina_core::label::RelocKind;
+use machina_core::temp::TempKind;
+use machina_core::types::{RegSet, TempVal};
+use machina_core::{Context, OpFlags, Opcode, TempIdx, OPCODE_DEFS};
 
 /// Register allocator state.
 struct RegAllocState {
@@ -241,7 +241,7 @@ fn regalloc_call(
     state: &mut RegAllocState,
     backend: &impl HostCodeGen,
     buf: &mut CodeBuffer,
-    op: &tcg_core::Op,
+    op: &machina_core::Op,
     ct: &OpConstraint,
 ) {
     let def = &OPCODE_DEFS[op.opc as usize];
@@ -400,7 +400,7 @@ fn regalloc_op(
     state: &mut RegAllocState,
     backend: &impl HostCodeGen,
     buf: &mut CodeBuffer,
-    op: &tcg_core::Op,
+    op: &machina_core::Op,
     ct: &OpConstraint,
 ) {
     let def = &OPCODE_DEFS[op.opc as usize];

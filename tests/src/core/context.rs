@@ -1,8 +1,8 @@
-use tcg_core::context::Context;
-use tcg_core::op::{Op, OpIdx};
-use tcg_core::opcode::Opcode;
-use tcg_core::temp::{TempIdx, TempKind};
-use tcg_core::types::{RegSet, Type};
+use machina_core::context::Context;
+use machina_core::op::{Op, OpIdx};
+use machina_core::opcode::Opcode;
+use machina_core::temp::{TempIdx, TempKind};
+use machina_core::types::{RegSet, Type};
 
 #[test]
 fn context_new_temp() {

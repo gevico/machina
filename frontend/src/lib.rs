@@ -5,7 +5,7 @@
 
 pub mod riscv;
 
-use tcg_core::Context;
+use machina_core::Context;
 
 // ---------------------------------------------------------------
 // Generic translation framework

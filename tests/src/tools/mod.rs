@@ -1,4 +1,4 @@
-//! Integration tests for tcg-irdump --emit-bin and tcg-irbackend.
+//! Integration tests for machina-irdump --emit-bin and machina-irbackend.
 
 use std::fs;
 use std::path::PathBuf;
@@ -19,7 +19,7 @@ fn guest_dhrystone() -> PathBuf {
 /// Build both tools before running tests.
 fn ensure_built() {
     let status = Command::new("cargo")
-        .args(["build", "-p", "tcg-irdump", "-p", "tcg-irbackend"])
+        .args(["build", "-p", "machina-irdump", "-p", "machina-irbackend"])
         .current_dir(project_root())
         .status()
         .expect("cargo build failed");
@@ -32,7 +32,7 @@ fn irdump_emit_bin_produces_file() {
     let tmp = "/tmp/tcg-test-irdump.tcgir";
     let _ = fs::remove_file(tmp);
 
-    let status = Command::new(bin_path("tcg-irdump"))
+    let status = Command::new(bin_path("machina-irdump"))
         .args([
             guest_dhrystone().to_str().unwrap(),
             "--emit-bin",
@@ -41,8 +41,8 @@ fn irdump_emit_bin_produces_file() {
             "2",
         ])
         .status()
-        .expect("tcg-irdump failed to run");
-    assert!(status.success(), "tcg-irdump exited with error");
+        .expect("machina-irdump failed to run");
+    assert!(status.success(), "machina-irdump exited with error");
 
     let data = fs::read(tmp).expect("output file missing");
     // Verify magic header
@@ -59,7 +59,7 @@ fn irbackend_hex_dump() {
     let _ = fs::remove_file(tmp_ir);
 
     // Generate IR
-    let status = Command::new(bin_path("tcg-irdump"))
+    let status = Command::new(bin_path("machina-irdump"))
         .args([
             guest_dhrystone().to_str().unwrap(),
             "--emit-bin",
@@ -68,17 +68,17 @@ fn irbackend_hex_dump() {
             "1",
         ])
         .status()
-        .expect("tcg-irdump failed");
+        .expect("machina-irdump failed");
     assert!(status.success());
 
     // Run backend
-    let output = Command::new(bin_path("tcg-irbackend"))
+    let output = Command::new(bin_path("machina-irbackend"))
         .arg(tmp_ir)
         .output()
-        .expect("tcg-irbackend failed");
+        .expect("machina-irbackend failed");
     assert!(
         output.status.success(),
-        "tcg-irbackend failed: {}",
+        "machina-irbackend failed: {}",
         String::from_utf8_lossy(&output.stderr)
     );
 
@@ -101,7 +101,7 @@ fn irbackend_raw_output() {
     let _ = fs::remove_file(tmp_bin);
 
     // Generate IR
-    let status = Command::new(bin_path("tcg-irdump"))
+    let status = Command::new(bin_path("machina-irdump"))
         .args([
             guest_dhrystone().to_str().unwrap(),
             "--emit-bin",
@@ -110,14 +110,14 @@ fn irbackend_raw_output() {
             "1",
         ])
         .status()
-        .expect("tcg-irdump failed");
+        .expect("machina-irdump failed");
     assert!(status.success());
 
     // Run backend with --raw -o
-    let status = Command::new(bin_path("tcg-irbackend"))
+    let status = Command::new(bin_path("machina-irbackend"))
         .args([tmp_ir, "--raw", "-o", tmp_bin])
         .status()
-        .expect("tcg-irbackend failed");
+        .expect("machina-irbackend failed");
     assert!(status.success());
 
     let data = fs::read(tmp_bin).expect("raw output missing");
@@ -134,7 +134,7 @@ fn irbackend_multiple_tbs() {
     let _ = fs::remove_file(tmp_ir);
 
     // Generate 5 TBs
-    let status = Command::new(bin_path("tcg-irdump"))
+    let status = Command::new(bin_path("machina-irdump"))
         .args([
             guest_dhrystone().to_str().unwrap(),
             "--emit-bin",
@@ -143,16 +143,16 @@ fn irbackend_multiple_tbs() {
             "5",
         ])
         .status()
-        .expect("tcg-irdump failed");
+        .expect("machina-irdump failed");
     assert!(status.success());
 
-    let output = Command::new(bin_path("tcg-irbackend"))
+    let output = Command::new(bin_path("machina-irbackend"))
         .arg(tmp_ir)
         .output()
-        .expect("tcg-irbackend failed");
+        .expect("machina-irbackend failed");
     assert!(
         output.status.success(),
-        "tcg-irbackend failed: {}",
+        "machina-irbackend failed: {}",
         String::from_utf8_lossy(&output.stderr)
     );
 

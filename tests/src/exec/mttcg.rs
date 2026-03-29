@@ -3,16 +3,16 @@
 use std::sync::Arc;
 use std::thread;
 
-use tcg_backend::X86_64CodeGen;
-use tcg_core::context::Context;
-use tcg_core::tb::EXCP_ECALL;
-use tcg_core::TempIdx;
-use tcg_exec::exec_loop::{cpu_exec_loop_mt, ExitReason};
-use tcg_exec::{ExecEnv, GuestCpu, PerCpuState, SharedState};
-use tcg_frontend::riscv::cpu::RiscvCpu;
-use tcg_frontend::riscv::ext::RiscvCfg;
-use tcg_frontend::riscv::{RiscvDisasContext, RiscvTranslator};
-use tcg_frontend::{translator_loop, DisasJumpType, TranslatorOps};
+use machina_backend::X86_64CodeGen;
+use machina_core::context::Context;
+use machina_core::tb::EXCP_ECALL;
+use machina_core::TempIdx;
+use machina_exec::exec_loop::{cpu_exec_loop_mt, ExitReason};
+use machina_exec::{ExecEnv, GuestCpu, PerCpuState, SharedState};
+use machina_frontend::riscv::cpu::RiscvCpu;
+use machina_frontend::riscv::ext::RiscvCfg;
+use machina_frontend::riscv::{RiscvDisasContext, RiscvTranslator};
+use machina_frontend::{translator_loop, DisasJumpType, TranslatorOps};
 
 const NUM_GPRS: usize = 32;
 
@@ -121,8 +121,8 @@ fn ecall() -> u32 {
 
 fn new_per_cpu() -> PerCpuState {
     PerCpuState {
-        jump_cache: tcg_core::tb::JumpCache::new(),
-        stats: tcg_exec::ExecStats::default(),
+        jump_cache: machina_core::tb::JumpCache::new(),
+        stats: machina_exec::ExecStats::default(),
     }
 }
 

@@ -1,6 +1,6 @@
-use tcg_core::op::MAX_OP_ARGS;
-use tcg_core::opcode::*;
-use tcg_core::types::Type;
+use machina_core::op::MAX_OP_ARGS;
+use machina_core::opcode::*;
+use machina_core::types::Type;
 
 fn assert_def(
     opc: Opcode,

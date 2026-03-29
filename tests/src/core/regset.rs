@@ -1,4 +1,4 @@
-use tcg_core::types::RegSet;
+use machina_core::types::RegSet;
 
 macro_rules! regset_set_contains_tests {
     ($( $name:ident: $reg:expr, )+ $(,)?) => {

@@ -1,4 +1,4 @@
-use decode::*;
+use machina_decode::*;
 
 fn parse(input: &str) -> Result<Parsed, String> {
     parse_with_width(input, 32)

@@ -3,9 +3,9 @@ use std::sync::atomic::Ordering;
 use crate::{
     ExecEnv, GuestCpu, PerCpuState, SharedState, MIN_CODE_BUF_REMAINING,
 };
-use tcg_backend::translate::translate;
-use tcg_backend::HostCodeGen;
-use tcg_core::tb::{decode_tb_exit, EXIT_TARGET_NONE, TB_EXIT_NOCHAIN};
+use machina_backend::translate::translate;
+use machina_backend::HostCodeGen;
+use machina_core::tb::{decode_tb_exit, EXIT_TARGET_NONE, TB_EXIT_NOCHAIN};
 
 /// Reason the execution loop exited.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -194,7 +194,7 @@ where
     let guest_size = cpu.gen_code(
         &mut guard.ir_ctx,
         pc,
-        tcg_core::tb::TranslationBlock::max_insns(0),
+        machina_core::tb::TranslationBlock::max_insns(0),
     );
     unsafe {
         shared.tb_store.get_mut(tb_idx).size = guest_size;

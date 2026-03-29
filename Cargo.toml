@@ -6,9 +6,26 @@ members = [
     "decode",
     "disas",
     "exec",
-    "linux-user",
     "tests",
     "tools/irdump",
     "tools/irbackend",
+    "util",
+    "memory",
+    "monitor",
+    "system",
+    "hw/core",
+    "hw/intc",
+    "hw/char",
+    "hw/riscv",
+    "tests/mtest",
 ]
 resolver = "2"
+
+[package]
+name = "machina"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "machina"
+path = "src/main.rs"

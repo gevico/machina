@@ -1,4 +1,4 @@
-use tcg_core::tb::*;
+use machina_core::tb::*;
 
 #[test]
 fn tb_new() {

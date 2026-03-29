@@ -1,13 +1,13 @@
 [package]
-name = "tcg-irdump"
+name = "machina-irdump"
 version = "0.1.0"
 edition = "2021"
 
 [[bin]]
-name = "tcg-irdump"
+name = "machina-irdump"
 path = "src/main.rs"
 
 [dependencies]
-tcg-core = { path = "../../core" }
-tcg-disas = { path = "../../disas" }
-tcg-frontend = { path = "../../frontend" }
+machina-core = { path = "../../core" }
+machina-disas = { path = "../../disas" }
+machina-frontend = { path = "../../frontend" }

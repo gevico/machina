@@ -10,8 +10,8 @@ mod trans;
 use crate::{DisasContextBase, DisasJumpType, TranslatorOps};
 use cpu::{gpr_offset, LOAD_RES_OFFSET, LOAD_VAL_OFFSET, NUM_GPRS, PC_OFFSET};
 use ext::RiscvCfg;
-use tcg_core::tb::{EXCP_UNDEF, TB_EXIT_IDX0};
-use tcg_core::{Context, TempIdx, Type};
+use machina_core::tb::{EXCP_UNDEF, TB_EXIT_IDX0};
+use machina_core::{Context, TempIdx, Type};
 
 // ---------------------------------------------------------------
 // Disassembly context

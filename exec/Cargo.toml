@@ -1,8 +1,8 @@
 [package]
-name = "tcg-exec"
+name = "machina-exec"
 version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-tcg-core = { path = "../core" }
-tcg-backend = { path = "../backend" }
+machina-core = { path = "../core" }
+machina-backend = { path = "../backend" }

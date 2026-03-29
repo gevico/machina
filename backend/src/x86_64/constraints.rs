@@ -1,12 +1,12 @@
 use crate::constraint::*;
 use crate::x86_64::regs::{Reg, ALLOCATABLE_REGS};
-use tcg_core::Opcode;
+use machina_core::Opcode;
 
-const R: tcg_core::RegSet = ALLOCATABLE_REGS;
-const R_NO_RCX: tcg_core::RegSet = tcg_core::RegSet::from_raw(
+const R: machina_core::RegSet = ALLOCATABLE_REGS;
+const R_NO_RCX: machina_core::RegSet = machina_core::RegSet::from_raw(
     ALLOCATABLE_REGS.raw() & !(1u64 << Reg::Rcx as u64),
 );
-const R_NO_RAX_RDX: tcg_core::RegSet = tcg_core::RegSet::from_raw(
+const R_NO_RAX_RDX: machina_core::RegSet = machina_core::RegSet::from_raw(
     ALLOCATABLE_REGS.raw()
         & !((1u64 << Reg::Rax as u64) | (1u64 << Reg::Rdx as u64)),
 );

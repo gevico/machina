@@ -17,10 +17,10 @@ use std::cell::UnsafeCell;
 use std::fmt;
 use std::sync::{Arc, Mutex};
 
-use tcg_backend::code_buffer::CodeBuffer;
-use tcg_backend::HostCodeGen;
-use tcg_core::tb::JumpCache;
-use tcg_core::Context;
+use machina_backend::code_buffer::CodeBuffer;
+use machina_backend::HostCodeGen;
+use machina_core::tb::JumpCache;
+use machina_core::Context;
 
 /// Execution statistics for profiling the TB lookup/chain
 /// pipeline.
@@ -94,6 +94,35 @@ pub trait GuestCpu {
     fn get_flags(&self) -> u32;
     fn gen_code(&mut self, ir: &mut Context, pc: u64, max_insns: u32) -> u32;
     fn env_ptr(&mut self) -> *mut u8;
+
+    // -- Full-system methods (default no-op) --
+
+    fn pending_interrupt(&self) -> bool {
+        false
+    }
+    fn is_halted(&self) -> bool {
+        false
+    }
+    fn set_halted(&mut self, _halted: bool) {}
+    fn privilege_level(&self) -> u8 {
+        0
+    }
+    fn handle_interrupt(&mut self) {}
+    fn handle_exception(&mut self, _excp: u32, _tval: u64) {}
+    fn tlb_flush(&mut self) {}
+    fn tlb_flush_page(&mut self, _vpn: u64) {}
+    fn gdb_read_registers(&self, _buf: &mut [u8]) -> usize {
+        0
+    }
+    fn gdb_write_registers(&mut self, _buf: &[u8]) -> usize {
+        0
+    }
+    fn gdb_read_register(&self, _reg: usize, _buf: &mut [u8]) -> usize {
+        0
+    }
+    fn gdb_write_register(&mut self, _reg: usize, _buf: &[u8]) -> usize {
+        0
+    }
 }
 
 /// State protected by translate_lock.

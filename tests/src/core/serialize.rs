@@ -1,11 +1,11 @@
 use std::io::Cursor;
 
-use tcg_core::context::Context;
-use tcg_core::op::Op;
-use tcg_core::opcode::Opcode;
-use tcg_core::serialize;
-use tcg_core::temp::TempIdx;
-use tcg_core::types::Type;
+use machina_core::context::Context;
+use machina_core::op::Op;
+use machina_core::opcode::Opcode;
+use machina_core::serialize;
+use machina_core::temp::TempIdx;
+use machina_core::types::Type;
 
 /// Helper: serialize a Context, then deserialize and return
 /// the first Context from the result.
@@ -56,14 +56,14 @@ fn serialize_globals_only() {
 
     // Fixed temp
     let t0 = out.temp(TempIdx(0));
-    assert_eq!(t0.kind, tcg_core::TempKind::Fixed);
+    assert_eq!(t0.kind, machina_core::TempKind::Fixed);
     assert_eq!(t0.ty, Type::I64);
     assert_eq!(t0.reg, Some(5));
     assert_eq!(t0.name, Some("env"));
 
     // Global temp
     let t1 = out.temp(TempIdx(1));
-    assert_eq!(t1.kind, tcg_core::TempKind::Global);
+    assert_eq!(t1.kind, machina_core::TempKind::Global);
     assert_eq!(t1.mem_base, Some(TempIdx(0)));
     assert_eq!(t1.mem_offset, 8);
     assert_eq!(t1.name, Some("pc"));
@@ -120,7 +120,7 @@ fn serialize_full_tb() {
 
     // Verify const temp
     let ct = out.temp(TempIdx(5));
-    assert_eq!(ct.kind, tcg_core::TempKind::Const);
+    assert_eq!(ct.kind, machina_core::TempKind::Const);
     assert_eq!(ct.val, 42);
 
     // Verify ops
@@ -151,7 +151,7 @@ fn serialize_labels_and_branches() {
     op0.nargs = 4;
     op0.args[0] = x1;
     op0.args[1] = x2;
-    op0.args[2] = TempIdx(tcg_core::Cond::Eq as u32);
+    op0.args[2] = TempIdx(machina_core::Cond::Eq as u32);
     op0.args[3] = TempIdx(label);
     ctx.emit_op(op0);
 

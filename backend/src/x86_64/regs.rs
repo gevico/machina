@@ -1,4 +1,4 @@
-use tcg_core::RegSet;
+use machina_core::RegSet;
 
 /// x86-64 general-purpose register indices.
 ///

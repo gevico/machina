@@ -42,10 +42,11 @@ pub trait HostCodeGen {
 
     /// Initialize a translation context with backend-specific
     /// settings (reserved registers, stack frame layout, etc.).
-    fn init_context(&self, ctx: &mut tcg_core::Context);
+    fn init_context(&self, ctx: &mut machina_core::Context);
 
     /// Return the register constraint for an opcode.
-    fn op_constraint(&self, opc: tcg_core::Opcode) -> &'static OpConstraint;
+    fn op_constraint(&self, opc: machina_core::Opcode)
+        -> &'static OpConstraint;
 
     // -- Register allocator primitives --
 
@@ -53,7 +54,7 @@ pub trait HostCodeGen {
     fn tcg_out_mov(
         &self,
         buf: &mut CodeBuffer,
-        ty: tcg_core::Type,
+        ty: machina_core::Type,
         dst: u8,
         src: u8,
     );
@@ -62,7 +63,7 @@ pub trait HostCodeGen {
     fn tcg_out_movi(
         &self,
         buf: &mut CodeBuffer,
-        ty: tcg_core::Type,
+        ty: machina_core::Type,
         dst: u8,
         val: u64,
     );
@@ -71,7 +72,7 @@ pub trait HostCodeGen {
     fn tcg_out_ld(
         &self,
         buf: &mut CodeBuffer,
-        ty: tcg_core::Type,
+        ty: machina_core::Type,
         dst: u8,
         base: u8,
         offset: i64,
@@ -81,7 +82,7 @@ pub trait HostCodeGen {
     fn tcg_out_st(
         &self,
         buf: &mut CodeBuffer,
-        ty: tcg_core::Type,
+        ty: machina_core::Type,
         src: u8,
         base: u8,
         offset: i64,
@@ -94,8 +95,8 @@ pub trait HostCodeGen {
     fn tcg_out_op(
         &self,
         buf: &mut CodeBuffer,
-        ctx: &tcg_core::Context,
-        op: &tcg_core::Op,
+        ctx: &machina_core::Context,
+        op: &machina_core::Op,
         oregs: &[u8],
         iregs: &[u8],
         cargs: &[u32],

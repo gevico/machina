@@ -1,0 +1,9 @@
+[package]
+name = "machina-hw-riscv"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+machina-core = { path = "../../core" }
+machina-hw-core = { path = "../core" }
+machina-memory = { path = "../../memory" }

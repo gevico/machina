@@ -1,4 +1,4 @@
-use tcg_core::types::*;
+use machina_core::types::*;
 
 #[test]
 fn type_sizes() {

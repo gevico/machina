@@ -1,4 +1,4 @@
 [package]
-name = "decode"
+name = "machina-decode"
 version = "0.1.0"
 edition = "2021"

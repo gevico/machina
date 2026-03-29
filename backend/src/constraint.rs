@@ -1,5 +1,5 @@
-use tcg_core::op::MAX_OP_ARGS;
-use tcg_core::RegSet;
+use machina_core::op::MAX_OP_ARGS;
+use machina_core::RegSet;
 
 /// Constraint for a single argument of an IR op.
 ///

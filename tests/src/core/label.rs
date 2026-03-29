@@ -1,4 +1,4 @@
-use tcg_core::label::*;
+use machina_core::label::*;
 
 #[test]
 fn label_new() {

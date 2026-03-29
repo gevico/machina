@@ -5,7 +5,7 @@ use crate::x86_64::regs::{
     Reg, CALLEE_SAVED, CALL_ARG_REGS, STACK_ADDEND, STATIC_CALL_ARGS_SIZE,
 };
 use crate::HostCodeGen;
-use tcg_core::{Cond, Context, Op, Opcode, Type};
+use machina_core::{Cond, Context, Op, Opcode, Type};
 
 impl HostCodeGen for X86_64CodeGen {
     fn op_constraint(&self, opc: Opcode) -> &'static OpConstraint {
@@ -63,7 +63,7 @@ impl HostCodeGen for X86_64CodeGen {
         self.tb_ret_offset
     }
 
-    fn init_context(&self, ctx: &mut tcg_core::Context) {
+    fn init_context(&self, ctx: &mut machina_core::Context) {
         use crate::x86_64::regs;
         ctx.reserved_regs = regs::RESERVED_REGS;
         ctx.set_frame(
@@ -316,7 +316,7 @@ impl HostCodeGen for X86_64CodeGen {
             }
             Opcode::ExitTb => {
                 let val = cargs[0] as u64;
-                let encoded = tcg_core::tb::encode_tb_exit(ctx.tb_idx, val);
+                let encoded = machina_core::tb::encode_tb_exit(ctx.tb_idx, val);
                 self.emit_exit_tb(buf, encoded);
             }
             Opcode::GotoTb => {

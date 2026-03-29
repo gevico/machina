@@ -4,16 +4,16 @@
 
 mod difftest;
 
-use tcg_backend::code_buffer::CodeBuffer;
-use tcg_backend::translate::translate_and_execute;
-use tcg_backend::HostCodeGen;
-use tcg_backend::X86_64CodeGen;
-use tcg_core::tb::{EXCP_EBREAK, EXCP_ECALL, EXCP_UNDEF};
-use tcg_core::Context;
-use tcg_frontend::riscv::cpu::RiscvCpu;
-use tcg_frontend::riscv::ext::{MisaExt, RiscvCfg};
-use tcg_frontend::riscv::{RiscvDisasContext, RiscvTranslator};
-use tcg_frontend::translator_loop;
+use machina_backend::code_buffer::CodeBuffer;
+use machina_backend::translate::translate_and_execute;
+use machina_backend::HostCodeGen;
+use machina_backend::X86_64CodeGen;
+use machina_core::tb::{EXCP_EBREAK, EXCP_ECALL, EXCP_UNDEF};
+use machina_core::Context;
+use machina_frontend::riscv::cpu::RiscvCpu;
+use machina_frontend::riscv::ext::{MisaExt, RiscvCfg};
+use machina_frontend::riscv::{RiscvDisasContext, RiscvTranslator};
+use machina_frontend::translator_loop;
 
 // ── Instruction encoding helpers ──────────────────────────────
 

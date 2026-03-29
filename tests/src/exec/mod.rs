@@ -2,16 +2,16 @@
 
 mod mttcg;
 
-use tcg_backend::X86_64CodeGen;
-use tcg_core::context::Context;
-use tcg_core::tb::{EXCP_EBREAK, EXCP_ECALL};
-use tcg_core::TempIdx;
-use tcg_exec::exec_loop::{cpu_exec_loop, ExitReason};
-use tcg_exec::{ExecEnv, GuestCpu};
-use tcg_frontend::riscv::cpu::RiscvCpu;
-use tcg_frontend::riscv::ext::RiscvCfg;
-use tcg_frontend::riscv::{RiscvDisasContext, RiscvTranslator};
-use tcg_frontend::{translator_loop, DisasJumpType, TranslatorOps};
+use machina_backend::X86_64CodeGen;
+use machina_core::context::Context;
+use machina_core::tb::{EXCP_EBREAK, EXCP_ECALL};
+use machina_core::TempIdx;
+use machina_exec::exec_loop::{cpu_exec_loop, ExitReason};
+use machina_exec::{ExecEnv, GuestCpu};
+use machina_frontend::riscv::cpu::RiscvCpu;
+use machina_frontend::riscv::ext::RiscvCfg;
+use machina_frontend::riscv::{RiscvDisasContext, RiscvTranslator};
+use machina_frontend::{translator_loop, DisasJumpType, TranslatorOps};
 
 /// Test wrapper: RiscvCpu + guest code buffer.
 struct TestCpu {

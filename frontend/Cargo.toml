@@ -1,11 +1,11 @@
 [package]
-name = "tcg-frontend"
+name = "machina-frontend"
 version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-tcg-core = { path = "../core" }
+machina-core = { path = "../core" }
 libc = "0.2"
 
 [build-dependencies]
-decode = { path = "../decode" }
+machina-decode = { path = "../decode" }
