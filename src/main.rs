@@ -4,14 +4,18 @@ use std::env;
 use std::path::PathBuf;
 use std::process;
 
+use machina_accel::exec::ExecEnv;
+use machina_accel::X86_64CodeGen;
 use machina_core::machine::{Machine, MachineOpts};
 use machina_hw_riscv::ref_machine::RefMachine;
+use machina_system::{CpuManager, FullSystemCpu};
 
 fn usage() {
     eprintln!("Usage: machina [options]");
     eprintln!("Options:");
     eprintln!(
-        "  -M machine    Machine type (default: riscv64-ref)"
+        "  -M machine    Machine type \
+         (default: riscv64-ref)"
     );
     eprintln!("  -m size       RAM size in MiB (default: 128)");
     eprintln!("  -bios path    BIOS/firmware binary");
@@ -25,6 +29,7 @@ struct CliArgs {
     ram_mib: u64,
     bios: Option<PathBuf>,
     kernel: Option<PathBuf>,
+    #[allow(dead_code)]
     nographic: bool,
 }
 
@@ -48,15 +53,12 @@ fn parse_args() -> Result<CliArgs, String> {
         match args[i].as_str() {
             "-M" | "-machine" => {
                 i += 1;
-                cli.machine = args
-                    .get(i)
-                    .ok_or("-M requires argument")?
-                    .clone();
+                cli.machine =
+                    args.get(i).ok_or("-M requires argument")?.clone();
             }
             "-m" => {
                 i += 1;
-                let s =
-                    args.get(i).ok_or("-m requires argument")?;
+                let s = args.get(i).ok_or("-m requires argument")?;
                 cli.ram_mib = s
                     .trim_end_matches('M')
                     .parse::<u64>()
@@ -88,10 +90,7 @@ fn parse_args() -> Result<CliArgs, String> {
                 process::exit(0);
             }
             other => {
-                return Err(format!(
-                    "Unknown option: {}",
-                    other
-                ));
+                return Err(format!("Unknown option: {}", other));
             }
         }
         i += 1;
@@ -108,6 +107,20 @@ fn main() {
             process::exit(1);
         }
     };
+
+    // Validate machine type.
+    if cli.machine == "?" {
+        eprintln!("Available machines:");
+        eprintln!(
+            "  riscv64-ref    \
+             RISC-V reference machine"
+        );
+        process::exit(0);
+    }
+    if cli.machine != "riscv64-ref" {
+        eprintln!("machina: unknown machine: {}", cli.machine);
+        process::exit(1);
+    }
 
     let mut machine = RefMachine::new();
 
@@ -141,19 +154,34 @@ fn main() {
         opts.cpu_count
     );
 
-    // Enter execution. The full-system execution loop
-    // requires a GuestCpu implementation that bridges
-    // RiscvCpu with the machine's AddressSpace for
-    // instruction fetch. This will be provided by
-    // system/src/cpus.rs once the translator integration
-    // is complete. For now, print the boot state and exit.
-    let cpus = machine.cpus_shared();
-    let cpus_lock = cpus.lock().unwrap();
-    if let Some(cpu) = cpus_lock.get(0) {
-        eprintln!(
-            "machina: cpu0 pc=0x{:x} priv={:?}",
-            cpu.pc, cpu.priv_level
-        );
-    }
-    eprintln!("machina: boot complete, cpu state initialized");
+    // Create JIT backend and execution environment.
+    let backend = X86_64CodeGen::new();
+    let env = ExecEnv::new(backend);
+    let shared = env.shared.clone();
+
+    // Take ownership of cpu0 from the machine.
+    let cpus_arc = machine.cpus_shared();
+    let cpu = {
+        let mut lock = cpus_arc.lock().unwrap();
+        lock.remove(0)
+    };
+
+    // Get RAM pointer from machine.
+    let ram_ptr = machine.ram_ptr();
+    let ram_size = machine.ram_size();
+
+    // Build full-system CPU bridge.
+    let mut fs_cpu = unsafe { FullSystemCpu::new(cpu, ram_ptr, ram_size) };
+
+    let cpu_mgr = CpuManager::new();
+
+    eprintln!(
+        "machina: cpu0 pc=0x{:x}, entering execution loop",
+        fs_cpu.cpu.pc
+    );
+
+    // Block in the execution loop.
+    let exit = unsafe { cpu_mgr.run_cpu(&mut fs_cpu, &shared) };
+
+    eprintln!("machina: execution exited: {:?}", exit);
 }

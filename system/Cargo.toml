@@ -6,3 +6,4 @@ edition = "2021"
 [dependencies]
 machina-core = { path = "../core" }
 machina-accel = { path = "../accel" }
+machina-guest-riscv = { path = "../guest/riscv" }

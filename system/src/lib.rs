@@ -1,4 +1,8 @@
-// CpuManager: orchestrates vCPU execution threads.
+// machina-system: CPU management and GuestCpu bridge.
+
+pub mod cpus;
+
+pub use cpus::FullSystemCpu;
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;

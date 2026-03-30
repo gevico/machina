@@ -208,6 +208,11 @@ impl RefMachine {
         self.cpus.clone()
     }
 
+    /// Host pointer to the start of guest RAM.
+    pub fn ram_ptr(&self) -> *const u8 {
+        self.ram_block().as_ptr() as *const u8
+    }
+
     /// UART → PLIC IRQ line reference.
     pub fn uart_irq(&self) -> &IrqLine {
         self.uart_irq.as_ref().expect("machine not initialized")
