@@ -6,7 +6,7 @@
 // pending_interrupt().
 
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Condvar, Mutex};
 
 use machina_accel::ir::context::Context;
 use machina_accel::ir::TempIdx;
@@ -34,6 +34,50 @@ pub fn new_shared_mip() -> SharedMip {
     Arc::new(AtomicU64::new(0))
 }
 
+/// WFI wakeup condvar. Device IRQ sinks should notify
+/// this after updating SharedMip to wake a halted CPU.
+pub struct WfiWaker {
+    mu: Mutex<bool>,
+    cv: Condvar,
+}
+
+impl WfiWaker {
+    pub fn new() -> Self {
+        Self {
+            mu: Mutex::new(false),
+            cv: Condvar::new(),
+        }
+    }
+
+    /// Called by device IRQ sinks to wake halted CPU.
+    pub fn wake(&self) {
+        let mut notified = self.mu.lock().unwrap();
+        *notified = true;
+        self.cv.notify_all();
+    }
+
+    /// Wait for a wakeup signal with timeout.
+    /// Returns true if woken by signal, false on timeout.
+    pub fn wait_timeout(
+        &self,
+        timeout: std::time::Duration,
+    ) -> bool {
+        let mut notified = self.mu.lock().unwrap();
+        if *notified {
+            *notified = false;
+            return true;
+        }
+        let (guard, result) =
+            self.cv.wait_timeout(notified, timeout).unwrap();
+        let woken = *guard || !result.timed_out();
+        drop(guard);
+        // Reset for next wait.
+        let mut n = self.mu.lock().unwrap();
+        *n = false;
+        woken
+    }
+}
+
 /// Full-system CPU wrapper bridging RiscvCpu to the
 /// execution loop via the GuestCpu trait.
 pub struct FullSystemCpu {
@@ -41,6 +85,7 @@ pub struct FullSystemCpu {
     ram_ptr: *const u8,
     ram_size: u64,
     shared_mip: SharedMip,
+    wfi_waker: Arc<WfiWaker>,
 }
 
 // SAFETY: ram_ptr points to mmap'd memory owned by
@@ -58,9 +103,8 @@ impl FullSystemCpu {
         ram_ptr: *const u8,
         ram_size: u64,
         shared_mip: SharedMip,
+        wfi_waker: Arc<WfiWaker>,
     ) -> Self {
-        // Set guest_base so JIT load/store uses the
-        // correct host memory region.
         cpu.guest_base = (ram_ptr as usize)
             .wrapping_sub(RAM_BASE as usize)
             as u64;
@@ -69,12 +113,18 @@ impl FullSystemCpu {
             ram_ptr,
             ram_size,
             shared_mip,
+            wfi_waker,
         }
     }
 
     /// Get a clone of the shared mip for IRQ sinks.
     pub fn shared_mip(&self) -> SharedMip {
         self.shared_mip.clone()
+    }
+
+    /// Get a clone of the WFI waker for IRQ sinks.
+    pub fn wfi_waker(&self) -> Arc<WfiWaker> {
+        self.wfi_waker.clone()
     }
 }
 
@@ -157,11 +207,13 @@ impl GuestCpu for FullSystemCpu {
     // -- Full-system hooks --
 
     fn pending_interrupt(&self) -> bool {
-        // Read device-updated mip from shared atomic.
+        // Combine software mip (CPU-set bits like SSIP)
+        // with device mip (PLIC/ACLINT-driven bits).
+        // Don't modify csr.mip — just check.
         let dev_mip =
             self.shared_mip.load(Ordering::Relaxed);
-        let mip = self.cpu.csr.mip | dev_mip;
-        mip & self.cpu.csr.mie != 0
+        let effective = self.cpu.csr.mip | dev_mip;
+        effective & self.cpu.csr.mie != 0
     }
 
     fn is_halted(&self) -> bool {
@@ -181,11 +233,20 @@ impl GuestCpu for FullSystemCpu {
     }
 
     fn handle_interrupt(&mut self) {
-        // Sync device mip into CSR before checking.
+        // Merge device bits into csr.mip temporarily
+        // for the interrupt handler, then restore the
+        // software-only mip. Device bit presence is
+        // always re-evaluated from shared_mip on the
+        // next pending_interrupt() call.
         let dev_mip =
             self.shared_mip.load(Ordering::Relaxed);
-        self.cpu.csr.mip |= dev_mip;
+        let saved = self.cpu.csr.mip;
+        self.cpu.csr.mip = saved | dev_mip;
         self.cpu.handle_interrupt();
+        // Restore software-only bits. The handler may
+        // have cleared some bits (e.g., SSIP); preserve
+        // those clears but remove device bits.
+        self.cpu.csr.mip &= !dev_mip;
     }
 
     fn handle_exception(
@@ -221,13 +282,16 @@ impl GuestCpu for FullSystemCpu {
         self.cpu.execute_sret();
     }
 
-    fn tlb_flush(&mut self) {
-        // Full TLB flush — no hardware TLB to flush in
-        // the current software translate path, but this
-        // hook is ready for future MMU integration.
-    }
+    fn tlb_flush(&mut self) {}
 
-    fn tlb_flush_page(&mut self, _vpn: u64) {
-        // Page-specific TLB flush.
+    fn tlb_flush_page(&mut self, _vpn: u64) {}
+
+    fn wait_for_interrupt(&self) -> bool {
+        // Block on condvar until a device IRQ arrives
+        // or 100ms timeout (to avoid permanent hang
+        // if no device delivers).
+        self.wfi_waker.wait_timeout(
+            std::time::Duration::from_millis(100),
+        )
     }
 }

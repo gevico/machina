@@ -39,6 +39,13 @@ pub trait GuestCpu {
     fn tlb_flush(&mut self) {}
     fn tlb_flush_page(&mut self, _vpn: u64) {}
 
+    /// Wait for an interrupt to arrive (WFI semantics).
+    /// Returns true if an interrupt arrived, false if
+    /// timed out or not implemented.
+    fn wait_for_interrupt(&self) -> bool {
+        false
+    }
+
     // -- GDB support (default no-op) --
 
     fn gdb_read_registers(&self, _buf: &mut [u8]) -> usize {
