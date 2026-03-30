@@ -5,7 +5,7 @@
 
 一个用 Rust 编写的模块化 RISC-V 全系统模拟器，采用 JIT 动态二进制翻译引擎，支持硬件设备模型、中断控制器和机器固件。
 
-> **状态**：JIT 流水线——RISC-V 客户指令解码、TCG IR 生成、优化（常量折叠、拷贝传播、代数简化）、寄存器分配和 x86-64 代码生成——已完整实现，支持 MTTCG 和直接 TB 链路。Full-system 模式可引导 RISC-V 参考机器，包含 PLIC、ACLINT、UART、Sv39 MMU 和 SBI 固件接口。
+> **状态**：JIT 流水线——RISC-V 客户指令解码、TCG IR 生成、优化（常量折叠、拷贝传播、代数简化）、寄存器分配和 x86-64 代码生成——已完整实现，支持多线程 vCPU 并发模拟和直接 TB 链路。Full-system 模式可引导 RISC-V 参考机器，包含 PLIC、ACLINT、UART、Sv39 MMU 和 SBI 固件接口。
 
 ## 架构
 
@@ -18,7 +18,7 @@
                                                                     v
                         +----------------------------------------------+
                         |               Execution Engine               |
-                        |  TB Cache + MTTCG + Chaining + MMIO          |
+                        |  TB Cache + Multi-vCPU + Chaining + MMIO      |
                         +----------------------+-----------------------+
                                                |
                                                v
@@ -35,7 +35,7 @@
 |-------|------|------|
 | **machina** | `src/` | CLI 入口（`machina -M riscv64-ref -bios fw.bin`） |
 | **machina-core** | `core/` | IR 定义（opcodes、types、temps、ops、context、labels、TBs）、CPU trait、地址类型 |
-| **machina-accel** | `accel/` | IR 优化器、活跃性分析、寄存器分配器、x86-64 代码生成、MTTCG 执行引擎 |
+| **machina-accel** | `accel/` | IR 优化器、活跃性分析、寄存器分配器、x86-64 代码生成、多线程 vCPU 执行引擎 |
 | **machina-guest-riscv** | `guest/riscv/` | RISC-V 前端：RV64GC + 特权指令（188 条指令）、Sv39 MMU、TLB、PMP |
 | **machina-decode** | `decode/` | QEMU 风格 `.decode` 文件解析器与 Rust 解码器生成器 |
 | **machina-system** | `system/` | 全系统 CPU 桥接、CpuManager、WFI 唤醒 |
@@ -47,7 +47,7 @@
 | **machina-disas** | `disas/` | RISC-V 指令反汇编器 |
 | **machina-monitor** | `monitor/` | 调试/监控接口（开发中） |
 | **machina-util** | `util/` | 共享工具库 |
-| **machina-tests** | `tests/` | 964 个测试：单元、后端、前端、差分、集成、MTTCG、机器级 |
+| **machina-tests** | `tests/` | 964 个测试：单元、后端、前端、差分、集成、多 vCPU 并发、机器级 |
 | **machina-mtest** | `tests/mtest/` | 机器级测试框架 |
 | **machina-irdump** | `tools/irdump/` | IR 转储调试工具 |
 | **machina-irbackend** | `tools/irbackend/` | IR 后端检查工具 |
@@ -85,7 +85,7 @@ cargo run --release --bin machina -- -M riscv64-ref -m 128M -bios fw.bin -nograp
 - **活跃性分析**：反向遍历计算 dead/sync 标志
 - **寄存器分配器**：约束驱动贪心分配器，对齐 QEMU 的 `tcg_reg_alloc_op()`
 - **x86-64 后端**：完整 GPR 指令编码器（算术、移位、数据移动、内存、乘除、位操作、分支、setcc/cmovcc），System V ABI prologue/epilogue，`goto_tb`/`exit_tb`/`goto_ptr`
-- **执行引擎**：MTTCG 执行循环、TB 存储（jump cache + 全局 hash）、直接 TB 链路、`next_tb_hint`、`exit_target` 原子缓存、MMIO helper 分发
+- **执行引擎**：多线程 vCPU 执行循环、TB 存储（jump cache + 全局 hash）、直接 TB 链路、`next_tb_hint`、`exit_target` 原子缓存、MMIO helper 分发
 
 ### RISC-V 前端（machina-guest-riscv）
 
@@ -109,7 +109,7 @@ cargo run --release --bin machina -- -M riscv64-ref -m 128M -bios fw.bin -nograp
 - **前端测试**：91 个 RISC-V 指令测试，覆盖完整 decode -> IR -> codegen -> execute 流水线
 - **差分测试**：对比 QEMU 验证指令正确性
 - **集成测试**：端到端流水线——ALU、分支、循环、内存、复杂序列
-- **MTTCG 测试**：并发查找/翻译/链路（26 个测试）
+- **多 vCPU 并发测试**：并发查找/翻译/链路（26 个测试）
 - **机器测试**：全系统引导和设备测试
 
 ## QEMU 参考
@@ -125,12 +125,12 @@ cargo run --release --bin machina -- -M riscv64-ref -m 128M -bios fw.bin -nograp
 
 ## 文档
 
-- [设计文档](docs/design.md) — 架构、数据结构、翻译流水线
-- [IR Ops](docs/ir-ops.md) — Opcode 目录、Op 结构、IR Builder API
-- [x86-64 后端](docs/x86_64-backend.md) — 指令编码器、约束表、codegen 分派
-- [性能分析](docs/performance.md) — 优化手段与 QEMU 对比
-- [测试体系](docs/testing.md) — 测试架构、差分测试、客户程序
-- [代码风格](docs/coding-style.md) — 命名规范、格式规则
+- [设计文档](docs/zh/design.md) — 架构、数据结构、翻译流水线
+- [IR Ops](docs/zh/ir-ops.md) — Opcode 目录、Op 结构、IR Builder API
+- [x86-64 后端](docs/zh/x86_64-backend.md) — 指令编码器、约束表、codegen 分派
+- [性能分析](docs/zh/performance.md) — 优化手段与 QEMU 对比
+- [测试体系](docs/zh/testing.md) — 测试架构、差分测试
+- [代码风格](docs/zh/coding-style.md) — 命名规范、格式规则
 
 ## 许可证
 

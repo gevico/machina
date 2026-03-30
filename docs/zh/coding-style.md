@@ -30,8 +30,7 @@ fn emit_ret(buf: &mut CodeBuffer) {
 - 提交前必须运行 `cargo fmt`
 - 提交前必须通过 `cargo clippy -- -D warnings`
 - 使用 `(-128..=127).contains(&x)` 替代 `x >= -128 && x <= 127`
-- 运算符优先级不明确时必须加括号：
-  `(OPC + (x << 3)) | flag` 而非 `OPC + (x << 3) | flag`
+- 运算符优先级不明确时必须加括号：`(OPC + (x << 3)) | flag` 而非 `OPC + (x << 3) | flag`
 
 ## 3. 命名规范
 
@@ -47,8 +46,7 @@ fn emit_ret(buf: &mut CodeBuffer) {
 
 ### 3.2 QEMU 风格常量
 
-操作码常量使用 QEMU 原始命名风格以便交叉参考，
-通过 `#![allow(non_upper_case_globals)]` 抑制警告：
+操作码常量使用 QEMU 原始命名风格以便交叉参考，通过 `#![allow(non_upper_case_globals)]` 抑制警告：
 
 ```rust
 pub const OPC_ARITH_EvIb: u32 = 0x83;
@@ -61,16 +59,16 @@ pub const OPC_JCC_long: u32 = 0x80 | P_EXT;
 指令发射器遵循 `emit_<指令>_<操作数模式>` 模式：
 
 ```
-emit_arith_rr   — 算术 reg, reg
-emit_arith_ri   — 算术 reg, imm
-emit_arith_mr   — 算术 [mem], reg
-emit_arith_rm   — 算术 reg, [mem]
-emit_mov_rr     — MOV reg, reg
-emit_mov_ri     — MOV reg, imm
-emit_load       — MOV reg, [mem]
-emit_store      — MOV [mem], reg
-emit_shift_ri   — 移位 reg, imm
-emit_shift_cl   — 移位 reg, CL
+emit_arith_rr   -- 算术 reg, reg
+emit_arith_ri   -- 算术 reg, imm
+emit_arith_mr   -- 算术 [mem], reg
+emit_arith_rm   -- 算术 reg, [mem]
+emit_mov_rr     -- MOV reg, reg
+emit_mov_ri     -- MOV reg, imm
+emit_load       -- MOV reg, [mem]
+emit_store      -- MOV [mem], reg
+emit_shift_ri   -- 移位 reg, imm
+emit_shift_cl   -- 移位 reg, CL
 ```
 
 ## 4. 注释
@@ -148,7 +146,7 @@ pub fn emit_load(
 
 ## 8. 测试
 
-- 测试位于独立的 `tcg-tests` crate
+- 测试位于独立的 `machina-tests` crate
 - 每个指令发射器至少一个测试验证字节编码
 - 测试覆盖基础寄存器（Rax-Rdi）和扩展寄存器（R8-R15）
 - 使用 `emit_bytes` 辅助函数简化测试编写
@@ -171,24 +169,68 @@ fn arith_add_rr_64() {
 }
 ```
 
-## 9. 模块组织
+## 9. 文档图表规范
+
+文档中的所有图表必须使用纯 ASCII 字符绘制，禁止使用 Unicode box-drawing 字符或其他非 ASCII 符号。
+
+**允许使用的字符**：
+
+| 字符 | 用途 |
+|------|------|
+| `+` | 边角连接点 |
+| `-` | 水平线 |
+| `|` | 垂直线 |
+| `-->` | 水平箭头（右） |
+| `<--` | 水平箭头（左） |
+| `v` | 向下箭头 |
+| `^` | 向上箭头 |
+
+**边框对齐规则**：
+
+- 所有矩形框的四角必须使用 `+` 字符
+- 水平边和垂直边必须严格对齐，不允许锯齿
+- 箭头方向使用 `-->` 或 `v`，不使用 Unicode 箭头
+
+```
++------------+     +------------+
+|  Frontend  | --> |  IR Builder |
++------------+     +------------+
+                        |
+                        v
+                   +------------+
+                   |  Optimizer  |
+                   +------------+
+                        |
+                        v
+                   +------------+
+                   |  Backend   |
+                   +------------+
+```
+
+**禁止示例**：
+
+- `─`, `│`, `┌`, `┐`, `└`, `┘` 等 Unicode box-drawing 字符
+- `→`, `←`, `↑`, `↓` 等 Unicode 箭头
+- `├`, `┤`, `┬`, `┴`, `┼` 等 Unicode 连接符
+
+## 10. 模块组织
 
 - 每个 crate 的 `lib.rs` 仅做模块声明和 re-export
 - 公开类型通过 `pub use` 在 crate 根导出
 - 相关功能放在同一文件，文件内按逻辑分节
 - 使用 `// -- Section name --` 分隔文件内的逻辑区域
 
-## 10. MTTCG 与性能代码约束
+## 11. 多线程 vCPU 与性能代码约束
 
-- 并发路径优先使用“共享状态 + 每线程私有状态”拆分，避免热路径共享锁。
+- 并发路径优先使用"共享状态 + 每线程私有状态"拆分，避免热路径共享锁。
 - 新增并发字段时，必须在注释中写清：
   - 谁持有写权限（例如 `translate_lock`）
   - 读路径是否 lock-free
   - 可见性保证（Acquire/Release/Relaxed 的选择理由）
 - 性能优化提交必须附带可复现基准命令，至少包含：
-  - `tcg-riscv64` 对 `dhrystone`
+  - `machina-riscv64` 对 `dhrystone`
   - `qemu-riscv64` 同程序对照
 - 涉及 TB 链路逻辑时必须补充：
   - 并发正确性测试（`tests/src/exec/mttcg.rs`）
-  - 回归测试（至少一个 linux-user guest 测题）
+  - 回归测试（至少一个 guest 测题）
 - 调试辅助输出统一走已有统计入口（`TCG_STATS=1`），避免在热路径直接打印日志。

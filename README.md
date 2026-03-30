@@ -5,7 +5,7 @@
 
 A modular RISC-V full-system emulator written in Rust, featuring a JIT dynamic binary translation engine with hardware device models, interrupt controllers, and machine firmware support.
 
-> **Status**: The JIT pipeline — RISC-V guest decode, TCG IR generation, optimization (constant folding, copy propagation, algebraic simplification), register allocation, and x86-64 code generation — is fully functional with MTTCG support and direct TB chaining. Full-system mode boots a RISC-V reference machine with PLIC, ACLINT, UART, Sv39 MMU, and SBI firmware interface.
+> **Status**: The JIT pipeline — RISC-V guest decode, TCG IR generation, optimization (constant folding, copy propagation, algebraic simplification), register allocation, and x86-64 code generation — is fully functional with multi-threaded vCPU support and direct TB chaining. Full-system mode boots a RISC-V reference machine with PLIC, ACLINT, UART, Sv39 MMU, and SBI firmware interface.
 
 ## Architecture
 
@@ -18,7 +18,7 @@ A modular RISC-V full-system emulator written in Rust, featuring a JIT dynamic b
                                                                     v
                         +----------------------------------------------+
                         |               Execution Engine               |
-                        |  TB Cache + MTTCG + Chaining + MMIO          |
+                        |  TB Cache + Multi-vCPU + Chaining + MMIO      |
                         +----------------------+-----------------------+
                                                |
                                                v
@@ -35,7 +35,7 @@ A modular RISC-V full-system emulator written in Rust, featuring a JIT dynamic b
 |-------|------|-------------|
 | **machina** | `src/` | CLI entry point (`machina -M riscv64-ref -bios fw.bin`) |
 | **machina-core** | `core/` | IR definitions (opcodes, types, temps, ops, context, labels, TBs), CPU trait, address types |
-| **machina-accel** | `accel/` | IR optimizer, liveness analysis, register allocator, x86-64 codegen, MTTCG execution engine |
+| **machina-accel** | `accel/` | IR optimizer, liveness analysis, register allocator, x86-64 codegen, multi-threaded vCPU execution engine |
 | **machina-guest-riscv** | `guest/riscv/` | RISC-V frontend: RV64GC + privileged ISA (188 instructions), Sv39 MMU, TLB, PMP |
 | **machina-decode** | `decode/` | QEMU-style `.decode` file parser and Rust decoder code generator |
 | **machina-system** | `system/` | Full-system CPU bridge, CpuManager, WFI wakeup |
@@ -47,7 +47,7 @@ A modular RISC-V full-system emulator written in Rust, featuring a JIT dynamic b
 | **machina-disas** | `disas/` | RISC-V instruction disassembler |
 | **machina-monitor** | `monitor/` | Debug/monitor interface (WIP) |
 | **machina-util** | `util/` | Shared utilities |
-| **machina-tests** | `tests/` | 964 tests: unit, backend, frontend, difftest, integration, MTTCG, machine |
+| **machina-tests** | `tests/` | 964 tests: unit, backend, frontend, difftest, integration, multi-vCPU, machine |
 | **machina-mtest** | `tests/mtest/` | Machine-level test framework |
 | **machina-irdump** | `tools/irdump/` | IR dump tool for debugging |
 | **machina-irbackend** | `tools/irbackend/` | IR backend inspection tool |
@@ -85,7 +85,7 @@ cargo run --release --bin machina -- -M riscv64-ref -m 128M -bios fw.bin -nograp
 - **Liveness Analysis**: Backward pass computing dead/sync flags
 - **Register Allocator**: Constraint-driven greedy allocator mirroring QEMU's `tcg_reg_alloc_op()`
 - **x86-64 Backend**: Full GPR instruction encoder (arithmetic, shifts, data movement, memory, mul/div, bit ops, branches, setcc/cmovcc), System V ABI prologue/epilogue, `goto_tb`/`exit_tb`/`goto_ptr`
-- **Execution Engine**: MTTCG-capable loop, TB store (jump cache + global hash), direct TB chaining, `next_tb_hint`, `exit_target` atomic cache, MMIO helper dispatch
+- **Execution Engine**: Multi-threaded vCPU execution loop, TB store (jump cache + global hash), direct TB chaining, `next_tb_hint`, `exit_target` atomic cache, MMIO helper dispatch
 
 ### RISC-V Frontend (machina-guest-riscv)
 
@@ -109,7 +109,7 @@ cargo run --release --bin machina -- -M riscv64-ref -m 128M -bios fw.bin -nograp
 - **Frontend**: 91 RISC-V instruction tests through full decode -> IR -> codegen -> execute pipeline
 - **Difftest**: Differential testing against QEMU with edge-case values
 - **Integration**: End-to-end pipeline — ALU, branches, loops, memory, complex sequences
-- **MTTCG**: Concurrent lookup/translation/chaining (26 tests)
+- **Multi-vCPU**: Concurrent lookup/translation/chaining (26 tests)
 - **Machine**: Full-system boot and device tests
 
 ## QEMU Reference
@@ -125,12 +125,12 @@ This project references the QEMU source tree for architectural guidance:
 
 ## Documentation
 
-- [Design Document](docs/design.md) — Architecture, data structures, translation pipeline
-- [IR Ops](docs/ir-ops.md) — Opcode catalog, Op structure, IR builder API
-- [x86-64 Backend](docs/x86_64-backend.md) — Instruction encoder, constraint table, codegen
-- [Performance](docs/performance.md) — Optimization techniques and QEMU comparison
-- [Testing](docs/testing.md) — Test architecture, difftest framework, guest programs
-- [Coding Style](docs/coding-style.md) — Naming conventions, formatting rules
+- [Design Document](docs/en/design.md) — Architecture, data structures, translation pipeline
+- [IR Ops](docs/en/ir-ops.md) — Opcode catalog, Op structure, IR builder API
+- [x86-64 Backend](docs/en/x86_64-backend.md) — Instruction encoder, constraint table, codegen
+- [Performance](docs/en/performance.md) — Optimization techniques and QEMU comparison
+- [Testing](docs/en/testing.md) — Test architecture, difftest framework
+- [Coding Style](docs/en/coding-style.md) — Naming conventions, formatting rules
 
 ## License
 

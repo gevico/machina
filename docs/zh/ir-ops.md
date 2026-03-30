@@ -205,9 +205,9 @@ pub enum Opcode { Mov = 0, ..., Count }
 | `GotoPtr` | 通过寄存器间接跳转 | 0 | 1 | 0 | BB_EXIT, BB_END |
 | `Mb` | 内存屏障 | 0 | 0 | 1 (bar_type) | NP |
 
-#### 2.12.1 MTTCG 下的 `ExitTb` 约定
+#### 2.12.1 多线程 vCPU 下的 `ExitTb` 约定
 
-`ExitTb` 的返回值不仅表示“退出原因”，还参与执行循环的链路协议：
+`ExitTb` 的返回值不仅表示"退出原因"，还参与执行循环的链路协议：
 
 - `TB_EXIT_IDX0` / `TB_EXIT_IDX1`：对应 `goto_tb` 槽位 0/1，可被
   执行循环识别并触发 TB 直接链路 patch；
@@ -216,7 +216,7 @@ pub enum Opcode { Mov = 0, ..., Count }
 - `>= TB_EXIT_MAX`：真实异常/系统退出（如 `EXCP_ECALL`、
   `EXCP_EBREAK`、`EXCP_UNDEF`），直接返回上层。
 
-为了在 direct chaining 后仍可识别“真正退出的源 TB”，core 里提供
+为了在 direct chaining 后仍可识别"真正退出的源 TB"，core 里提供
 `encode_tb_exit` / `decode_tb_exit`：低位保存 exit code，高位携带
 源 TB 索引标记。
 
