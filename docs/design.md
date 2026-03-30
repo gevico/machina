@@ -1,4 +1,4 @@
-# tcg-rs 设计文档
+# Machina 设计文档
 
 ## 1. 概述
 
@@ -15,14 +15,22 @@ Guest Binary → Frontend (decode) → TCG IR → Optimizer → Backend (codegen
 ## 2. Workspace 分层
 
 ```
-tcg-rs/
-├── core/           # IR 定义层：纯数据结构，零依赖
-├── backend/        # 代码生成层：依赖 tcg-core + libc
+machina/
+├── core/           # IR 定义层：CPU trait、地址类型、纯数据结构
+├── accel/          # 加速层：IR 优化、寄存器分配、x86-64 codegen、执行引擎
+├── guest/riscv/    # RISC-V 前端：RV64GC + 特权 ISA、Sv39 MMU
 ├── decode/         # 解码器生成器：解析 .decode 文件，生成 Rust 解码器
-├── frontend/       # 客户指令解码层：依赖 tcg-core + decode（构建时）
-├── exec/           # 执行层：MTTCG 执行循环、TB 缓存、链路管理
-├── linux-user/     # 用户态运行层：ELF 加载、syscall、guest 空间
-└── tests/          # 测试层：单元、集成、difftest、MTTCG、linux-user
+├── system/         # 全系统执行：CPU 管理、WFI 唤醒
+├── memory/         # 内存子系统：AddressSpace、MMIO 分发
+├── hw/core/        # 设备基础设施：qdev、IRQ、chardev、FDT
+├── hw/intc/        # 中断控制器：PLIC、ACLINT
+├── hw/char/        # 字符设备：UART 16550A
+├── hw/riscv/       # RISC-V 机器定义：riscv64-ref
+├── disas/          # 反汇编器
+├── monitor/        # 调试接口
+├── util/           # 共享工具
+├── tools/          # 辅助工具（irdump、irbackend）
+└── tests/          # 测试层：单元、集成、difftest、MTTCG、机器级
 ```
 
 **设计意图**：遵循 QEMU 的 `include/tcg/` (定义) 与 `tcg/` (实现) 分离原则。`tcg-core` 是纯粹的数据定义，不包含任何平台相关代码或 `unsafe`，`tcg-frontend` 和 `tcg-backend`（含优化器）都只需依赖 `tcg-core`。`decode` 是独立的构建时工具 crate，解析 QEMU 风格的 `.decode` 文件并生成 Rust 解码器代码。测试独立成 crate 是为了保持源码文件干净，且外部 crate 测试能验证公共 API 的完整性。
@@ -423,7 +431,7 @@ QEMU 的寄存器分配器 `tcg_reg_alloc_op()`（`tcg/tcg.c`）是完全
 SUB 的破坏性语义、SHL 的 RCX 要求）全部通过 `TCGArgConstraint`
 声明式描述，分配器只需读取约束并执行统一逻辑。
 
-tcg-rs 的 `regalloc_op()` 对齐这一架构：
+machina 的 `regalloc_op()` 对齐这一架构：
 
 ```
                     ┌──────────────┐
@@ -504,8 +512,8 @@ emit 之后。此外 BrCond 的前向引用需要在 emit 之后记录
 
 #### 5.4.4 与 QEMU 的差异
 
-| 方面 | QEMU | tcg-rs |
-|------|------|--------|
+| 方面 | QEMU | machina |
+|------|------|---------|
 | 溢出 | 支持溢出到栈帧 `CPU_TEMP_BUF` | 不支持（14 GPR 足够） |
 | 立即数约束 | `re`/`ri` 允许立即数直接编码 | 所有输入必须在寄存器中 |
 | 输出偏好 | `output_pref` 由约束系统设置 | 由活跃性分析设置 |

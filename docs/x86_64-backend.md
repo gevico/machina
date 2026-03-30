@@ -287,7 +287,7 @@ test-and-branch 优化。
 
 ## 8. QEMU 参考对照
 
-| tcg-rs 函数 | QEMU 函数 |
+| machina 函数 | QEMU 函数 |
 |-------------|-----------|
 | `emit_opc` | `tcg_out_opc` |
 | `emit_modrm` | `tcg_out_modrm` |

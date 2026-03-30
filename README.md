@@ -1,151 +1,155 @@
-<h1 align="center">tcg-rs</h1>
+<h1 align="center">Machina</h1>
 <p align="center">
   English | <a href="README.zh.md">中文</a>
 </p>
 
-A Rust reimplementation of [QEMU](https://www.qemu.org/)'s **TCG** (Tiny Code Generator) — the dynamic binary translation engine that converts guest architecture instructions into host machine code at runtime.
+A modular RISC-V emulator written in Rust, featuring a JIT dynamic binary translation engine. Supports both **linux-user** mode (user-space ELF execution with syscall emulation) and **full-system** mode (hardware emulation with device models, interrupt controllers, and machine firmware).
 
-> **Status**: The complete translation pipeline is working end-to-end — RISC-V guest instructions are decoded via a decode-generated decoder, translated to TCG IR, optimized (constant folding, copy propagation, algebraic simplification), register-allocated, compiled to x86-64 machine code, and executed. MTTCG execution, direct TB chaining, and linux-user ELF loading with syscall emulation are operational. A differential testing framework validates correctness against QEMU.
+> **Status**: Both emulation modes are operational. The JIT pipeline — RISC-V guest decode, TCG IR generation, optimization (constant folding, copy propagation, algebraic simplification), register allocation, and x86-64 code generation — is fully functional with MTTCG support and direct TB chaining. Linux-user mode runs real guest programs (dhrystone, printf, float). Full-system mode boots a RISC-V reference machine with PLIC, ACLINT, UART, Sv39 MMU, and SBI firmware interface.
 
-## Overview
-
-tcg-rs aims to provide a clean, safe, and modular Rust implementation of QEMU's TCG subsystem. The project follows QEMU's proven architecture while leveraging Rust's type system, memory safety, and trait-based extensibility.
+## Architecture
 
 ```
-┌──────────────┐    ┌───────────────┐    ┌──────────────┐    ┌───────────┐    ┌──────────┐    ┌──────────────────┐    ┌─────────┐
-│ Guest Binary │───→│ Frontend      │───→│ IR Builder   │───→│ Optimizer │───→│ Liveness │───→│ RegAlloc+Codegen │───→│ Execute │
-│ (RISC-V)     │    │ (decode       │    │ (gen_*)      │    │           │    │ Analysis │    │ (x86-64)         │    │ (JIT)   │
-└──────────────┘    │  + trans_*)   │    └──────────────┘    └───────────┘    └──────────┘    └──────────────────┘    └─────────┘
-                    └───────────────┘
-                     tcg-frontend         tcg-core             tcg-backend     tcg-backend     tcg-backend             tcg-backend
+                          ┌──────────────────────────────────────────────────────────┐
+                          │                     JIT Pipeline                         │
+┌──────────────┐    ┌─────┴─────┐    ┌──────────┐    ┌───────────┐    ┌─────────────┴──┐    ┌─────────┐
+│ Guest Binary │───→│ Frontend  │───→│ IR Build │───→│ Optimizer │───→│ RegAlloc+Code  │───→│ Execute │
+│ (RISC-V)     │    │ (decode + │    │ (gen_*)  │    │           │    │ gen (x86-64)   │    │ (JIT)   │
+└──────────────┘    │  trans_*) │    └──────────┘    └───────────┘    └────────────────┘    └─────────┘
+                    └───────────┘
+                                              ┌───────────────────────────────┐
+                                              │        Execution Modes        │
+                                    ┌─────────┴─────────┐    ┌───────────────┴───────────┐
+                                    │    linux-user      │    │       full-system          │
+                                    │ ELF load + syscall │    │ Devices + MMU + IRQ + SBI  │
+                                    └───────────────────┘    └───────────────────────────┘
 ```
 
-## Crate Structure
+## Workspace
 
-| Crate | Status | Description |
-|-------|--------|-------------|
-| `tcg-core` | Implemented | IR definitions (opcodes, types, temps, ops, context, labels, TBs) + IR builder (`gen_*` methods) |
-| `tcg-backend` | Implemented | IR optimizer, liveness analysis, constraint system, register allocator, x86-64 codegen, translation pipeline |
-| `tcg-exec` | Implemented | MTTCG-capable execution loop, TB store, direct chaining, per-vCPU jump cache, execution stats |
-| `tcg-linux-user` | Implemented | ELF loader, guest address space, Linux syscall emulation, `tcg-riscv64` runner |
-| `decode` | Implemented | QEMU-style `.decode` file parser and Rust code generator for instruction decoders |
-| `tcg-frontend` | Implemented | Guest instruction decoding framework + RISC-V RV64IMAFDC frontend (184 instructions) |
-| `tcg-tests` | Implemented | 816 tests: unit, backend regression, frontend translation, difftest (vs QEMU), MTTCG, and linux-user e2e |
-
-## Key Design Decisions
-
-- **Unified type-polymorphic opcodes**: A single `Add` opcode works on both I32 and I64 (type carried in `Op::op_type`), reducing opcode count by ~40% compared to QEMU's split design.
-- **Constraint-driven register allocation**: Declarative `ArgConstraint`/`OpConstraint` types mirror QEMU's `TCGArgConstraint` + `C_O*_I*` macro system. The allocator is fully generic — no per-opcode branches. Adding a new opcode requires only a constraint table entry.
-- **Trait-based backends**: `HostCodeGen` trait (including `op_constraint()`) instead of conditional compilation, enabling multi-backend support and testability.
-- **Minimal `unsafe`**: Confined to JIT code buffer (mmap/mprotect) and generated code execution. All IR manipulation is safe Rust.
-- **`RegSet` as `u64` bitmap**: Register allocation hot path uses bit operations instead of collection types.
+| Crate | Path | Description |
+|-------|------|-------------|
+| **machina** | `src/` | CLI entry point (`machina -M riscv64-ref -bios fw.bin`) |
+| **machina-core** | `core/` | IR definitions (opcodes, types, temps, ops, context, labels, TBs), CPU trait, address types |
+| **machina-accel** | `accel/` | IR optimizer, liveness analysis, register allocator, x86-64 codegen, MTTCG execution engine |
+| **machina-guest-riscv** | `guest/riscv/` | RISC-V frontend: RV64GC + privileged ISA (188 instructions), Sv39 MMU, TLB, PMP |
+| **machina-decode** | `decode/` | QEMU-style `.decode` file parser and Rust decoder code generator |
+| **machina-system** | `system/` | Full-system CPU bridge, CpuManager, WFI wakeup |
+| **machina-memory** | `memory/` | AddressSpace, memory regions, MMIO dispatch, RAM blocks |
+| **machina-hw-core** | `hw/core/` | Device infrastructure: qdev model, IRQ, chardev, clock, FDT, image loader |
+| **machina-hw-intc** | `hw/intc/` | Interrupt controllers: PLIC, ACLINT (MTIMER + MSWI) |
+| **machina-hw-char** | `hw/char/` | Character devices: UART 16550A |
+| **machina-hw-riscv** | `hw/riscv/` | RISC-V reference machine (`riscv64-ref`), boot sequence, SBI stub |
+| **machina-disas** | `disas/` | RISC-V instruction disassembler |
+| **machina-monitor** | `monitor/` | Debug/monitor interface (WIP) |
+| **machina-util** | `util/` | Shared utilities |
+| **machina-tests** | `tests/` | 964 tests: unit, backend, frontend, difftest, integration, MTTCG, linux-user, machine |
+| **machina-mtest** | `tests/mtest/` | Machine-level test framework |
+| **machina-irdump** | `tools/irdump/` | IR dump tool for debugging |
+| **machina-irbackend** | `tools/irbackend/` | IR backend inspection tool |
 
 ## Building
 
 ```bash
 cargo build                  # Build all crates
-cargo test                   # Run all 816 tests
-cargo clippy -- -D warnings  # Lint check
+cargo build --release        # Release build
+cargo test --workspace       # Run all 964 tests
+cargo clippy -- -D warnings  # Lint
 cargo fmt --check            # Format check
 ```
 
+## Running
+
+```bash
+# Linux-user mode: run a RISC-V ELF directly
+cargo run --release --bin tcg-riscv64 -- target/guest/riscv64/dhrystone
+
+# Full-system mode: boot a RISC-V reference machine
+cargo run --release --bin machina -- -M riscv64-ref -m 128M -bios fw.bin -nographic
+
+# Performance stats
+TCG_STATS=1 target/release/tcg-riscv64 target/guest/riscv64/dhrystone
+```
+
+## Key Design Decisions
+
+- **Unified type-polymorphic opcodes**: A single `Add` works on both I32 and I64 (type in `Op::op_type`), ~40% fewer opcodes than QEMU's split design.
+- **Constraint-driven register allocation**: Declarative `ArgConstraint`/`OpConstraint` types — the allocator is fully generic, no per-opcode branches. New opcodes need only a constraint table entry.
+- **Trait-based extensibility**: `HostCodeGen` for backends, `TranslatorOps` for frontends, `Cpu` for guest architectures — no conditional compilation.
+- **Minimal `unsafe`**: Confined to JIT buffer (mmap/mprotect), generated code execution, and guest memory access. All IR manipulation is safe Rust.
+- **QEMU-compatible device model**: qdev hierarchy, IRQ sinks, FDT generation, chardev abstraction — following proven QEMU hw/ patterns.
+
 ## What's Implemented
 
-### tcg-core
+### JIT Engine (machina-accel)
 
-- **Type system**: `Type` (I32/I64/I128/V64/V128/V256), `Cond` (QEMU-compatible encoding), `MemOp` (bit-packed), `RegSet` (u64 bitmap)
-- **Opcodes**: 158 unified opcodes with static `OpDef` table, `OpFlags` for properties
-- **Temporaries**: Five lifetime kinds (Ebb, Tb, Global, Fixed, Const) with register allocator state
-- **Labels**: Forward reference support with back-patching via `LabelUse`/`RelocKind`
-- **Operations**: `Op` with fixed-size args array, `LifeData` for liveness
-- **Context**: Translation context with global preservation across `reset()`, constant deduplication
-- **IR builder**: `gen_add/sub/mul/and/or/xor/shl/shr/sar/neg/not/mov/setcond/brcond/br/ld/st/exit_tb/goto_tb`
-- **Translation blocks**: `TranslationBlock` with dual exit slots, `JumpCache` (4096-entry direct-mapped)
+- **IR Optimizer**: Constant folding, copy propagation, algebraic simplification, branch constant folding
+- **Liveness Analysis**: Backward pass computing dead/sync flags
+- **Register Allocator**: Constraint-driven greedy allocator mirroring QEMU's `tcg_reg_alloc_op()`
+- **x86-64 Backend**: Full GPR instruction encoder (arithmetic, shifts, data movement, memory, mul/div, bit ops, branches, setcc/cmovcc), System V ABI prologue/epilogue, `goto_tb`/`exit_tb`/`goto_ptr`
+- **Execution Engine**: MTTCG-capable loop, TB store (jump cache + global hash), direct TB chaining, `next_tb_hint`, `exit_target` atomic cache, MMIO helper dispatch
 
-### tcg-backend
+### RISC-V Frontend (machina-guest-riscv)
 
-- **IR optimizer** (`optimize.rs`): Single-pass optimizer running before liveness analysis — constant folding (unary, binary, type-conversion ops), copy propagation, algebraic simplification (identity/annihilator rules), same-operand identities, branch constant folding (BrCond → Br/Nop)
-- **Constraint system** (`constraint.rs`): `ArgConstraint`/`OpConstraint` types with builder functions (`o1_i2_alias`, `o1_i2_alias_fixed`, `n1_i2`, etc.)
-- **Liveness analysis** (`liveness.rs`): Backward pass computing dead/sync flags per arg
-- **Register allocator** (`regalloc.rs`): Constraint-driven greedy allocator mirroring QEMU's `tcg_reg_alloc_op()` — alias reuse, forced eviction, post-input fixup
-- **Translation pipeline** (`translate.rs`): `translate_and_execute()` chains optimize → liveness → regalloc+codegen → JIT execution
-- **x86-64 backend**:
-  - Full GPR instruction encoder (emitter.rs): arithmetic, shifts, data movement, memory, mul/div, bit ops, branches, setcc/cmovcc
-  - Constraint table (constraints.rs): per-opcode register constraints aligned with QEMU's `tcg_target_op_def()`
-  - Simplified codegen (codegen.rs): constraint guarantees eliminate all register juggling — each opcode emits minimal instructions
-  - System V ABI prologue/epilogue with `TCG_AREG0 = RBP`
-  - `exit_tb`, `goto_tb` (4-byte aligned for atomic patching), `goto_ptr`
+- **188 instructions**: RV64I (full), RV64M (mul/div/rem), RV64F/RV64D (float arithmetic, load/store, conversions, comparisons, FMA), RVC (compressed), privileged (CSR, ECALL, MRET/SRET, SFENCE.VMA, WFI)
+- **Privileged ISA**: Sv39 MMU with TLB, Physical Memory Protection (PMP), M/S/U privilege levels
+- **Decode generator**: QEMU-style `.decode` files compiled to Rust decoders at build time
 
-### tcg-exec
+### Full-System Emulation (machina-system + hw/*)
 
-- **MTTCG state split**: `SharedState` (TB store + code buffer + backend) and
-  `PerCpuState` (jump cache + stats) for vCPU-local hot data.
-- **Thread-safe TB store**: lock-free read path (`AtomicUsize` length publish),
-  hash mutation lock, and per-TB jump lock for chaining edges.
-- **Execution hot path**: jump-cache hit → hash hit → translate; supports
-  `next_tb_hint`, direct chaining (`goto_tb` slots), and `exit_target` cache.
-- **Debug observability**: `ExecStats` exposes lookup hit rate, chain patch
-  counts, and hint usage; `TCG_STATS=1` prints runtime profile.
+- **Reference Machine** (`riscv64-ref`): Integrated board with CPU, RAM, PLIC, ACLINT, UART, FDT
+- **Interrupt Controllers**: PLIC (external interrupts, priority/threshold), ACLINT (MTIMER + MSWI)
+- **Character Devices**: UART 16550A with chardev backend, stdio support for `-nographic`
+- **Memory Subsystem**: Hierarchical memory regions, AddressSpace with flat views, MMIO dispatch
+- **CPU Management**: CpuManager with WFI condvar wakeup, IRQ delivery to `mip`
+- **Boot**: Firmware/kernel loading, FDT generation with device phandles, SBI stub
+- **Device Infrastructure**: qdev model, IRQ sinks, clock, FDT builder, image loader
 
-### tcg-linux-user
+### Linux-User Emulation
 
-- **ELF loader + stack layout** aligned with linux-user model, including
-  `argv` propagation and auxv essentials.
-- **Guest space management** with mmap/brk handling for user-mode execution.
-- **Syscall emulation** for core Linux user-mode workflows used by tests.
-- **Runner**: `tcg-riscv64 <elf> [args...]`, shared by linux-user e2e tests.
+- **ELF Loader**: RISC-V ELF loading with guest `argv` propagation and auxv layout
+- **Guest Address Space**: mmap/brk handling for user-mode memory management
+- **Syscall Emulation**: Core Linux syscalls for user-mode workloads
+- **Runner**: `tcg-riscv64 <elf> [args...]`
 
-### tcg-tests
+### Testing (964 tests)
 
-- **Unit tests**: Core data structure APIs (types, opcodes, temps, labels, ops, context, TBs)
-- **Backend regression**: x86-64 instruction encoding, codegen aliasing behavior
-- **Frontend translation**: 91 RISC-V instruction tests through the full decode→IR→codegen→execute pipeline (RV32I/RV64I/RVC/RV32F/RV64F)
-- **Difftest**: Differential testing framework comparing tcg-rs results against QEMU (qemu-riscv64 user-mode) with edge-case values
-- **Integration tests**: End-to-end pipeline with minimal RISC-V CPU state — ALU ops, branches, loops, memory access, complex multi-op sequences
-- **MTTCG tests**: concurrent lookup/translation/chaining tests under
-  `tests/src/exec/mttcg.rs` (26 tests)
-- **linux-user guest tests**: `hello`, `hello_printf`, `hello_float`,
-  `dhrystone`, `argv_echo`
+- **Unit**: Core data structures, IR APIs, backend instruction encoding
+- **Frontend**: 91 RISC-V instruction tests through full decode → IR → codegen → execute pipeline
+- **Difftest**: Differential testing against QEMU (qemu-riscv64) with edge-case values
+- **Integration**: End-to-end pipeline — ALU, branches, loops, memory, complex sequences
+- **MTTCG**: Concurrent lookup/translation/chaining (26 tests)
+- **Linux-user**: Guest programs — hello, hello_printf, hello_float, dhrystone, argv_echo
+- **Machine**: Full-system boot and device tests
 
-### decode
+## Performance
 
-- **Parser**: Parses QEMU-style `.decode` files (fields, argument sets, formats, patterns with bit-level matching)
-- **Code generator**: Emits Rust code — `Args*` structs, `extract_*` functions, `Decode<Ir>` trait with `trans_*` methods, and `decode()` dispatch function
-- **Build integration**: `frontend/build.rs` invokes decode at compile time to generate the RISC-V instruction decoder
+In linux-user mode, machina achieves ~30% faster execution than QEMU TCG on benchmarks like dhrystone, thanks to:
 
-### tcg-frontend
+- **`next_tb_hint`**: Skips TB lookup entirely on chained exits (hot loop hit rate near 100%)
+- **`exit_target` atomic cache**: Single-entry cache for indirect jumps, avoiding hash lookups
+- **Simplified codegen**: Constraint-driven design eliminates register shuffling overhead
 
-- **Translation framework** (`lib.rs`): `TranslatorOps` trait and `translator_loop()` — architecture-independent instruction translation loop
-- **RISC-V frontend** (`riscv/`):
-  - `cpu.rs`: `RiscvCpu` state (`#[repr(C)]`, 32 GPRs + 32 FPRs + PC + float CSRs)
-  - `mod.rs`: `RiscvDisasContext` with GPRs/FPRs as TCG globals, `RiscvTranslator` implementing `TranslatorOps`
-  - `trans.rs`: 184 `trans_*` methods implementing `Decode<Context>` trait, using QEMU-style `gen_xxx` helper pattern with `BinOp` function pointers
-  - Implemented: RV64I (full), RV64M (mul/div/rem), RV64F/RV64D (float arithmetic, load/store, conversions, comparisons, FMA), RVC (compressed), load/store (guest memory via helper calls), user-mode CSRs (fflags/frm/fcsr)
+See [Performance Analysis](docs/performance.md) for details.
 
 ## QEMU Reference
 
-This project references the following QEMU source files:
+This project references the QEMU source tree for architectural guidance:
 
-- `tcg/tcg.c` — Register allocator (`tcg_reg_alloc_op`) and codegen
-- `tcg/tcg-op.c` — IR emission (`tcg_gen_*`)
-- `tcg/optimize.c` — IR optimizer
-- `tcg/i386/tcg-target.c.inc` — x86-64 backend + constraint table (`tcg_target_op_def`)
-- `include/tcg/tcg.h` — `TCGArgConstraint`, `TCGTemp`, `TCGContext`
-- `include/tcg/tcg-opc.h` — Opcode definitions
-- `target/riscv/translate.c` — RISC-V frontend translation
-- `target/riscv/insn_trans/trans_rvi.c.inc` — RV64I instruction translation helpers
-- `accel/tcg/translator.c` — `translator_loop` (architecture-independent translation loop)
-- `accel/tcg/cpu-exec.c` — execution loop, TB chaining, exit protocol
-- `accel/tcg/tb-maint.c` — TB invalidation and unlinking
-- `docs/devel/decodetree.rst` — Decodetree pattern-based instruction decoder generator (QEMU reference)
-- `docs/devel/multi-thread-tcg.rst` — MTTCG concurrency model
+- **TCG core**: `tcg/tcg.c`, `tcg/tcg-op.c`, `tcg/optimize.c`, `include/tcg/tcg.h`, `include/tcg/tcg-opc.h`
+- **x86-64 backend**: `tcg/i386/tcg-target.c.inc`
+- **RISC-V frontend**: `target/riscv/translate.c`, `target/riscv/insn_trans/`
+- **Execution**: `accel/tcg/cpu-exec.c`, `accel/tcg/tb-maint.c`, `accel/tcg/translator.c`
+- **Hardware**: `hw/riscv/`, `hw/intc/`, `hw/char/`, `hw/core/`
+- **Documentation**: `docs/devel/tcg.rst`, `multi-thread-tcg.rst`, `decodetree.rst`
 
 ## Documentation
 
-- [Design Document](docs/design.md) — Architecture, data structures, translation pipeline, exec layer, linux-user
+- [Design Document](docs/design.md) — Architecture, data structures, translation pipeline
 - [IR Ops](docs/ir-ops.md) — Opcode catalog, Op structure, IR builder API
-- [x86-64 Backend](docs/x86_64-backend.md) — Instruction encoder, constraint table, codegen dispatch
-- [Testing](docs/testing.md) — Test architecture, running tests, difftest framework, guest programs
+- [x86-64 Backend](docs/x86_64-backend.md) — Instruction encoder, constraint table, codegen
+- [Performance](docs/performance.md) — Optimization techniques and QEMU comparison
+- [Testing](docs/testing.md) — Test architecture, difftest framework, guest programs
 - [Coding Style](docs/coding-style.md) — Naming conventions, formatting rules
 
 ## License
