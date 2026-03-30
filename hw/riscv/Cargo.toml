@@ -9,3 +9,4 @@ machina-hw-core = { path = "../core" }
 machina-hw-intc = { path = "../intc" }
 machina-hw-char = { path = "../char" }
 machina-memory = { path = "../../memory" }
+machina-guest-riscv = { path = "../../guest/riscv" }

@@ -1,10 +1,12 @@
 // riscv64-ref machine: virt-compatible reference platform.
 
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use machina_core::address::GPA;
 use machina_core::machine::{Machine, MachineOpts};
+use machina_guest_riscv::riscv::cpu::RiscvCpu;
 use machina_hw_char::uart::Uart16550;
 use machina_hw_core::chardev::{CharFrontend, NullChardev};
 use machina_hw_core::fdt::FdtBuilder;
@@ -145,6 +147,11 @@ pub struct RefMachine {
     aclint: Option<Arc<Mutex<Aclint>>>,
     uart: Option<Arc<Mutex<Uart16550>>>,
     fdt_blob: Option<Vec<u8>>,
+    // Per-hart RiscvCpu instances.
+    pub(crate) cpus: Vec<RiscvCpu>,
+    // Stored boot options (bios / kernel paths).
+    pub(crate) bios_path: Option<PathBuf>,
+    pub(crate) kernel_path: Option<PathBuf>,
     // Per-hart CPU IRQ sinks.
     cpu_irq_sinks: Vec<Arc<CpuIrqSink>>,
     // UART → PLIC IRQ line (source 10).
@@ -171,6 +178,9 @@ impl RefMachine {
             aclint: None,
             uart: None,
             fdt_blob: None,
+            cpus: Vec::new(),
+            bios_path: None,
+            kernel_path: None,
             cpu_irq_sinks: Vec::new(),
             uart_irq: None,
             plic_mei_irqs: Vec::new(),
@@ -211,6 +221,16 @@ impl RefMachine {
         &self.cpu_irq_sinks[hart]
     }
 
+    /// Immutable reference to the RiscvCpu at `idx`.
+    pub fn cpu(&self, idx: usize) -> &RiscvCpu {
+        &self.cpus[idx]
+    }
+
+    /// Mutable reference to the RiscvCpu at `idx`.
+    pub fn cpu_mut(&mut self, idx: usize) -> &mut RiscvCpu {
+        &mut self.cpus[idx]
+    }
+
     /// UART → PLIC IRQ line reference.
     pub fn uart_irq(&self) -> &IrqLine {
         self.uart_irq.as_ref().expect("machine not initialized")
@@ -246,6 +266,10 @@ impl RefMachine {
     fn generate_fdt(&self) -> Vec<u8> {
         let mut fdt = FdtBuilder::new();
 
+        // Phandle allocation: intc_phandle(hart) = hart + 1,
+        // PLIC phandle = cpu_count + 1.
+        let plic_phandle = self.cpu_count + 1;
+
         // Root node.
         fdt.begin_node("");
         fdt.property_string("compatible", "machina,riscv64-ref");
@@ -258,6 +282,7 @@ impl RefMachine {
         fdt.property_u32("#size-cells", 0);
         fdt.property_u32("timebase-frequency", 10_000_000);
         for i in 0..self.cpu_count {
+            let intc_phandle = i + 1;
             let name = format!("cpu@{i}");
             fdt.begin_node(&name);
             fdt.property_string("device_type", "cpu");
@@ -271,6 +296,7 @@ impl RefMachine {
             fdt.property_u32("#interrupt-cells", 1);
             fdt.property_bytes("interrupt-controller", &[]);
             fdt.property_string("compatible", "riscv,cpu-intc");
+            fdt.property_u32("phandle", intc_phandle);
             fdt.end_node();
             fdt.end_node();
         }
@@ -299,24 +325,49 @@ impl RefMachine {
         fdt.property_bytes("ranges", &[]);
 
         // /soc/plic@c000000
+        // Build interrupts-extended: per hart, two contexts
+        // (M-mode external=11, S-mode external=9).
+        let mut plic_ext = Vec::with_capacity(self.cpu_count as usize * 4);
+        for i in 0..self.cpu_count {
+            let intc_ph = i + 1;
+            // M-mode external interrupt (IRQ 11).
+            plic_ext.push(intc_ph);
+            plic_ext.push(IRQ_MEI);
+            // S-mode external interrupt (IRQ 9).
+            plic_ext.push(intc_ph);
+            plic_ext.push(IRQ_SEI);
+        }
         fdt.begin_node("plic@c000000");
         fdt.property_string("compatible", "sifive,plic-1.0.0");
         fdt.property_u32("#interrupt-cells", 1);
         fdt.property_bytes("interrupt-controller", &[]);
+        fdt.property_u32("phandle", plic_phandle);
         fdt.property_u32_list(
             "reg",
             &[0, PLIC_BASE as u32, 0, PLIC_SIZE as u32],
         );
         fdt.property_u32("riscv,ndev", PLIC_NUM_SOURCES - 1);
+        fdt.property_u32_list("interrupts-extended", &plic_ext);
         fdt.end_node();
 
         // /soc/clint@2000000
+        // Build interrupts-extended: per hart, MTI (7) and
+        // MSI (3).
+        let mut clint_ext = Vec::with_capacity(self.cpu_count as usize * 4);
+        for i in 0..self.cpu_count {
+            let intc_ph = i + 1;
+            clint_ext.push(intc_ph);
+            clint_ext.push(IRQ_MTI);
+            clint_ext.push(intc_ph);
+            clint_ext.push(IRQ_MSI);
+        }
         fdt.begin_node("clint@2000000");
         fdt.property_string("compatible", "riscv,clint0");
         fdt.property_u32_list(
             "reg",
             &[0, ACLINT_BASE as u32, 0, ACLINT_SIZE as u32],
         );
+        fdt.property_u32_list("interrupts-extended", &clint_ext);
         fdt.end_node();
 
         // /soc/serial@10000000
@@ -327,6 +378,7 @@ impl RefMachine {
             &[0, UART0_BASE as u32, 0, UART0_SIZE as u32],
         );
         fdt.property_u32("interrupts", UART_IRQ);
+        fdt.property_u32("interrupt-parent", plic_phandle);
         fdt.end_node();
 
         fdt.end_node(); // /soc
@@ -361,6 +413,15 @@ impl Machine for RefMachine {
         }
         self.ram_size = opts.ram_size;
         self.cpu_count = opts.cpu_count;
+        self.bios_path = opts.bios.clone();
+        self.kernel_path = opts.kernel.clone();
+
+        // Create per-hart CPUs.
+        let mut cpus = Vec::with_capacity(opts.cpu_count as usize);
+        for _ in 0..opts.cpu_count {
+            cpus.push(RiscvCpu::new());
+        }
+        self.cpus = cpus;
 
         // Build the address space.
         let mut root = MemoryRegion::container("system", u64::MAX);
@@ -522,8 +583,8 @@ impl Machine for RefMachine {
     }
 
     fn boot(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-        // Actual boot loading is done via boot::setup_boot.
-        Ok(())
+        use crate::boot::boot_ref_machine;
+        boot_ref_machine(self)
     }
 
     fn cpu_count(&self) -> usize {

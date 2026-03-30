@@ -111,3 +111,34 @@ fn test_socket_chardev_not_connected() {
     // No connection → read returns None.
     assert_eq!(c.read(), None);
 }
+
+#[test]
+fn test_char_frontend_poll_receives() {
+    let sink = Arc::new(Mutex::new(Vec::new()));
+    let backend = MemChardev::new(b"XYZ", Arc::clone(&sink));
+
+    let received = Arc::new(Mutex::new(Vec::new()));
+    let recv_clone = Arc::clone(&received);
+
+    let mut fe = CharFrontend::new(Box::new(backend));
+    fe.set_handlers(
+        Box::new(move |data: &[u8]| {
+            recv_clone.lock().unwrap().extend_from_slice(data);
+        }),
+        Box::new(|_event| {}),
+    );
+
+    // Poll with data available: handler should be called.
+    fe.poll();
+    let got = received.lock().unwrap().clone();
+    assert_eq!(
+        got,
+        b"XYZ".to_vec(),
+        "poll should forward all available bytes"
+    );
+
+    // Second poll: no more data.
+    fe.poll();
+    let got2 = received.lock().unwrap().clone();
+    assert_eq!(got2, b"XYZ".to_vec(), "second poll should add nothing");
+}

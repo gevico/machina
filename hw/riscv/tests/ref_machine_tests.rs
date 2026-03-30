@@ -1,7 +1,8 @@
 use machina_core::address::GPA;
 use machina_core::machine::{Machine, MachineOpts};
+use machina_guest_riscv::riscv::csr::PrivLevel;
 use machina_hw_riscv::boot;
-use machina_hw_riscv::ref_machine::RefMachine;
+use machina_hw_riscv::ref_machine::{RefMachine, RAM_BASE};
 use machina_hw_riscv::sbi::{SbiHandler, SBI_EXT_BASE, SBI_EXT_TIMER};
 
 fn default_opts() -> MachineOpts {
@@ -328,4 +329,50 @@ fn test_uart_rx_irq_to_plic() {
             "PLIC UART IRQ 10 should be cleared"
         );
     }
+}
+
+#[test]
+fn test_boot_sets_cpu_state() {
+    let mut m = RefMachine::new();
+    m.init(&default_opts()).expect("init failed");
+
+    // Write a small BIOS stub into RAM directly, then boot.
+    let bios = [0x13u8; 16]; // NOP sled
+    m.write_ram(0, &bios).expect("write_ram failed");
+
+    m.boot().expect("boot failed");
+
+    let cpu = m.cpu(0);
+    assert_eq!(cpu.gpr[10], 0, "a0 should be hart_id=0");
+    assert!(cpu.gpr[11] >= RAM_BASE, "a1 should be fdt_addr within RAM");
+    assert_eq!(cpu.pc, RAM_BASE, "pc should be RAM_BASE");
+    assert_eq!(
+        cpu.priv_level,
+        PrivLevel::Machine,
+        "privilege should be Machine"
+    );
+}
+
+#[test]
+fn test_fdt_has_phandle() {
+    let mut m = RefMachine::new();
+    m.init(&default_opts()).expect("init failed");
+    let fdt = m.fdt_blob();
+
+    // The string "phandle" should appear in the DTB
+    // strings block.
+    let needle = b"phandle";
+    let found = fdt.windows(needle.len()).any(|w| w == needle);
+    assert!(found, "FDT should contain phandle property");
+}
+
+#[test]
+fn test_fdt_has_interrupts_extended() {
+    let mut m = RefMachine::new();
+    m.init(&default_opts()).expect("init failed");
+    let fdt = m.fdt_blob();
+
+    let needle = b"interrupts-extended";
+    let found = fdt.windows(needle.len()).any(|w| w == needle);
+    assert!(found, "FDT should contain interrupts-extended");
 }
