@@ -204,10 +204,14 @@ fn test_ref_machine_irq_wiring() {
         );
     }
 
-    // Verify CPU IRQ sink exists for hart 0.
-    let sink = m.cpu_irq_sink(0);
-    // MEI (11) should initially be low.
-    assert!(!sink.pending(11), "MEI should be low initially");
+    // Verify CPU mip: MEI (11) should be low (PLIC has
+    // default priority=0, threshold=0, so 0 > 0 is false).
+    let cpus = m.cpus_lock();
+    assert_eq!(
+        cpus[0].csr.mip & (1 << 11),
+        0,
+        "MEI should be low initially"
+    );
 }
 
 #[test]
@@ -342,7 +346,8 @@ fn test_boot_sets_cpu_state() {
 
     m.boot().expect("boot failed");
 
-    let cpu = m.cpu(0);
+    let cpus = m.cpus_lock();
+    let cpu = &cpus[0];
     assert_eq!(cpu.gpr[10], 0, "a0 should be hart_id=0");
     assert!(cpu.gpr[11] >= RAM_BASE, "a1 should be fdt_addr within RAM");
     assert_eq!(cpu.pc, RAM_BASE, "pc should be RAM_BASE");
@@ -375,4 +380,61 @@ fn test_fdt_has_interrupts_extended() {
     let needle = b"interrupts-extended";
     let found = fdt.windows(needle.len()).any(|w| w == needle);
     assert!(found, "FDT should contain interrupts-extended");
+}
+
+#[test]
+fn test_irq_updates_cpu_mip() {
+    let mut m = RefMachine::new();
+    m.init(&default_opts()).expect("init failed");
+
+    let plic_base = 0x0C00_0000u64;
+    let as_ = m.address_space();
+
+    // Set priority for source 10 (UART) to 1.
+    // Priority offset = 4 * source.
+    as_.write(GPA::new(plic_base + 4 * 10), 4, 1);
+
+    // Enable source 10 for context 0 (M-mode hart 0).
+    // Enable base = 0x2000, context 0, word 0, bit 10.
+    let ctx0_en = GPA::new(plic_base + 0x2000);
+    as_.write(ctx0_en, 4, 1 << 10);
+
+    // Threshold for context 0 stays at 0 (default).
+    // priority(1) > threshold(0) → active.
+
+    // CPU mip should be clear before IRQ.
+    {
+        let cpus = m.cpus_lock();
+        assert_eq!(
+            cpus[0].csr.mip & (1 << 11),
+            0,
+            "MEI should be clear before IRQ"
+        );
+    }
+
+    // Raise UART IRQ via PLIC source 10.
+    m.uart_irq().raise();
+
+    // CPU0 mip should now have MEI (bit 11) set.
+    {
+        let cpus = m.cpus_lock();
+        assert_ne!(
+            cpus[0].csr.mip & (1 << 11),
+            0,
+            "MEI should be set after PLIC source raise"
+        );
+    }
+
+    // Lower UART IRQ.
+    m.uart_irq().lower();
+
+    // MEI should be cleared.
+    {
+        let cpus = m.cpus_lock();
+        assert_eq!(
+            cpus[0].csr.mip & (1 << 11),
+            0,
+            "MEI should be cleared after IRQ lower"
+        );
+    }
 }

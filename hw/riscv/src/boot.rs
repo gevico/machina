@@ -105,12 +105,14 @@ pub fn boot_ref_machine(
         .map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
 
     // Set CPU0 boot state.
-    if !machine.cpus.is_empty() {
-        let cpu = machine.cpu_mut(0);
-        cpu.gpr[10] = 0; // a0 = hart_id
-        cpu.gpr[11] = fdt_addr; // a1 = fdt_addr
-        cpu.pc = RAM_BASE; // entry point
-        cpu.set_priv(PrivLevel::Machine);
+    {
+        let mut cpus = machine.cpus_lock();
+        if let Some(cpu) = cpus.get_mut(0) {
+            cpu.gpr[10] = 0; // a0 = hart_id
+            cpu.gpr[11] = fdt_addr; // a1 = fdt_addr
+            cpu.pc = RAM_BASE; // entry point
+            cpu.set_priv(PrivLevel::Machine);
+        }
     }
 
     Ok(())

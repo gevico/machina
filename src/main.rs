@@ -6,6 +6,7 @@ use std::process;
 
 use machina_core::machine::{Machine, MachineOpts};
 use machina_hw_riscv::ref_machine::RefMachine;
+use machina_system::CpuManager;
 
 fn usage() {
     eprintln!("Usage: machina [options]");
@@ -135,11 +136,14 @@ fn main() {
         cli.ram_mib
     );
 
-    // TODO: boot and run execution loop
     if let Err(e) = machine.boot() {
         eprintln!("machina: boot failed: {}", e);
         process::exit(1);
     }
 
-    eprintln!("machina: execution loop not yet implemented");
+    let cpu_mgr = CpuManager::new(1);
+    if let Err(e) = cpu_mgr.run(machine.as_mut()) {
+        eprintln!("machina: execution error: {}", e);
+        process::exit(1);
+    }
 }

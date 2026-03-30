@@ -1,8 +1,7 @@
 // riscv64-ref machine: virt-compatible reference platform.
 
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard};
 
 use machina_core::address::GPA;
 use machina_core::machine::{Machine, MachineOpts};
@@ -35,7 +34,7 @@ const PLIC_NUM_SOURCES: u32 = 96;
 
 // ---- CPU IRQ sink ----
 
-/// Per-hart interrupt pending flags.
+/// Per-hart IRQ sink that updates the real CPU mip bits.
 ///
 /// IRQ numbering (matches RISC-V privilege spec):
 ///   3 = MSI (machine software interrupt)
@@ -44,32 +43,27 @@ const PLIC_NUM_SOURCES: u32 = 96;
 ///   1 = SSI (supervisor software interrupt)
 ///   5 = STI (supervisor timer interrupt)
 ///   9 = SEI (supervisor external interrupt)
-pub struct CpuIrqSink {
-    flags: Vec<AtomicBool>,
+pub struct RiscvCpuIrqSink {
+    cpus: Arc<Mutex<Vec<RiscvCpu>>>,
+    hart: usize,
 }
 
-impl CpuIrqSink {
-    /// Create a sink with `n` interrupt lines.
-    pub fn new(n: usize) -> Self {
-        let mut flags = Vec::with_capacity(n);
-        for _ in 0..n {
-            flags.push(AtomicBool::new(false));
-        }
-        Self { flags }
-    }
-
-    /// Read the pending state of IRQ `irq`.
-    pub fn pending(&self, irq: u32) -> bool {
-        self.flags
-            .get(irq as usize)
-            .is_some_and(|f| f.load(Ordering::Relaxed))
+impl RiscvCpuIrqSink {
+    pub fn new(cpus: Arc<Mutex<Vec<RiscvCpu>>>, hart: usize) -> Self {
+        Self { cpus, hart }
     }
 }
 
-impl IrqSink for CpuIrqSink {
+impl IrqSink for RiscvCpuIrqSink {
     fn set_irq(&self, irq: u32, level: bool) {
-        if let Some(f) = self.flags.get(irq as usize) {
-            f.store(level, Ordering::Relaxed);
+        let mut cpus = self.cpus.lock().unwrap();
+        if let Some(cpu) = cpus.get_mut(self.hart) {
+            let bit = 1u64 << irq;
+            if level {
+                cpu.csr.mip |= bit;
+            } else {
+                cpu.csr.mip &= !bit;
+            }
         }
     }
 }
@@ -79,8 +73,6 @@ const IRQ_MSI: u32 = 3;
 const IRQ_MTI: u32 = 7;
 const IRQ_MEI: u32 = 11;
 const IRQ_SEI: u32 = 9;
-// 16 lines covers all standard RISC-V interrupts.
-const CPU_IRQ_COUNT: usize = 16;
 
 // ---- MMIO adapter: PLIC ----
 
@@ -147,23 +139,13 @@ pub struct RefMachine {
     aclint: Option<Arc<Mutex<Aclint>>>,
     uart: Option<Arc<Mutex<Uart16550>>>,
     fdt_blob: Option<Vec<u8>>,
-    // Per-hart RiscvCpu instances.
-    pub(crate) cpus: Vec<RiscvCpu>,
+    // Per-hart RiscvCpu instances (shared for IRQ sinks).
+    pub(crate) cpus: Arc<Mutex<Vec<RiscvCpu>>>,
     // Stored boot options (bios / kernel paths).
     pub(crate) bios_path: Option<PathBuf>,
     pub(crate) kernel_path: Option<PathBuf>,
-    // Per-hart CPU IRQ sinks.
-    cpu_irq_sinks: Vec<Arc<CpuIrqSink>>,
     // UART → PLIC IRQ line (source 10).
     uart_irq: Option<IrqLine>,
-    // PLIC output → CPU MEI per hart.
-    plic_mei_irqs: Vec<IrqLine>,
-    // PLIC output → CPU SEI per hart.
-    plic_sei_irqs: Vec<IrqLine>,
-    // ACLINT → CPU MTI per hart.
-    aclint_mti_irqs: Vec<IrqLine>,
-    // ACLINT → CPU MSI per hart.
-    aclint_msi_irqs: Vec<IrqLine>,
 }
 
 impl RefMachine {
@@ -178,15 +160,10 @@ impl RefMachine {
             aclint: None,
             uart: None,
             fdt_blob: None,
-            cpus: Vec::new(),
+            cpus: Arc::new(Mutex::new(Vec::new())),
             bios_path: None,
             kernel_path: None,
-            cpu_irq_sinks: Vec::new(),
             uart_irq: None,
-            plic_mei_irqs: Vec::new(),
-            plic_sei_irqs: Vec::new(),
-            aclint_mti_irqs: Vec::new(),
-            aclint_msi_irqs: Vec::new(),
         }
     }
 
@@ -216,19 +193,14 @@ impl RefMachine {
         self.fdt_blob.as_ref().expect("machine not initialized")
     }
 
-    /// Per-hart CPU IRQ sink.
-    pub fn cpu_irq_sink(&self, hart: usize) -> &Arc<CpuIrqSink> {
-        &self.cpu_irq_sinks[hart]
+    /// Lock the CPU vector for shared access.
+    pub fn cpus_lock(&self) -> MutexGuard<'_, Vec<RiscvCpu>> {
+        self.cpus.lock().unwrap()
     }
 
-    /// Immutable reference to the RiscvCpu at `idx`.
-    pub fn cpu(&self, idx: usize) -> &RiscvCpu {
-        &self.cpus[idx]
-    }
-
-    /// Mutable reference to the RiscvCpu at `idx`.
-    pub fn cpu_mut(&mut self, idx: usize) -> &mut RiscvCpu {
-        &mut self.cpus[idx]
+    /// Get a clone of the shared CPU vector Arc.
+    pub fn cpus_arc(&self) -> Arc<Mutex<Vec<RiscvCpu>>> {
+        Arc::clone(&self.cpus)
     }
 
     /// UART → PLIC IRQ line reference.
@@ -417,11 +389,13 @@ impl Machine for RefMachine {
         self.kernel_path = opts.kernel.clone();
 
         // Create per-hart CPUs.
-        let mut cpus = Vec::with_capacity(opts.cpu_count as usize);
-        for _ in 0..opts.cpu_count {
-            cpus.push(RiscvCpu::new());
+        {
+            let mut cpus = Vec::with_capacity(opts.cpu_count as usize);
+            for _ in 0..opts.cpu_count {
+                cpus.push(RiscvCpu::new());
+            }
+            self.cpus = Arc::new(Mutex::new(cpus));
         }
-        self.cpus = cpus;
 
         // Build the address space.
         let mut root = MemoryRegion::container("system", u64::MAX);
@@ -462,39 +436,7 @@ impl Machine for RefMachine {
         self.address_space = Some(AddressSpace::new(root));
 
         // ---- IRQ wiring ----
-        // Create per-hart CPU IRQ sinks.
-        let mut cpu_sinks = Vec::with_capacity(opts.cpu_count as usize);
-        let mut plic_mei = Vec::with_capacity(opts.cpu_count as usize);
-        let mut plic_sei = Vec::with_capacity(opts.cpu_count as usize);
-        let mut aclint_mti = Vec::with_capacity(opts.cpu_count as usize);
-        let mut aclint_msi = Vec::with_capacity(opts.cpu_count as usize);
-        for _ in 0..opts.cpu_count {
-            let sink = Arc::new(CpuIrqSink::new(CPU_IRQ_COUNT));
-            // PLIC → CPU external interrupts.
-            plic_mei.push(IrqLine::new(
-                Arc::clone(&sink) as Arc<dyn IrqSink>,
-                IRQ_MEI,
-            ));
-            plic_sei.push(IrqLine::new(
-                Arc::clone(&sink) as Arc<dyn IrqSink>,
-                IRQ_SEI,
-            ));
-            // ACLINT → CPU timer/software interrupts.
-            aclint_mti.push(IrqLine::new(
-                Arc::clone(&sink) as Arc<dyn IrqSink>,
-                IRQ_MTI,
-            ));
-            aclint_msi.push(IrqLine::new(
-                Arc::clone(&sink) as Arc<dyn IrqSink>,
-                IRQ_MSI,
-            ));
-            cpu_sinks.push(sink);
-        }
-        self.cpu_irq_sinks = cpu_sinks;
-        self.plic_mei_irqs = plic_mei;
-        self.plic_sei_irqs = plic_sei;
-        self.aclint_mti_irqs = aclint_mti;
-        self.aclint_msi_irqs = aclint_msi;
+        // Per-hart CPU IRQ sinks update real csr.mip bits.
 
         // UART IRQ source 10 → PLIC.
         let plic_as_sink =
@@ -516,36 +458,38 @@ impl Machine for RefMachine {
 
         // ---- Connect PLIC context outputs ----
         {
+            let cpus = &self.cpus;
             let mut p = self.plic.as_ref().unwrap().lock().unwrap();
             for hart in 0..opts.cpu_count as usize {
                 // M-mode context = 2*hart
-                let mei_line = IrqLine::new(
-                    Arc::clone(&self.cpu_irq_sinks[hart]) as Arc<dyn IrqSink>,
-                    IRQ_MEI,
-                );
+                let mei_sink =
+                    Arc::new(RiscvCpuIrqSink::new(Arc::clone(cpus), hart));
+                let mei_line =
+                    IrqLine::new(mei_sink as Arc<dyn IrqSink>, IRQ_MEI);
                 p.connect_context_output((2 * hart) as u32, mei_line);
                 // S-mode context = 2*hart + 1
-                let sei_line = IrqLine::new(
-                    Arc::clone(&self.cpu_irq_sinks[hart]) as Arc<dyn IrqSink>,
-                    IRQ_SEI,
-                );
+                let sei_sink =
+                    Arc::new(RiscvCpuIrqSink::new(Arc::clone(cpus), hart));
+                let sei_line =
+                    IrqLine::new(sei_sink as Arc<dyn IrqSink>, IRQ_SEI);
                 p.connect_context_output((2 * hart + 1) as u32, sei_line);
             }
         }
 
         // ---- Connect ACLINT MTI/MSI outputs ----
         {
+            let cpus = &self.cpus;
             let mut a = self.aclint.as_ref().unwrap().lock().unwrap();
             for hart in 0..opts.cpu_count as usize {
-                let mti_line = IrqLine::new(
-                    Arc::clone(&self.cpu_irq_sinks[hart]) as Arc<dyn IrqSink>,
-                    IRQ_MTI,
-                );
+                let mti_sink =
+                    Arc::new(RiscvCpuIrqSink::new(Arc::clone(cpus), hart));
+                let mti_line =
+                    IrqLine::new(mti_sink as Arc<dyn IrqSink>, IRQ_MTI);
                 a.connect_mti(hart as u32, mti_line);
-                let msi_line = IrqLine::new(
-                    Arc::clone(&self.cpu_irq_sinks[hart]) as Arc<dyn IrqSink>,
-                    IRQ_MSI,
-                );
+                let msi_sink =
+                    Arc::new(RiscvCpuIrqSink::new(Arc::clone(cpus), hart));
+                let msi_line =
+                    IrqLine::new(msi_sink as Arc<dyn IrqSink>, IRQ_MSI);
                 a.connect_msi(hart as u32, msi_line);
             }
         }
