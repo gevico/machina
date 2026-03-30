@@ -515,8 +515,7 @@ fn test_pmp_subpage_deny() {
     // Identity-map page 0 (VA 0..0xFFF -> PA 0..0xFFF).
     write_pte(&mut mem, 0x1000, ptr_pte(2));
     write_pte(&mut mem, 0x2000, ptr_pte(3));
-    let flags =
-        PTE_V | PTE_R | PTE_W | PTE_X | PTE_A | PTE_D;
+    let flags = PTE_V | PTE_R | PTE_W | PTE_X | PTE_A | PTE_D;
     write_pte(&mut mem, 0x3000, leaf_pte(0, flags));
 
     let mut mmu = Mmu::new();

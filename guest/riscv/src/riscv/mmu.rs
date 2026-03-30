@@ -184,12 +184,7 @@ impl Mmu {
                     let offset = gva & (entry.page_size - 1);
                     let pa = (entry.ppn << 12) | offset;
                     if let Some(p) = pmp {
-                        p.check_access(
-                            pa,
-                            access_size,
-                            access,
-                            priv_level,
-                        )?;
+                        p.check_access(pa, access_size, access, priv_level)?;
                     }
                     return Ok(pa);
                 }

@@ -69,15 +69,10 @@ impl Plic {
             let bit = 1u32 << (irq % 32);
 
             let is_pending = self.pending[word] & bit != 0;
-            let is_enabled =
-                self.enable[ctx][word] & bit != 0;
+            let is_enabled = self.enable[ctx][word] & bit != 0;
             let pri = self.priority[irq as usize];
 
-            if is_pending
-                && is_enabled
-                && pri > thresh
-                && pri > best_pri
-            {
+            if is_pending && is_enabled && pri > thresh && pri > best_pri {
                 best_pri = pri;
                 best_irq = Some(irq);
             }
@@ -111,8 +106,7 @@ impl Plic {
         let _ = size;
         // Priority registers.
         if offset < PENDING_BASE {
-            let idx =
-                (offset - PRIORITY_BASE) as usize / 4;
+            let idx = (offset - PRIORITY_BASE) as usize / 4;
             if idx < self.priority.len() {
                 return self.priority[idx] as u64;
             }
@@ -120,8 +114,7 @@ impl Plic {
         }
         // Pending bitmap.
         if offset < ENABLE_BASE {
-            let idx =
-                (offset - PENDING_BASE) as usize / 4;
+            let idx = (offset - PENDING_BASE) as usize / 4;
             if idx < self.pending.len() {
                 return self.pending[idx] as u64;
             }
@@ -131,10 +124,8 @@ impl Plic {
         if offset < CONTEXT_BASE {
             let rel = offset - ENABLE_BASE;
             let ctx = (rel / ENABLE_STRIDE) as usize;
-            let word =
-                ((rel % ENABLE_STRIDE) / 4) as usize;
-            if ctx < self.num_contexts as usize
-                && word < self.enable[ctx].len()
+            let word = ((rel % ENABLE_STRIDE) / 4) as usize;
+            if ctx < self.num_contexts as usize && word < self.enable[ctx].len()
             {
                 return self.enable[ctx][word] as u64;
             }
@@ -154,19 +145,13 @@ impl Plic {
         }
     }
 
-    pub fn write(
-        &mut self,
-        offset: u64,
-        size: u32,
-        val: u64,
-    ) {
+    pub fn write(&mut self, offset: u64, size: u32, val: u64) {
         let _ = size;
         let v = val as u32;
 
         // Priority registers.
         if offset < PENDING_BASE {
-            let idx =
-                (offset - PRIORITY_BASE) as usize / 4;
+            let idx = (offset - PRIORITY_BASE) as usize / 4;
             if idx < self.priority.len() {
                 self.priority[idx] = v;
             }
@@ -180,10 +165,8 @@ impl Plic {
         if offset < CONTEXT_BASE {
             let rel = offset - ENABLE_BASE;
             let ctx = (rel / ENABLE_STRIDE) as usize;
-            let word =
-                ((rel % ENABLE_STRIDE) / 4) as usize;
-            if ctx < self.num_contexts as usize
-                && word < self.enable[ctx].len()
+            let word = ((rel % ENABLE_STRIDE) / 4) as usize;
+            if ctx < self.num_contexts as usize && word < self.enable[ctx].len()
             {
                 self.enable[ctx][word] = v;
             }

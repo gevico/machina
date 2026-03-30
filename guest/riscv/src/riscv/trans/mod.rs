@@ -267,11 +267,7 @@ impl Decode<Context> for RiscvDisasContext {
         true
     }
 
-    fn trans_sfence_vma(
-        &mut self,
-        ir: &mut Context,
-        _a: &ArgsR,
-    ) -> bool {
+    fn trans_sfence_vma(&mut self, ir: &mut Context, _a: &ArgsR) -> bool {
         // Always perform a full TLB flush (correct but
         // conservative).  Exit TB with EXCP_SFENCE_VMA so the
         // execution loop calls cpu.tlb_flush().

@@ -36,8 +36,7 @@ impl Aclint {
     pub fn tick(&mut self) {
         self.mtime = self.mtime.wrapping_add(1);
         for hart in 0..self.num_harts as usize {
-            self.timer_pending[hart] =
-                self.mtime >= self.mtimecmp[hart];
+            self.timer_pending[hart] = self.mtime >= self.mtimecmp[hart];
         }
     }
 
@@ -53,11 +52,7 @@ impl Aclint {
 
     // ---- MSWI region ----
 
-    pub fn mswi_read(
-        &self,
-        offset: u64,
-        _size: u32,
-    ) -> u64 {
+    pub fn mswi_read(&self, offset: u64, _size: u32) -> u64 {
         let hart = (offset / 4) as usize;
         if hart < self.num_harts as usize {
             self.msip[hart] as u64
@@ -66,12 +61,7 @@ impl Aclint {
         }
     }
 
-    pub fn mswi_write(
-        &mut self,
-        offset: u64,
-        _size: u32,
-        val: u64,
-    ) {
+    pub fn mswi_write(&mut self, offset: u64, _size: u32, val: u64) {
         let hart = (offset / 4) as usize;
         if hart < self.num_harts as usize {
             // Only bit 0 is writable.
@@ -81,11 +71,7 @@ impl Aclint {
 
     // ---- MTIMER region ----
 
-    pub fn mtimer_read(
-        &self,
-        offset: u64,
-        _size: u32,
-    ) -> u64 {
+    pub fn mtimer_read(&self, offset: u64, _size: u32) -> u64 {
         if offset == MTIMER_MTIME_OFFSET {
             return self.mtime;
         }
@@ -98,12 +84,7 @@ impl Aclint {
         }
     }
 
-    pub fn mtimer_write(
-        &mut self,
-        offset: u64,
-        _size: u32,
-        val: u64,
-    ) {
+    pub fn mtimer_write(&mut self, offset: u64, _size: u32, val: u64) {
         if offset == MTIMER_MTIME_OFFSET {
             self.mtime = val;
             return;
@@ -112,8 +93,7 @@ impl Aclint {
         if hart < self.num_harts as usize {
             self.mtimecmp[hart] = val;
             // Re-evaluate pending state immediately.
-            self.timer_pending[hart] =
-                self.mtime >= self.mtimecmp[hart];
+            self.timer_pending[hart] = self.mtime >= self.mtimecmp[hart];
         }
     }
 }

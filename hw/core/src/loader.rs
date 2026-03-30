@@ -32,9 +32,8 @@ fn write_bytes(as_: &AddressSpace, base: GPA, data: &[u8]) {
     let full = data.len() / 4;
     for i in 0..full {
         let off = (i * 4) as u64;
-        let val = u32::from_le_bytes(
-            data[i * 4..i * 4 + 4].try_into().unwrap(),
-        );
+        let val =
+            u32::from_le_bytes(data[i * 4..i * 4 + 4].try_into().unwrap());
         as_.write_u32(GPA::new(base.0 + off), val);
     }
     let rem_start = full * 4;
