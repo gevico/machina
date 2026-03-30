@@ -1,6 +1,6 @@
 use std::sync::atomic::Ordering;
 
-use super::{ExecEnv, PerCpuState, SharedState, MIN_CODE_BUF_REMAINING};
+use super::{ExecEnv, PerVcpuState, SharedState, MIN_CODE_BUF_REMAINING};
 use crate::cpu::GuestCpu;
 use crate::ir::context::Context;
 use crate::ir::tb::{
@@ -36,20 +36,22 @@ where
     B: HostCodeGen,
     C: GuestCpu<IrContext = Context>,
 {
-    cpu_exec_loop_mt(&env.shared, &mut env.per_cpu, cpu)
+    vcpu_exec_loop(&env.shared, &mut env.per_vcpu, cpu)
 }
 
-/// Multi-thread capable execution loop.
+/// Core vCPU execution loop.
 ///
 /// Takes shared state (Arc'd across vCPU threads) and
-/// per-CPU state (owned by each thread).
+/// per-vCPU state (owned by each thread). Supports both
+/// single-threaded serial and multi-threaded concurrent
+/// vCPU execution.
 ///
 /// # Safety
 /// The caller must ensure `cpu.env_ptr()` points to a valid
 /// CPU state struct matching the globals in `ir_ctx`.
-pub unsafe fn cpu_exec_loop_mt<B, C>(
+pub unsafe fn vcpu_exec_loop<B, C>(
     shared: &SharedState<B>,
-    per_cpu: &mut PerCpuState,
+    per_vcpu: &mut PerVcpuState,
     cpu: &mut C,
 ) -> ExitReason
 where
@@ -59,17 +61,17 @@ where
     let mut next_tb_hint: Option<usize> = None;
 
     loop {
-        per_cpu.stats.loop_iters += 1;
+        per_vcpu.stats.loop_iters += 1;
 
         let tb_idx = match next_tb_hint.take() {
             Some(idx) => {
-                per_cpu.stats.hint_used += 1;
+                per_vcpu.stats.hint_used += 1;
                 idx
             }
             None => {
                 let pc = cpu.get_pc();
                 let flags = cpu.get_flags();
-                match tb_find(shared, per_cpu, cpu, pc, flags) {
+                match tb_find(shared, per_vcpu, cpu, pc, flags) {
                     Some(idx) => idx,
                     None => return ExitReason::BufferFull,
                 }
@@ -83,20 +85,20 @@ where
         match exit_code {
             v @ 0..=1 => {
                 let slot = v;
-                per_cpu.stats.chain_exit[slot] += 1;
+                per_vcpu.stats.chain_exit[slot] += 1;
 
                 let pc = cpu.get_pc();
                 let flags = cpu.get_flags();
-                let dst = match tb_find(shared, per_cpu, cpu, pc, flags) {
+                let dst = match tb_find(shared, per_vcpu, cpu, pc, flags) {
                     Some(idx) => idx,
                     None => return ExitReason::BufferFull,
                 };
 
-                tb_add_jump(shared, per_cpu, src_tb, slot, dst);
+                tb_add_jump(shared, per_vcpu, src_tb, slot, dst);
                 next_tb_hint = Some(dst);
             }
             v if v == TB_EXIT_NOCHAIN as usize => {
-                per_cpu.stats.nochain_exit += 1;
+                per_vcpu.stats.nochain_exit += 1;
                 let pc = cpu.get_pc();
                 let flags = cpu.get_flags();
 
@@ -117,7 +119,7 @@ where
                     }
                 }
 
-                let dst = match tb_find(shared, per_cpu, cpu, pc, flags) {
+                let dst = match tb_find(shared, per_vcpu, cpu, pc, flags) {
                     Some(idx) => idx,
                     None => return ExitReason::BufferFull,
                 };
@@ -126,22 +128,22 @@ where
                 next_tb_hint = Some(dst);
             }
             v if v == EXCP_MRET as usize => {
-                per_cpu.stats.real_exit += 1;
+                per_vcpu.stats.real_exit += 1;
                 cpu.execute_mret();
                 // Continue at new PC (mepc).
             }
             v if v == EXCP_SRET as usize => {
-                per_cpu.stats.real_exit += 1;
+                per_vcpu.stats.real_exit += 1;
                 cpu.execute_sret();
                 // Continue at new PC (sepc).
             }
             v if v == EXCP_SFENCE_VMA as usize => {
-                per_cpu.stats.real_exit += 1;
+                per_vcpu.stats.real_exit += 1;
                 cpu.tlb_flush();
                 // Continue execution after TLB flush.
             }
             v if v == EXCP_WFI as usize => {
-                per_cpu.stats.real_exit += 1;
+                per_vcpu.stats.real_exit += 1;
                 cpu.set_halted(true);
                 if cpu.pending_interrupt() {
                     cpu.set_halted(false);
@@ -165,12 +167,12 @@ where
                 // / EcallFromS / EcallFromM) is determined
                 // here at runtime, because privilege can
                 // change between translation and execution.
-                per_cpu.stats.real_exit += 1;
+                per_vcpu.stats.real_exit += 1;
                 let pl = cpu.privilege_level();
                 return ExitReason::Ecall { priv_level: pl };
             }
             _ => {
-                per_cpu.stats.real_exit += 1;
+                per_vcpu.stats.real_exit += 1;
                 return ExitReason::Exit(exit_code);
             }
         }
@@ -185,7 +187,7 @@ where
 /// Find a TB for the given (pc, flags), translating if needed.
 fn tb_find<B, C>(
     shared: &SharedState<B>,
-    per_cpu: &mut PerCpuState,
+    per_vcpu: &mut PerVcpuState,
     cpu: &mut C,
     pc: u64,
     flags: u32,
@@ -195,33 +197,33 @@ where
     C: GuestCpu<IrContext = Context>,
 {
     // Fast path: jump cache (per-CPU, no lock needed)
-    if let Some(idx) = per_cpu.jump_cache.lookup(pc) {
+    if let Some(idx) = per_vcpu.jump_cache.lookup(pc) {
         let tb = shared.tb_store.get(idx);
         if !tb.invalid.load(Ordering::Acquire)
             && tb.pc == pc
             && tb.flags == flags
         {
-            per_cpu.stats.jc_hit += 1;
+            per_vcpu.stats.jc_hit += 1;
             return Some(idx);
         }
     }
 
     // Slow path: hash table
     if let Some(idx) = shared.tb_store.lookup(pc, flags) {
-        per_cpu.jump_cache.insert(pc, idx);
-        per_cpu.stats.ht_hit += 1;
+        per_vcpu.jump_cache.insert(pc, idx);
+        per_vcpu.stats.ht_hit += 1;
         return Some(idx);
     }
 
     // Miss: translate a new TB
-    per_cpu.stats.translate += 1;
-    tb_gen_code(shared, per_cpu, cpu, pc, flags)
+    per_vcpu.stats.translate += 1;
+    tb_gen_code(shared, per_vcpu, cpu, pc, flags)
 }
 
 /// Translate guest code at `pc` into a new TB.
 fn tb_gen_code<B, C>(
     shared: &SharedState<B>,
-    per_cpu: &mut PerCpuState,
+    per_vcpu: &mut PerVcpuState,
     cpu: &mut C,
     pc: u64,
     flags: u32,
@@ -240,7 +242,7 @@ where
     // Double-check: another thread may have translated this
     // PC while we waited for the lock.
     if let Some(idx) = shared.tb_store.lookup(pc, flags) {
-        per_cpu.jump_cache.insert(pc, idx);
+        per_vcpu.jump_cache.insert(pc, idx);
         return Some(idx);
     }
 
@@ -282,7 +284,7 @@ where
     }
 
     shared.tb_store.insert(tb_idx);
-    per_cpu.jump_cache.insert(pc, tb_idx);
+    per_vcpu.jump_cache.insert(pc, tb_idx);
 
     Some(tb_idx)
 }
@@ -312,7 +314,7 @@ where
 /// prevent deadlocks.
 fn tb_add_jump<B: HostCodeGen>(
     shared: &SharedState<B>,
-    per_cpu: &mut PerCpuState,
+    per_vcpu: &mut PerVcpuState,
     src: usize,
     slot: usize,
     dst: usize,
@@ -331,7 +333,7 @@ fn tb_add_jump<B: HostCodeGen>(
     let mut src_jmp = src_tb.jmp.lock().unwrap();
 
     if src_jmp.jmp_dest[slot] == Some(dst) {
-        per_cpu.stats.chain_already += 1;
+        per_vcpu.stats.chain_already += 1;
         return;
     }
 
@@ -348,5 +350,5 @@ fn tb_add_jump<B: HostCodeGen>(
     let mut dst_jmp = dst_tb.jmp.lock().unwrap();
     dst_jmp.jmp_list.push((src, slot));
 
-    per_cpu.stats.chain_patched += 1;
+    per_vcpu.stats.chain_patched += 1;
 }

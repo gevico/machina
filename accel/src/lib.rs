@@ -35,7 +35,7 @@ pub trait HostCodeGen {
     /// `target_offset`. Used for TB chaining.
     ///
     /// Takes `&self` and `&CodeBuffer` so chaining can happen
-    /// concurrently from multiple vCPU threads (MTTCG).
+    /// concurrently from multiple vCPU threads.
     fn patch_jump(
         &self,
         buf: &CodeBuffer,

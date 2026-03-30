@@ -1,9 +1,9 @@
-//! Multi-threaded TCG (MTTCG) concurrent execution tests.
+//! Multi-threaded vCPU concurrent execution tests.
 
 use std::thread;
 
-use machina_accel::exec::exec_loop::{cpu_exec_loop_mt, ExitReason};
-use machina_accel::exec::{ExecEnv, PerCpuState};
+use machina_accel::exec::exec_loop::{vcpu_exec_loop, ExitReason};
+use machina_accel::exec::{ExecEnv, PerVcpuState};
 use machina_accel::ir::context::Context;
 use machina_accel::ir::TempIdx;
 use machina_accel::GuestCpu;
@@ -109,8 +109,8 @@ fn ecall() -> u32 {
     0x0000_0073
 }
 
-fn new_per_cpu() -> PerCpuState {
-    PerCpuState {
+fn new_per_cpu() -> PerVcpuState {
+    PerVcpuState {
         jump_cache: machina_accel::ir::tb::JumpCache::new(),
         stats: machina_accel::exec::ExecStats::default(),
     }
@@ -137,7 +137,7 @@ fn test_mt_sum_loop() {
         };
         cpu.cpu.gpr[3] = 100; // sum 1..=100
         let mut pc = new_per_cpu();
-        let r = unsafe { cpu_exec_loop_mt(&shared1, &mut pc, &mut cpu) };
+        let r = unsafe { vcpu_exec_loop(&shared1, &mut pc, &mut cpu) };
         assert_eq!(r, ExitReason::Ecall { priv_level: 0 });
         assert_eq!(cpu.cpu.gpr[2], 5050);
     });
@@ -151,7 +151,7 @@ fn test_mt_sum_loop() {
         };
         cpu.cpu.gpr[3] = 200; // sum 1..=200
         let mut pc = new_per_cpu();
-        let r = unsafe { cpu_exec_loop_mt(&shared2, &mut pc, &mut cpu) };
+        let r = unsafe { vcpu_exec_loop(&shared2, &mut pc, &mut cpu) };
         assert_eq!(r, ExitReason::Ecall { priv_level: 0 });
         assert_eq!(cpu.cpu.gpr[2], 20100);
     });
@@ -180,7 +180,7 @@ fn test_shared_tb_cache() {
                 code: c,
             };
             let mut pc = new_per_cpu();
-            let r = unsafe { cpu_exec_loop_mt(&s, &mut pc, &mut cpu) };
+            let r = unsafe { vcpu_exec_loop(&s, &mut pc, &mut cpu) };
             assert_eq!(r, ExitReason::Ecall { priv_level: 0 });
             assert_eq!(cpu.cpu.gpr[1], 42);
         }));
@@ -211,7 +211,7 @@ fn test_concurrent_tb_lookup() {
         };
         let mut pc = new_per_cpu();
         unsafe {
-            cpu_exec_loop_mt(&shared, &mut pc, &mut cpu);
+            vcpu_exec_loop(&shared, &mut pc, &mut cpu);
         }
     }
     assert_eq!(shared.tb_store.len(), 1);
@@ -227,7 +227,7 @@ fn test_concurrent_tb_lookup() {
                 code: c,
             };
             let mut pc = new_per_cpu();
-            let r = unsafe { cpu_exec_loop_mt(&s, &mut pc, &mut cpu) };
+            let r = unsafe { vcpu_exec_loop(&s, &mut pc, &mut cpu) };
             assert_eq!(r, ExitReason::Ecall { priv_level: 0 });
         }));
     }
@@ -259,7 +259,7 @@ fn test_concurrent_chaining() {
             };
             cpu.cpu.gpr[3] = 50 + i as u64;
             let mut pc = new_per_cpu();
-            let r = unsafe { cpu_exec_loop_mt(&s, &mut pc, &mut cpu) };
+            let r = unsafe { vcpu_exec_loop(&s, &mut pc, &mut cpu) };
             assert_eq!(r, ExitReason::Ecall { priv_level: 0 });
             assert_eq!(cpu.cpu.gpr[1], 50 + i as u64);
         }));
@@ -291,7 +291,7 @@ fn test_concurrent_translation() {
             };
             cpu.cpu.gpr[3] = 10 * (i + 1) as u64;
             let mut pc = new_per_cpu();
-            let r = unsafe { cpu_exec_loop_mt(&s, &mut pc, &mut cpu) };
+            let r = unsafe { vcpu_exec_loop(&s, &mut pc, &mut cpu) };
             assert_eq!(r, ExitReason::Ecall { priv_level: 0 });
             let n = cpu.cpu.gpr[3];
             let expected = n * (n + 1) / 2;

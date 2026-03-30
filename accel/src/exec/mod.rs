@@ -1,8 +1,8 @@
-//! TCG Execution Engine — TB cache and CPU execution loop.
+//! Execution Engine — TB cache and vCPU execution loop.
 //!
 //! Provides the execution loop that drives the
 //! lookup -> translate -> execute cycle, with TB caching via
-//! a global hash table and per-CPU jump cache.
+//! a global hash table and per-vCPU jump cache.
 //!
 //! Reference: `~/qemu/accel/tcg/cpu-exec.c`,
 //! `~/qemu/accel/tcg/translate-all.c`.
@@ -45,7 +45,7 @@ pub struct ExecStats {
 impl fmt::Display for ExecStats {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let total_lookup = self.jc_hit + self.ht_hit + self.translate;
-        writeln!(f, "=== TCG Execution Stats ===")?;
+        writeln!(f, "=== Execution Stats ===")?;
         writeln!(f, "loop iters:    {}", self.loop_iters)?;
         writeln!(f, "--- TB lookup ---")?;
         writeln!(
@@ -130,12 +130,12 @@ impl<B: HostCodeGen> SharedState<B> {
 }
 
 /// Per-vCPU state (not shared across threads).
-pub struct PerCpuState {
+pub struct PerVcpuState {
     pub jump_cache: JumpCache,
     pub stats: ExecStats,
 }
 
-impl PerCpuState {
+impl PerVcpuState {
     pub fn new() -> Self {
         Self {
             jump_cache: JumpCache::new(),
@@ -144,7 +144,7 @@ impl PerCpuState {
     }
 }
 
-impl Default for PerCpuState {
+impl Default for PerVcpuState {
     fn default() -> Self {
         Self::new()
     }
@@ -157,7 +157,7 @@ const MIN_CODE_BUF_REMAINING: usize = 4096;
 /// Convenience wrapper for single-threaded use.
 pub struct ExecEnv<B: HostCodeGen> {
     pub shared: Arc<SharedState<B>>,
-    pub per_cpu: PerCpuState,
+    pub per_vcpu: PerVcpuState,
 }
 
 impl<B: HostCodeGen> ExecEnv<B> {
@@ -181,7 +181,7 @@ impl<B: HostCodeGen> ExecEnv<B> {
 
         Self {
             shared,
-            per_cpu: PerCpuState {
+            per_vcpu: PerVcpuState {
                 jump_cache: JumpCache::new(),
                 stats: ExecStats::default(),
             },

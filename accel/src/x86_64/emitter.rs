@@ -1222,7 +1222,7 @@ impl X86_64CodeGen {
     /// Emit `goto_tb(n)`: a patchable direct jump (5 bytes: E9 + disp32).
     ///
     /// The disp32 field is aligned to 4 bytes so that concurrent
-    /// patching (MTTCG) is atomic on x86-64.
+    /// patching is atomic on x86-64 (safe for concurrent vCPUs).
     pub fn emit_goto_tb(&self, buf: &mut CodeBuffer) -> (usize, usize) {
         // Align disp32 to 4 bytes for atomic patching.
         let disp_addr = buf.offset() + 1; // after E9 opcode

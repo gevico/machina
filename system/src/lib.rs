@@ -7,8 +7,8 @@ pub use cpus::FullSystemCpu;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
-use machina_accel::exec::exec_loop::{cpu_exec_loop_mt, ExitReason};
-use machina_accel::exec::{PerCpuState, SharedState};
+use machina_accel::exec::exec_loop::{vcpu_exec_loop, ExitReason};
+use machina_accel::exec::{PerVcpuState, SharedState};
 use machina_accel::ir::context::Context;
 use machina_accel::GuestCpu;
 use machina_accel::HostCodeGen;
@@ -60,8 +60,8 @@ impl CpuManager {
         B: HostCodeGen,
         C: GuestCpu<IrContext = Context>,
     {
-        let mut per_cpu = PerCpuState::new();
-        cpu_exec_loop_mt(shared, &mut per_cpu, cpu)
+        let mut per_vcpu = PerVcpuState::new();
+        vcpu_exec_loop(shared, &mut per_vcpu, cpu)
     }
 }
 

@@ -1,6 +1,6 @@
-//! Integration tests for the tcg-exec execution loop.
+//! Integration tests for the execution loop.
 
-mod mttcg;
+mod multi_vcpu;
 
 use machina_accel::exec::exec_loop::{cpu_exec_loop, ExitReason};
 use machina_accel::exec::ExecEnv;
