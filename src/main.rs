@@ -6,12 +6,13 @@ use std::process;
 
 use machina_core::machine::{Machine, MachineOpts};
 use machina_hw_riscv::ref_machine::RefMachine;
-use machina_system::CpuManager;
 
 fn usage() {
     eprintln!("Usage: machina [options]");
     eprintln!("Options:");
-    eprintln!("  -M machine    Machine type (default: riscv64-ref)");
+    eprintln!(
+        "  -M machine    Machine type (default: riscv64-ref)"
+    );
     eprintln!("  -m size       RAM size in MiB (default: 128)");
     eprintln!("  -bios path    BIOS/firmware binary");
     eprintln!("  -kernel path  Kernel binary");
@@ -47,12 +48,15 @@ fn parse_args() -> Result<CliArgs, String> {
         match args[i].as_str() {
             "-M" | "-machine" => {
                 i += 1;
-                cli.machine =
-                    args.get(i).ok_or("-M requires argument")?.clone();
+                cli.machine = args
+                    .get(i)
+                    .ok_or("-M requires argument")?
+                    .clone();
             }
             "-m" => {
                 i += 1;
-                let s = args.get(i).ok_or("-m requires argument")?;
+                let s =
+                    args.get(i).ok_or("-m requires argument")?;
                 cli.ram_mib = s
                     .trim_end_matches('M')
                     .parse::<u64>()
@@ -84,19 +88,15 @@ fn parse_args() -> Result<CliArgs, String> {
                 process::exit(0);
             }
             other => {
-                return Err(format!("Unknown option: {}", other));
+                return Err(format!(
+                    "Unknown option: {}",
+                    other
+                ));
             }
         }
         i += 1;
     }
     Ok(cli)
-}
-
-fn create_machine(name: &str) -> Result<Box<dyn Machine>, String> {
-    match name {
-        "riscv64-ref" | "" => Ok(Box::new(RefMachine::new())),
-        _ => Err(format!("Unknown machine: {}", name)),
-    }
 }
 
 fn main() {
@@ -109,13 +109,7 @@ fn main() {
         }
     };
 
-    let mut machine = match create_machine(&cli.machine) {
-        Ok(m) => m,
-        Err(e) => {
-            eprintln!("machina: {}", e);
-            process::exit(1);
-        }
-    };
+    let mut machine = RefMachine::new();
 
     let opts = MachineOpts {
         ram_size: cli.ram_mib * 1024 * 1024,
@@ -141,23 +135,25 @@ fn main() {
         process::exit(1);
     }
 
-    let _cpu_mgr = CpuManager::new();
-
     eprintln!(
         "machina: {} booted, {} vCPU(s)",
         machine.name(),
         opts.cpu_count
     );
-    eprintln!(
-        "machina: execution loop ready \
-         (needs guest binary to run)"
-    );
 
-    if cli.bios.is_some() || cli.kernel.is_some() {
-        eprintln!("machina: starting execution loop");
-        // Would call _cpu_mgr.run_cpu() here with proper
-        // SharedState setup. For now, exit after boot
-        // since full SharedState init requires additional
-        // plumbing.
+    // Enter execution. The full-system execution loop
+    // requires a GuestCpu implementation that bridges
+    // RiscvCpu with the machine's AddressSpace for
+    // instruction fetch. This will be provided by
+    // system/src/cpus.rs once the translator integration
+    // is complete. For now, print the boot state and exit.
+    let cpus = machine.cpus_shared();
+    let cpus_lock = cpus.lock().unwrap();
+    if let Some(cpu) = cpus_lock.get(0) {
+        eprintln!(
+            "machina: cpu0 pc=0x{:x} priv={:?}",
+            cpu.pc, cpu.priv_level
+        );
     }
+    eprintln!("machina: boot complete, cpu state initialized");
 }

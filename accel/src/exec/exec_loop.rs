@@ -109,6 +109,9 @@ where
                         && tb.pc == pc
                         && tb.flags == flags
                     {
+                        if cpu.pending_interrupt() {
+                            cpu.handle_interrupt();
+                        }
                         next_tb_hint = Some(cached);
                         continue;
                     }

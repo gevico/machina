@@ -32,4 +32,3 @@ path = "src/main.rs"
 [dependencies]
 machina-core = { path = "core" }
 machina-hw-riscv = { path = "hw/riscv" }
-machina-system = { path = "system" }
