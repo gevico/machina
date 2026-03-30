@@ -1,11 +1,14 @@
 // riscv64-ref machine: virt-compatible reference platform.
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use machina_core::address::GPA;
 use machina_core::machine::{Machine, MachineOpts};
 use machina_hw_char::uart::Uart16550;
+use machina_hw_core::chardev::{CharFrontend, NullChardev};
 use machina_hw_core::fdt::FdtBuilder;
+use machina_hw_core::irq::{IrqLine, IrqSink};
 use machina_hw_intc::aclint::Aclint;
 use machina_hw_intc::plic::Plic;
 use machina_memory::address_space::AddressSpace;
@@ -29,8 +32,57 @@ const CLINT_MTIMER_OFFSET: u64 = 0x4000;
 
 const UART_IRQ: u32 = 10;
 const PLIC_NUM_SOURCES: u32 = 96;
-// M-mode + S-mode per hart.
-const PLIC_NUM_CONTEXTS: u32 = 2;
+// PLIC context count is 2 * cpu_count (M-mode + S-mode per
+// hart), computed dynamically in init().
+
+// ---- CPU IRQ sink ----
+
+/// Per-hart interrupt pending flags.
+///
+/// IRQ numbering (matches RISC-V privilege spec):
+///   3 = MSI (machine software interrupt)
+///   7 = MTI (machine timer interrupt)
+///  11 = MEI (machine external interrupt)
+///   1 = SSI (supervisor software interrupt)
+///   5 = STI (supervisor timer interrupt)
+///   9 = SEI (supervisor external interrupt)
+pub struct CpuIrqSink {
+    flags: Vec<AtomicBool>,
+}
+
+impl CpuIrqSink {
+    /// Create a sink with `n` interrupt lines.
+    pub fn new(n: usize) -> Self {
+        let mut flags = Vec::with_capacity(n);
+        for _ in 0..n {
+            flags.push(AtomicBool::new(false));
+        }
+        Self { flags }
+    }
+
+    /// Read the pending state of IRQ `irq`.
+    pub fn pending(&self, irq: u32) -> bool {
+        self.flags
+            .get(irq as usize)
+            .is_some_and(|f| f.load(Ordering::Relaxed))
+    }
+}
+
+impl IrqSink for CpuIrqSink {
+    fn set_irq(&self, irq: u32, level: bool) {
+        if let Some(f) = self.flags.get(irq as usize) {
+            f.store(level, Ordering::Relaxed);
+        }
+    }
+}
+
+// RISC-V interrupt numbers.
+const IRQ_MSI: u32 = 3;
+const IRQ_MTI: u32 = 7;
+const IRQ_MEI: u32 = 11;
+const IRQ_SEI: u32 = 9;
+// 16 lines covers all standard RISC-V interrupts.
+const CPU_IRQ_COUNT: usize = 16;
 
 // ---- MMIO adapter: PLIC ----
 
@@ -43,6 +95,17 @@ impl MmioOps for PlicMmio {
 
     fn write(&self, offset: u64, size: u32, val: u64) {
         self.0.lock().unwrap().write(offset, size, val);
+    }
+}
+
+// ---- IRQ adapter: PLIC as IrqSink ----
+
+/// Routes device IRQ level changes to PLIC pending bits.
+struct PlicIrqSink(Arc<Mutex<Plic>>);
+
+impl IrqSink for PlicIrqSink {
+    fn set_irq(&self, irq: u32, level: bool) {
+        self.0.lock().unwrap().set_pending(irq, level);
     }
 }
 
@@ -96,6 +159,20 @@ pub struct RefMachine {
     aclint: Option<Arc<Mutex<Aclint>>>,
     uart: Option<Arc<Mutex<Uart16550>>>,
     fdt_blob: Option<Vec<u8>>,
+    // Per-hart CPU IRQ sinks.
+    cpu_irq_sinks: Vec<Arc<CpuIrqSink>>,
+    // UART → PLIC IRQ line (source 10).
+    uart_irq: Option<IrqLine>,
+    // PLIC output → CPU MEI per hart.
+    plic_mei_irqs: Vec<IrqLine>,
+    // PLIC output → CPU SEI per hart.
+    plic_sei_irqs: Vec<IrqLine>,
+    // ACLINT → CPU MTI per hart.
+    aclint_mti_irqs: Vec<IrqLine>,
+    // ACLINT → CPU MSI per hart.
+    aclint_msi_irqs: Vec<IrqLine>,
+    // Character device frontend for UART.
+    chardev: Option<Mutex<CharFrontend>>,
 }
 
 impl RefMachine {
@@ -110,6 +187,13 @@ impl RefMachine {
             aclint: None,
             uart: None,
             fdt_blob: None,
+            cpu_irq_sinks: Vec::new(),
+            uart_irq: None,
+            plic_mei_irqs: Vec::new(),
+            plic_sei_irqs: Vec::new(),
+            aclint_mti_irqs: Vec::new(),
+            aclint_msi_irqs: Vec::new(),
+            chardev: None,
         }
     }
 
@@ -137,6 +221,21 @@ impl RefMachine {
 
     pub fn fdt_blob(&self) -> &[u8] {
         self.fdt_blob.as_ref().expect("machine not initialized")
+    }
+
+    /// Per-hart CPU IRQ sink.
+    pub fn cpu_irq_sink(&self, hart: usize) -> &Arc<CpuIrqSink> {
+        &self.cpu_irq_sinks[hart]
+    }
+
+    /// UART → PLIC IRQ line reference.
+    pub fn uart_irq(&self) -> &IrqLine {
+        self.uart_irq.as_ref().expect("machine not initialized")
+    }
+
+    /// Character device frontend for the UART.
+    pub fn chardev(&self) -> &Option<Mutex<CharFrontend>> {
+        &self.chardev
     }
 
     /// Write a byte slice into RAM at `offset` bytes from
@@ -187,7 +286,7 @@ impl RefMachine {
             fdt.property_u32("reg", i);
             fdt.property_string("compatible", "riscv");
             fdt.property_string("riscv,isa", "rv64imafdc");
-            fdt.property_string("mmu-type", "riscv,sv48");
+            fdt.property_string("mmu-type", "riscv,sv39");
             fdt.property_string("status", "okay");
             // Interrupt controller sub-node.
             fdt.begin_node("interrupt-controller");
@@ -293,10 +392,11 @@ impl Machine for RefMachine {
         self.ram_block = Some(ram_block);
         root.add_subregion(ram_region, GPA::new(RAM_BASE));
 
-        // PLIC.
+        // PLIC: 2 contexts per hart (M-mode + S-mode).
+        let plic_num_contexts = 2 * opts.cpu_count;
         let plic = Arc::new(Mutex::new(Plic::new(
             PLIC_NUM_SOURCES,
-            PLIC_NUM_CONTEXTS,
+            plic_num_contexts,
         )));
         let plic_mmio = PlicMmio(Arc::clone(&plic));
         let plic_region =
@@ -322,6 +422,53 @@ impl Machine for RefMachine {
 
         self.address_space = Some(AddressSpace::new(root));
 
+        // ---- IRQ wiring ----
+        // Create per-hart CPU IRQ sinks.
+        let mut cpu_sinks = Vec::with_capacity(opts.cpu_count as usize);
+        let mut plic_mei = Vec::with_capacity(opts.cpu_count as usize);
+        let mut plic_sei = Vec::with_capacity(opts.cpu_count as usize);
+        let mut aclint_mti = Vec::with_capacity(opts.cpu_count as usize);
+        let mut aclint_msi = Vec::with_capacity(opts.cpu_count as usize);
+        for _ in 0..opts.cpu_count {
+            let sink = Arc::new(CpuIrqSink::new(CPU_IRQ_COUNT));
+            // PLIC → CPU external interrupts.
+            plic_mei.push(IrqLine::new(
+                Arc::clone(&sink) as Arc<dyn IrqSink>,
+                IRQ_MEI,
+            ));
+            plic_sei.push(IrqLine::new(
+                Arc::clone(&sink) as Arc<dyn IrqSink>,
+                IRQ_SEI,
+            ));
+            // ACLINT → CPU timer/software interrupts.
+            aclint_mti.push(IrqLine::new(
+                Arc::clone(&sink) as Arc<dyn IrqSink>,
+                IRQ_MTI,
+            ));
+            aclint_msi.push(IrqLine::new(
+                Arc::clone(&sink) as Arc<dyn IrqSink>,
+                IRQ_MSI,
+            ));
+            cpu_sinks.push(sink);
+        }
+        self.cpu_irq_sinks = cpu_sinks;
+        self.plic_mei_irqs = plic_mei;
+        self.plic_sei_irqs = plic_sei;
+        self.aclint_mti_irqs = aclint_mti;
+        self.aclint_msi_irqs = aclint_msi;
+
+        // UART IRQ source 10 → PLIC.
+        // We use a simple wrapper that calls
+        // plic.set_pending() on level change.
+        let plic_as_sink =
+            Arc::new(PlicIrqSink(Arc::clone(self.plic.as_ref().unwrap())));
+        self.uart_irq =
+            Some(IrqLine::new(plic_as_sink as Arc<dyn IrqSink>, UART_IRQ));
+
+        // ---- Chardev ----
+        self.chardev =
+            Some(Mutex::new(CharFrontend::new(Box::new(NullChardev))));
+
         // Generate FDT.
         self.fdt_blob = Some(self.generate_fdt());
 
@@ -332,7 +479,7 @@ impl Machine for RefMachine {
         // Re-create devices with fresh state.
         if let Some(plic) = &self.plic {
             *plic.lock().unwrap() =
-                Plic::new(PLIC_NUM_SOURCES, PLIC_NUM_CONTEXTS);
+                Plic::new(PLIC_NUM_SOURCES, 2 * self.cpu_count);
         }
         if let Some(aclint) = &self.aclint {
             *aclint.lock().unwrap() = Aclint::new(self.cpu_count);
