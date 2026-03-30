@@ -6,6 +6,7 @@ use std::sync::{Arc, Mutex, MutexGuard};
 
 use machina_core::address::GPA;
 use machina_core::machine::{Machine, MachineOpts};
+use machina_core::wfi::WfiWaker;
 use machina_guest_riscv::riscv::cpu::RiscvCpu;
 use machina_hw_char::uart::Uart16550;
 use machina_hw_core::chardev::{CharFrontend, NullChardev};
@@ -50,11 +51,15 @@ const PLIC_NUM_SOURCES: u32 = 96;
 /// the executing CPU without shared mutable CPU access.
 pub struct RiscvCpuIrqSink {
     shared_mip: Arc<AtomicU64>,
+    wfi_waker: Arc<WfiWaker>,
 }
 
 impl RiscvCpuIrqSink {
-    pub fn new(shared_mip: Arc<AtomicU64>) -> Self {
-        Self { shared_mip }
+    pub fn new(
+        shared_mip: Arc<AtomicU64>,
+        wfi_waker: Arc<WfiWaker>,
+    ) -> Self {
+        Self { shared_mip, wfi_waker }
     }
 }
 
@@ -62,7 +67,10 @@ impl IrqSink for RiscvCpuIrqSink {
     fn set_irq(&self, irq: u32, level: bool) {
         let bit = 1u64 << irq;
         if level {
-            self.shared_mip.fetch_or(bit, Ordering::SeqCst);
+            self.shared_mip
+                .fetch_or(bit, Ordering::SeqCst);
+            // Wake halted CPU waiting in WFI.
+            self.wfi_waker.wake();
         } else {
             self.shared_mip
                 .fetch_and(!bit, Ordering::SeqCst);
@@ -145,6 +153,8 @@ pub struct RefMachine {
     pub(crate) cpus: Arc<Mutex<Vec<RiscvCpu>>>,
     // Shared mip for device IRQ delivery to exec loop.
     pub(crate) shared_mip: Arc<AtomicU64>,
+    // WFI waker: IRQ sinks call wake() to unblock halted CPU.
+    pub(crate) wfi_waker: Arc<WfiWaker>,
     // Stored boot options (bios / kernel paths).
     pub(crate) bios_path: Option<PathBuf>,
     pub(crate) kernel_path: Option<PathBuf>,
@@ -166,6 +176,7 @@ impl RefMachine {
             fdt_blob: None,
             cpus: Arc::new(Mutex::new(Vec::new())),
             shared_mip: Arc::new(AtomicU64::new(0)),
+            wfi_waker: Arc::new(WfiWaker::new()),
             bios_path: None,
             kernel_path: None,
             uart_irq: None,
@@ -216,6 +227,11 @@ impl RefMachine {
     /// Shared mip for device IRQ delivery.
     pub fn shared_mip(&self) -> Arc<AtomicU64> {
         self.shared_mip.clone()
+    }
+
+    /// WFI waker shared with IRQ sinks.
+    pub fn wfi_waker(&self) -> Arc<WfiWaker> {
+        self.wfi_waker.clone()
     }
 
     /// Host pointer to the start of guest RAM.
@@ -481,12 +497,16 @@ impl Machine for RefMachine {
         // read by FullSystemCpu::pending_interrupt().
         {
             let mip = &self.shared_mip;
+            let wk = &self.wfi_waker;
             let mut p =
                 self.plic.as_ref().unwrap().lock().unwrap();
             for hart in 0..opts.cpu_count as usize {
-                let _ = hart; // single-hart for now
+                let _ = hart;
                 let mei_sink = Arc::new(
-                    RiscvCpuIrqSink::new(Arc::clone(mip)),
+                    RiscvCpuIrqSink::new(
+                        Arc::clone(mip),
+                        Arc::clone(wk),
+                    ),
                 );
                 let mei_line = IrqLine::new(
                     mei_sink as Arc<dyn IrqSink>,
@@ -497,7 +517,10 @@ impl Machine for RefMachine {
                     mei_line,
                 );
                 let sei_sink = Arc::new(
-                    RiscvCpuIrqSink::new(Arc::clone(mip)),
+                    RiscvCpuIrqSink::new(
+                        Arc::clone(mip),
+                        Arc::clone(wk),
+                    ),
                 );
                 let sei_line = IrqLine::new(
                     sei_sink as Arc<dyn IrqSink>,
@@ -513,12 +536,16 @@ impl Machine for RefMachine {
         // ---- Connect ACLINT MTI/MSI outputs ----
         {
             let mip = &self.shared_mip;
+            let wk = &self.wfi_waker;
             let mut a =
                 self.aclint.as_ref().unwrap().lock().unwrap();
             for hart in 0..opts.cpu_count as usize {
                 let _ = hart;
                 let mti_sink = Arc::new(
-                    RiscvCpuIrqSink::new(Arc::clone(mip)),
+                    RiscvCpuIrqSink::new(
+                        Arc::clone(mip),
+                        Arc::clone(wk),
+                    ),
                 );
                 let mti_line = IrqLine::new(
                     mti_sink as Arc<dyn IrqSink>,
@@ -526,7 +553,10 @@ impl Machine for RefMachine {
                 );
                 a.connect_mti(hart as u32, mti_line);
                 let msi_sink = Arc::new(
-                    RiscvCpuIrqSink::new(Arc::clone(mip)),
+                    RiscvCpuIrqSink::new(
+                        Arc::clone(mip),
+                        Arc::clone(wk),
+                    ),
                 );
                 let msi_line = IrqLine::new(
                     msi_sink as Arc<dyn IrqSink>,

@@ -6,7 +6,9 @@
 // pending_interrupt().
 
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Condvar, Mutex};
+use std::sync::Arc;
+
+use machina_core::wfi::WfiWaker;
 
 use machina_accel::ir::context::Context;
 use machina_accel::ir::TempIdx;
@@ -32,50 +34,6 @@ pub type SharedMip = Arc<AtomicU64>;
 /// Create a new shared mip register.
 pub fn new_shared_mip() -> SharedMip {
     Arc::new(AtomicU64::new(0))
-}
-
-/// WFI wakeup condvar. Device IRQ sinks should notify
-/// this after updating SharedMip to wake a halted CPU.
-pub struct WfiWaker {
-    mu: Mutex<bool>,
-    cv: Condvar,
-}
-
-impl WfiWaker {
-    pub fn new() -> Self {
-        Self {
-            mu: Mutex::new(false),
-            cv: Condvar::new(),
-        }
-    }
-
-    /// Called by device IRQ sinks to wake halted CPU.
-    pub fn wake(&self) {
-        let mut notified = self.mu.lock().unwrap();
-        *notified = true;
-        self.cv.notify_all();
-    }
-
-    /// Wait for a wakeup signal with timeout.
-    /// Returns true if woken by signal, false on timeout.
-    pub fn wait_timeout(
-        &self,
-        timeout: std::time::Duration,
-    ) -> bool {
-        let mut notified = self.mu.lock().unwrap();
-        if *notified {
-            *notified = false;
-            return true;
-        }
-        let (guard, result) =
-            self.cv.wait_timeout(notified, timeout).unwrap();
-        let woken = *guard || !result.timed_out();
-        drop(guard);
-        // Reset for next wait.
-        let mut n = self.mu.lock().unwrap();
-        *n = false;
-        woken
-    }
 }
 
 /// Full-system CPU wrapper bridging RiscvCpu to the
@@ -287,11 +245,9 @@ impl GuestCpu for FullSystemCpu {
     fn tlb_flush_page(&mut self, _vpn: u64) {}
 
     fn wait_for_interrupt(&self) -> bool {
-        // Block on condvar until a device IRQ arrives
-        // or 100ms timeout (to avoid permanent hang
-        // if no device delivers).
-        self.wfi_waker.wait_timeout(
-            std::time::Duration::from_millis(100),
-        )
+        // Block indefinitely on condvar until a device
+        // IRQ arrives. The IRQ sink calls wake() after
+        // updating SharedMip.
+        self.wfi_waker.wait()
     }
 }

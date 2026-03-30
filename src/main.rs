@@ -3,13 +3,12 @@
 use std::env;
 use std::path::PathBuf;
 use std::process;
-use std::sync::Arc;
 
 use machina_accel::exec::ExecEnv;
 use machina_accel::X86_64CodeGen;
 use machina_core::machine::{Machine, MachineOpts};
 use machina_hw_riscv::ref_machine::RefMachine;
-use machina_system::cpus::{FullSystemCpu, WfiWaker};
+use machina_system::cpus::FullSystemCpu;
 use machina_system::CpuManager;
 
 fn usage() {
@@ -181,7 +180,7 @@ fn main() {
     let ram_ptr = machine.ram_ptr();
     let ram_size = machine.ram_size();
 
-    let wfi_waker = Arc::new(WfiWaker::new());
+    let wfi_waker = machine.wfi_waker();
     let mut fs_cpu = unsafe {
         FullSystemCpu::new(
             cpu0,
