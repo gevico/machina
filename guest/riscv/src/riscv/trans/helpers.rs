@@ -379,12 +379,7 @@ impl RiscvDisasContext {
     /// Write the current instruction's PC to the env
     /// `pc` global so that a helper-triggered fault
     /// has the correct mepc/sepc.
-    fn sync_pc(&self, _ir: &mut Context) {
-        // PC sync disabled: writing to the pc global
-        // before every memory op interferes with the
-        // translator's control flow. Faults are caught
-        // by check_mem_fault() at TB boundaries.
-    }
+    fn sync_pc(&self, _ir: &mut Context) {}
 
     // -- R-type helpers ------------------------------------
 

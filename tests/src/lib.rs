@@ -11,4 +11,6 @@ mod frontend;
 #[cfg(test)]
 mod integration;
 #[cfg(test)]
+mod softmmu;
+#[cfg(test)]
 mod tools;

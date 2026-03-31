@@ -92,6 +92,12 @@ pub struct RiscvCpu {
     /// Physical PC from the last gen_code() translation.
     /// Used by the exec loop to record phys_pc in TB.
     pub last_phys_pc: u64,
+
+    /// PC of the guest memory instruction currently being
+    /// executed by JIT code. Written by the translator
+    /// before each qemu_ld/qemu_st so that helper-latched
+    /// faults have the correct mepc.
+    pub fault_pc: u64,
 }
 
 // Field offsets (bytes) from the start of RiscvCpu.
@@ -176,6 +182,7 @@ impl RiscvCpu {
             ram_end: 0,
             tb_flush_pending: false,
             last_phys_pc: 0,
+            fault_pc: 0,
         }
     }
 

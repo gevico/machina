@@ -52,6 +52,14 @@ pub fn fault_cause_offset() -> usize {
     field - base
 }
 
+/// Byte offset of `fault_pc` within RiscvCpu.
+pub fn fault_pc_offset() -> usize {
+    let dummy = RiscvCpu::new();
+    let base = &dummy as *const RiscvCpu as usize;
+    let field = &dummy.fault_pc as *const u64 as usize;
+    field - base
+}
+
 /// Last translated TB PC for crash diagnosis.
 pub static LAST_TB_PC: AtomicU64 = AtomicU64::new(0);
 
@@ -252,6 +260,12 @@ impl GuestCpu for FullSystemCpu {
                 machina_guest_riscv::riscv::cpu::LOAD_VAL_OFFSET,
                 "load_val",
             );
+            d.fault_pc = ir.new_global(
+                machina_accel::ir::types::Type::I64,
+                d.env,
+                fault_pc_offset() as i64,
+                "fault_pc",
+            );
             RiscvTranslator::tb_start(&mut d, ir);
             loop {
                 RiscvTranslator::insn_start(&mut d, ir);
@@ -348,6 +362,11 @@ impl GuestCpu for FullSystemCpu {
             let tval = self.cpu.mem_fault_tval;
             self.cpu.mem_fault_cause = 0;
             self.cpu.mem_fault_tval = 0;
+            // Use fault_pc for precise mepc.
+            if self.cpu.fault_pc != 0 {
+                self.cpu.pc = self.cpu.fault_pc;
+                self.cpu.fault_pc = 0;
+            }
             self.handle_exception(cause as u32, tval);
             true
         } else {

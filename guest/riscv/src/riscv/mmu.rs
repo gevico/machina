@@ -343,7 +343,7 @@ impl Mmu {
         self.stats.page_walks += 1;
 
         let (ppn, perm, pg_size, pte_addr, pte) =
-            self.walk_page_table(gva, access, mem_read)?;
+            self.walk_page_table(gva, access, pmp, priv_level, mem_read)?;
 
         self.check_perm(perm, access, priv_level, mstatus)?;
 
@@ -353,6 +353,16 @@ impl Mmu {
             new_pte |= PTE_D as u64;
         }
         if new_pte != pte {
+            // PMP check on PTE write for A/D update.
+            if let Some(p) = pmp {
+                p.check_access(
+                    pte_addr,
+                    PTE_SIZE,
+                    AccessType::Write,
+                    priv_level,
+                )
+                .map_err(|_| access_fault(access))?;
+            }
             mem_write(pte_addr, new_pte);
         }
         let updated_perm = (new_pte & 0xFF) as u8;
@@ -427,6 +437,8 @@ impl Mmu {
         &self,
         gva: u64,
         access: AccessType,
+        pmp: Option<&Pmp>,
+        priv_level: PrivLevel,
         mem_read: &impl Fn(u64) -> u64,
     ) -> Result<(u64, u8, u64, u64, u64), Exception> {
         let root_ppn = self.satp & SATP_PPN_MASK;
@@ -435,6 +447,16 @@ impl Mmu {
         for level in (0..LEVELS).rev() {
             let idx = vpn_index(gva, level);
             let pte_addr = a + idx * PTE_SIZE;
+            // PMP check on PTE read (AC-12).
+            if let Some(p) = pmp {
+                p.check_access(
+                    pte_addr,
+                    PTE_SIZE,
+                    AccessType::Read,
+                    priv_level,
+                )
+                .map_err(|_| access_fault(access))?;
+            }
             let pte = mem_read(pte_addr);
 
             let flags = (pte & 0xFF) as u8;

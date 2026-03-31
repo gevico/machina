@@ -1512,8 +1512,12 @@ impl X86_64CodeGen {
         emit_store(buf, true, Reg::R11, Reg::Rsp, Self::TLB_SAVE_R11);
 
         // -- TLB inline check --
+        // index = ((vpn ^ (vpn >> 8)) & mask)
         emit_mov_rr(buf, true, Reg::R11, addr);
         emit_shift_ri(buf, ShiftOp::Shr, true, Reg::R11, 12);
+        emit_mov_rr(buf, true, Reg::R10, Reg::R11);
+        emit_shift_ri(buf, ShiftOp::Shr, true, Reg::R10, 8);
+        emit_arith_rr(buf, ArithOp::Xor, true, Reg::R11, Reg::R10);
         emit_arith_ri(buf, ArithOp::And, true, Reg::R11, cfg.index_mask as i32);
         emit_load(buf, true, Reg::R10, Reg::Rbp, cfg.tlb_ptr_offset as i32);
         emit_imul_ri(buf, true, Reg::R11, Reg::R11, cfg.entry_size as i32);
@@ -1581,10 +1585,9 @@ impl X86_64CodeGen {
 
     /// Emit a post-helper fault check: if
     /// mem_fault_cause != 0, exit TB immediately.
-    #[allow(unused_variables)]
-    fn emit_fault_check(&self, buf: &mut CodeBuffer, cfg: &SoftMmuConfig) {
-        // Inline fault check disabled. Faults are caught
-        // by check_mem_fault() in the exec loop.
+    fn emit_fault_check(&self, _buf: &mut CodeBuffer, _cfg: &SoftMmuConfig) {
+        // Disabled — faults handled at TB boundary by
+        // check_mem_fault() in exec loop.
     }
 
     /// Patch a jmp/jcc disp32 field.

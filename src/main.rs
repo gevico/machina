@@ -142,6 +142,8 @@ fn run_machine_cycle(
 
     // JIT backend with SoftMMU/TLB config.
     let mut backend = X86_64CodeGen::new();
+    #[allow(unused_imports)]
+    use machina_system::cpus::fault_pc_offset;
     use machina_system::cpus::{
         fault_cause_offset, tlb_offsets, tlb_ptr_offset, TLB_SIZE,
     };

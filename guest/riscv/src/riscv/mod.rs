@@ -37,6 +37,9 @@ pub struct RiscvDisasContext {
     pub load_res: TempIdx,
     /// IR temp for LR loaded value (global).
     pub load_val: TempIdx,
+    /// IR temp for the fault PC field (global). Written
+    /// before each memory op for precise mepc.
+    pub fault_pc: TempIdx,
     /// Raw instruction word being decoded.
     pub opcode: u32,
     /// Length of the current instruction (2 or 4).
@@ -64,6 +67,7 @@ impl RiscvDisasContext {
             pc: TempIdx(0),
             load_res: TempIdx(0),
             load_val: TempIdx(0),
+            fault_pc: TempIdx(0),
             opcode: 0,
             cur_insn_len: 4,
             guest_base,
