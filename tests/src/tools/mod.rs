@@ -12,8 +12,8 @@ fn bin_path(name: &str) -> PathBuf {
     project_root().join("target").join("debug").join(name)
 }
 
-fn guest_dhrystone() -> PathBuf {
-    project_root().join("target/guest/riscv64/dhrystone")
+fn guest_elf() -> PathBuf {
+    project_root().join("tests/firmware/sbi_smoke.elf")
 }
 
 /// Build both tools before running tests.
@@ -34,7 +34,7 @@ fn irdump_emit_bin_produces_file() {
 
     let status = Command::new(bin_path("machina-irdump"))
         .args([
-            guest_dhrystone().to_str().unwrap(),
+            guest_elf().to_str().unwrap(),
             "--emit-bin",
             tmp,
             "--count",
@@ -61,7 +61,7 @@ fn irbackend_hex_dump() {
     // Generate IR
     let status = Command::new(bin_path("machina-irdump"))
         .args([
-            guest_dhrystone().to_str().unwrap(),
+            guest_elf().to_str().unwrap(),
             "--emit-bin",
             tmp_ir,
             "--count",
@@ -103,7 +103,7 @@ fn irbackend_raw_output() {
     // Generate IR
     let status = Command::new(bin_path("machina-irdump"))
         .args([
-            guest_dhrystone().to_str().unwrap(),
+            guest_elf().to_str().unwrap(),
             "--emit-bin",
             tmp_ir,
             "--count",
@@ -136,7 +136,7 @@ fn irbackend_multiple_tbs() {
     // Generate 5 TBs
     let status = Command::new(bin_path("machina-irdump"))
         .args([
-            guest_dhrystone().to_str().unwrap(),
+            guest_elf().to_str().unwrap(),
             "--emit-bin",
             tmp_ir,
             "--count",
