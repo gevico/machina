@@ -659,3 +659,89 @@ impl machina_memory::region::MmioOps for TestMmioDeviceWrapper {
         self.inner.write(offset, size, val);
     }
 }
+
+// ── Regression: slow-path register corruption ──────
+
+/// BGEU rs1, rs2, offset (B-type)
+fn bgeu(rs1: u32, rs2: u32, offset: i32) -> u32 {
+    let imm = offset as u32;
+    let b12 = (imm >> 12) & 1;
+    let b10_5 = (imm >> 5) & 0x3F;
+    let b4_1 = (imm >> 1) & 0xF;
+    let b11 = (imm >> 11) & 1;
+    (b12 << 31)
+        | (b10_5 << 25)
+        | (rs2 << 20)
+        | (rs1 << 15)
+        | (0b111 << 12)
+        | (b4_1 << 8)
+        | (b11 << 7)
+        | 0x63
+}
+
+/// AUIPC rd, imm20 (U-type)
+fn auipc(rd: u32, imm20: u32) -> u32 {
+    (imm20 << 12) | (rd << 7) | 0x17
+}
+
+/// Regression test for slow-path register corruption.
+///
+/// When a QemuLd takes the TLB slow path, the helper call
+/// clobbers caller-saved registers. The slow path must
+/// restore RAX/R10/R11 from TLB_SAVE (pre-TLB-check
+/// originals), not from the caller-saved save area (which
+/// captured the TLB-clobbered values).
+///
+/// Sequence: store a known value, load it into x1 (first
+/// QemuLd, output in some reg R), then load from a
+/// different page (second QemuLd, forces TLB slow path
+/// for new page), then branch on x1 vs a constant. If
+/// the slow path corrupts R, the branch sees garbage.
+#[test]
+fn test_slowpath_preserves_non_output_regs() {
+    let code = encode(&[
+        // x3 = RAM_BASE (0x80000000)
+        auipc(3, 0),
+        // x1 = 42 (value to store)
+        addi(1, 0, 42),
+        // Store x1 to RAM_BASE + 0x100
+        addi(4, 3, 0x100),
+        sd(1, 4, 0),
+        // Load x1 back (first QemuLd, same page as code)
+        ld(1, 4, 0),
+        // Load x5 from a DIFFERENT page (second QemuLd,
+        // new page → TLB miss → slow path).
+        // 0x80001000 is page-aligned, different from code page.
+        addi(5, 3, 0),
+        lui(5, 0x80001),
+        ld(5, 5, 0),
+        // Now compare x1 with 100. If x1 == 42
+        // (correct), bgeu 42 >= 100 is false → fall
+        // through to ecall with x2=1. If x1 is
+        // corrupted (>= 100), branch skips the marker.
+        addi(6, 0, 100),
+        bgeu(1, 6, 8), // skip next insn if x1 >= 100
+        addi(2, 0, 1), // x2 = 1 (marker: x1 was correct)
+        ecall(),
+    ]);
+
+    let ram_sz = 2 * 1024 * 1024;
+    let (mut env, mut cpu, _as, _ram) =
+        setup_fullsys(ram_sz, &code);
+    cpu.cpu.pc = RAM_BASE;
+
+    let r = unsafe { cpu_exec_loop_env(&mut env, &mut cpu) };
+
+    assert_eq!(r, ExitReason::Ecall { priv_level: 3 });
+    assert_eq!(
+        cpu.cpu.gpr[1], 42,
+        "x1 must hold the loaded value (42), \
+         not a corrupted register"
+    );
+    assert_eq!(
+        cpu.cpu.gpr[2], 1,
+        "x2 must be 1: bgeu(42, 100) should NOT be \
+         taken, proving x1 was not corrupted by the \
+         second QemuLd's slow path"
+    );
+}
