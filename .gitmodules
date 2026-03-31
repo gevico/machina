@@ -1,0 +1,3 @@
+[submodule "roms/rustsbi"]
+	path = roms/rustsbi
+	url = https://github.com/rustsbi/rustsbi.git

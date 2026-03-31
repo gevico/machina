@@ -3,6 +3,9 @@ name = "machina-hw-riscv"
 version = "0.1.0"
 edition = "2021"
 
+[features]
+embed-firmware = []
+
 [dependencies]
 machina-core = { path = "../../core" }
 machina-hw-core = { path = "../core" }

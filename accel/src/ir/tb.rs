@@ -162,6 +162,7 @@ pub const EXCP_MRET: u64 = TB_EXIT_MAX + 3;
 pub const EXCP_SRET: u64 = TB_EXIT_MAX + 4;
 pub const EXCP_WFI: u64 = TB_EXIT_MAX + 5;
 pub const EXCP_SFENCE_VMA: u64 = TB_EXIT_MAX + 6;
+pub const EXCP_PRIV_CSR: u64 = TB_EXIT_MAX + 7;
 
 /// Encode an exit_tb return value with the source TB index.
 ///

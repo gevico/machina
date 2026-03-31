@@ -19,6 +19,13 @@ pub const CSR_MEPC: u16 = 0x341;
 pub const CSR_MCAUSE: u16 = 0x342;
 pub const CSR_MTVAL: u16 = 0x343;
 pub const CSR_MIP: u16 = 0x344;
+pub const CSR_MENVCFG: u16 = 0x30A;
+pub const CSR_MCOUNTINHIBIT: u16 = 0x320;
+
+// PMP CSRs
+pub const CSR_PMPCFG0: u16 = 0x3A0;
+pub const CSR_PMPCFG2: u16 = 0x3A2;
+pub const CSR_PMPADDR0: u16 = 0x3B0;
 
 // Supervisor-level CSRs
 pub const CSR_SSTATUS: u16 = 0x100;
@@ -112,7 +119,7 @@ const FRM_MASK: u64 = 0x07;
 /// MXL = 2 (64-bit) in bits [63:62].
 const MXL_64: u64 = 2 << 62;
 
-fn misa_rv64imafdc() -> u64 {
+fn misa_rv64imafdcsu() -> u64 {
     MXL_64
         | (1 << 0)  // A
         | (1 << 2)  // C
@@ -120,6 +127,8 @@ fn misa_rv64imafdc() -> u64 {
         | (1 << 5)  // F
         | (1 << 8)  // I
         | (1 << 12) // M
+        | (1 << 18) // S
+        | (1 << 20) // U
 }
 
 // ── MEDELEG writable mask ───────────────────────────────────────
@@ -171,6 +180,9 @@ impl PrivLevel {
 // ── CSR file ────────────────────────────────────────────────────
 
 /// Full RISC-V CSR register file for M/S/U privilege levels.
+/// Number of PMP entries supported.
+pub const PMP_COUNT: usize = 16;
+
 pub struct CsrFile {
     // Machine-level
     pub mstatus: u64,
@@ -185,6 +197,12 @@ pub struct CsrFile {
     pub mcause: u64,
     pub mtval: u64,
     pub mip: u64,
+    pub menvcfg: u64,
+    pub mcountinhibit: u64,
+
+    // PMP
+    pub pmpcfg: [u64; 4],
+    pub pmpaddr: [u64; PMP_COUNT],
 
     // Supervisor-level (non-aliased)
     pub satp: u64,
@@ -205,11 +223,10 @@ pub struct CsrFile {
 }
 
 impl CsrFile {
-    /// Create a new CSR file with misa = RV64IMAFDC.
     pub fn new() -> Self {
         Self {
             mstatus: 0,
-            misa: misa_rv64imafdc(),
+            misa: misa_rv64imafdcsu(),
             medeleg: 0,
             mideleg: 0,
             mie: 0,
@@ -220,6 +237,10 @@ impl CsrFile {
             mcause: 0,
             mtval: 0,
             mip: 0,
+            menvcfg: 0,
+            mcountinhibit: 0,
+            pmpcfg: [0u64; 4],
+            pmpaddr: [0u64; PMP_COUNT],
             satp: 0,
             sscratch: 0,
             sepc: 0,
@@ -256,6 +277,29 @@ impl CsrFile {
             CSR_MCAUSE => Ok(self.mcause),
             CSR_MTVAL => Ok(self.mtval),
             CSR_MIP => Ok(self.mip),
+            CSR_MENVCFG => Ok(self.menvcfg),
+            CSR_MCOUNTINHIBIT => Ok(self.mcountinhibit),
+
+            // PMP config (RV64: pmpcfg0 and pmpcfg2 only)
+            addr if addr == CSR_PMPCFG0
+                || addr == CSR_PMPCFG2 =>
+            {
+                let idx = ((addr - CSR_PMPCFG0) / 2) as usize;
+                Ok(self.pmpcfg[idx])
+            }
+            // pmpcfg1/pmpcfg3 don't exist in RV64.
+            addr if addr == CSR_PMPCFG0 + 1
+                || addr == CSR_PMPCFG0 + 3 =>
+            {
+                Ok(0)
+            }
+            // PMP address registers
+            addr if addr >= CSR_PMPADDR0
+                && addr < CSR_PMPADDR0 + PMP_COUNT as u16 =>
+            {
+                let idx = (addr - CSR_PMPADDR0) as usize;
+                Ok(self.pmpaddr[idx])
+            }
 
             // -- S-level (aliased) --
             CSR_SSTATUS => Ok((self.mstatus | self.sd_bit()) & SSTATUS_MASK),
@@ -346,8 +390,40 @@ impl CsrFile {
                 Ok(())
             }
             CSR_MIP => {
-                // Only SSIP, STIP, SEIP are writable via MIP.
-                self.mip = (self.mip & !SIP_MASK) | (val & SIP_MASK);
+                self.mip =
+                    (self.mip & !SIP_MASK) | (val & SIP_MASK);
+                Ok(())
+            }
+            CSR_MENVCFG => {
+                self.menvcfg = val;
+                Ok(())
+            }
+            CSR_MCOUNTINHIBIT => {
+                self.mcountinhibit = val & 0x7;
+                Ok(())
+            }
+            // PMP config (RV64: pmpcfg0 and pmpcfg2)
+            addr if addr == CSR_PMPCFG0
+                || addr == CSR_PMPCFG2 =>
+            {
+                let idx =
+                    ((addr - CSR_PMPCFG0) / 2) as usize;
+                self.pmpcfg[idx] = val;
+                Ok(())
+            }
+            // pmpcfg1/pmpcfg3: ignored in RV64.
+            addr if addr == CSR_PMPCFG0 + 1
+                || addr == CSR_PMPCFG0 + 3 =>
+            {
+                Ok(())
+            }
+            // PMP address registers
+            addr if addr >= CSR_PMPADDR0
+                && addr
+                    < CSR_PMPADDR0 + PMP_COUNT as u16 =>
+            {
+                let idx = (addr - CSR_PMPADDR0) as usize;
+                self.pmpaddr[idx] = val;
                 Ok(())
             }
 

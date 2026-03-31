@@ -206,6 +206,85 @@ impl GuestCpu for FullSystemCpu {
     fn wait_for_interrupt(&self) -> bool {
         self.wfi_waker.wait()
     }
+
+    fn handle_priv_csr(&mut self) -> bool {
+        // Read the 32-bit instruction at current PC.
+        let pc = self.cpu.pc;
+        let pc_off = pc.wrapping_sub(RAM_BASE);
+        if pc_off >= self.ram_size {
+            return false;
+        }
+        let insn = unsafe {
+            let ptr = self.ram_ptr.add(pc_off as usize);
+            *(ptr as *const u32)
+        };
+        // Decode CSR instruction fields:
+        //   [31:20] = csr, [19:15] = rs1, [14:12] = funct3,
+        //   [11:7] = rd, [6:0] = opcode
+        let opcode = insn & 0x7F;
+        if opcode != 0x73 {
+            return false; // not SYSTEM opcode
+        }
+        let funct3 = (insn >> 12) & 0x7;
+        if funct3 == 0 {
+            return false; // ECALL/EBREAK, not CSR
+        }
+        let rd = ((insn >> 7) & 0x1F) as usize;
+        let rs1_idx = ((insn >> 15) & 0x1F) as usize;
+        let csr_addr = (insn >> 20) as u16;
+
+        let priv_level = self.cpu.priv_level;
+        let rs1_val = if funct3 >= 5 {
+            // Immediate forms: rs1 field is the zimm.
+            rs1_idx as u64
+        } else {
+            if rs1_idx == 0 { 0 } else { self.cpu.gpr[rs1_idx] }
+        };
+
+        let old = match self
+            .cpu
+            .csr
+            .read(csr_addr, priv_level)
+        {
+            Ok(v) => v,
+            Err(_) => return false,
+        };
+
+        // Compute new value based on funct3.
+        let new_val = match funct3 {
+            1 | 5 => rs1_val,            // CSRRW / CSRRWI
+            2 | 6 => old | rs1_val,      // CSRRS / CSRRSI
+            3 | 7 => old & !rs1_val,     // CSRRC / CSRRCI
+            _ => return false,
+        };
+
+        // Write only if rs1 != 0 for RS/RC variants,
+        // always for RW.
+        let do_write = match funct3 {
+            1 | 5 => true,
+            2 | 3 | 6 | 7 => rs1_idx != 0,
+            _ => false,
+        };
+
+        if do_write {
+            if self
+                .cpu
+                .csr
+                .write(csr_addr, new_val, priv_level)
+                .is_err()
+            {
+                return false;
+            }
+        }
+
+        if rd != 0 {
+            self.cpu.gpr[rd] = old;
+        }
+
+        // Advance PC past the CSR instruction (4 bytes).
+        self.cpu.pc += 4;
+        true
+    }
 }
 
 // ---- JIT memory helpers ----

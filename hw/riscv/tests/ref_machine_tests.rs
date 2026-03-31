@@ -1,7 +1,6 @@
 use machina_core::address::GPA;
 use machina_core::machine::{Machine, MachineOpts};
 use machina_guest_riscv::riscv::csr::PrivLevel;
-use machina_hw_riscv::boot;
 use machina_hw_riscv::ref_machine::{RefMachine, RAM_BASE};
 use machina_hw_riscv::sbi::{SbiHandler, SBI_EXT_BASE, SBI_EXT_TIMER};
 
@@ -107,35 +106,20 @@ fn test_ref_machine_zero_ram_fails() {
 }
 
 #[test]
-fn test_ref_machine_boot_setup() {
+fn test_ref_machine_boot_no_bios() {
     let mut m = RefMachine::new();
     m.init(&default_opts()).expect("init failed");
 
-    let bios = [0x13u8; 64]; // NOP sled
-    let kernel = [0xAAu8; 128];
+    // Boot with no bios/kernel (default -bios none path).
+    m.boot().expect("boot failed");
 
-    let info = boot::setup_boot(&m, Some(&bios), Some(&kernel))
-        .expect("setup_boot failed");
-
-    // Entry PC should be RAM_BASE.
-    assert_eq!(info.entry_pc, 0x8000_0000);
-
-    // FDT address should be within RAM range.
-    let ram_end = 0x8000_0000u64 + m.ram_size();
-    assert!(
-        info.fdt_addr >= 0x8000_0000 && info.fdt_addr < ram_end,
-        "fdt_addr {:#x} out of RAM range",
-        info.fdt_addr
-    );
-
-    // Verify BIOS bytes were written at RAM_BASE.
-    let as_ = m.address_space();
-    let first_word = as_.read(GPA::new(0x8000_0000), 4);
-    assert_eq!(first_word, 0x13131313, "bios data mismatch");
-
-    // Verify kernel bytes at RAM_BASE + 0x20_0000.
-    let kernel_word = as_.read(GPA::new(0x8020_0000), 4);
-    assert_eq!(kernel_word, 0xAAAAAAAA, "kernel data mismatch");
+    // CPU0 should be in Machine mode at RAM_BASE.
+    let cpus = m.cpus_lock();
+    let cpu = cpus[0].as_ref().unwrap();
+    assert_eq!(cpu.pc, RAM_BASE);
+    assert_eq!(cpu.priv_level, PrivLevel::Machine);
+    // a0 = hart_id = 0.
+    assert_eq!(cpu.gpr[10], 0);
 }
 
 // ---- New tests ----
@@ -218,17 +202,19 @@ fn test_ref_machine_irq_wiring() {
 fn test_ref_machine_boot_cpu_state() {
     let mut m = RefMachine::new();
     m.init(&default_opts()).expect("init failed");
+    m.boot().expect("boot failed");
 
-    let bios = [0x13u8; 16]; // minimal NOP sled
-    let info =
-        boot::setup_boot(&m, Some(&bios), None).expect("setup_boot failed");
-
+    let cpus = m.cpus_lock();
+    let cpu = cpus[0].as_ref().unwrap();
     // a0 = hart_id = 0.
-    assert_eq!(info.hart_id, 0);
+    assert_eq!(cpu.gpr[10], 0);
     // a1 = fdt_addr, must be within RAM.
-    assert!(info.fdt_addr >= 0x8000_0000, "fdt_addr below RAM_BASE");
-    // PC = entry_pc = RAM_BASE.
-    assert_eq!(info.entry_pc, 0x8000_0000);
+    assert!(
+        cpu.gpr[11] >= RAM_BASE,
+        "fdt_addr below RAM_BASE"
+    );
+    // PC = RAM_BASE (no bios → bare metal entry).
+    assert_eq!(cpu.pc, RAM_BASE);
 }
 
 #[test]

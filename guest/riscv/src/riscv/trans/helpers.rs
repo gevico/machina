@@ -202,6 +202,21 @@ impl RiscvDisasContext {
     // accesses to fflags/frm/fcsr should also verify
     // FS != Off.
 
+    /// Emit a TB exit for privileged CSR access.
+    /// PC is synced to the current instruction so the
+    /// exec loop can re-decode and execute at runtime.
+    pub(super) fn gen_priv_csr_exit(
+        &mut self,
+        ir: &mut Context,
+    ) {
+        use machina_accel::ir::tb::EXCP_PRIV_CSR;
+        let cur_pc = self.base.pc_next;
+        let pc = ir.new_const(Type::I64, cur_pc);
+        ir.gen_mov(Type::I64, self.pc, pc);
+        ir.gen_exit_tb(EXCP_PRIV_CSR);
+        self.base.is_jmp = crate::DisasJumpType::NoReturn;
+    }
+
     pub(super) fn gen_csr_read(
         &self,
         ir: &mut Context,

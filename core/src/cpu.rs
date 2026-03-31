@@ -39,6 +39,14 @@ pub trait GuestCpu {
     fn tlb_flush(&mut self) {}
     fn tlb_flush_page(&mut self, _vpn: u64) {}
 
+    /// Handle a privileged CSR instruction at runtime.
+    /// The CPU reads the instruction at the current PC,
+    /// decodes it, and executes the CSR operation. Returns
+    /// true if successful, false if illegal instruction.
+    fn handle_priv_csr(&mut self) -> bool {
+        false
+    }
+
     /// Wait for an interrupt to arrive (WFI semantics).
     /// Returns true if an interrupt arrived, false if
     /// timed out or not implemented.
