@@ -171,8 +171,10 @@ where
             }
             v if v == EXCP_SRET as usize => {
                 per_cpu.stats.real_exit += 1;
-                cpu.execute_sret();
-                // Continue at new PC (sepc).
+                if !cpu.execute_sret() {
+                    // Illegal: sret in U-mode.
+                    cpu.handle_exception(2, 0);
+                }
             }
             v if v == EXCP_SFENCE_VMA as usize => {
                 per_cpu.stats.real_exit += 1;

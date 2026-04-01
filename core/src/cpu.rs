@@ -35,7 +35,7 @@ pub trait GuestCpu {
     fn handle_interrupt(&mut self) {}
     fn handle_exception(&mut self, _excp: u32, _tval: u64) {}
     fn execute_mret(&mut self) {}
-    fn execute_sret(&mut self) {}
+    fn execute_sret(&mut self) -> bool { true }
     fn tlb_flush(&mut self) {}
     fn tlb_flush_page(&mut self, _vpn: u64) {}
 

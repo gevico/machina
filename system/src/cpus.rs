@@ -538,8 +538,8 @@ impl GuestCpu for FullSystemCpu {
         self.cpu.execute_mret();
     }
 
-    fn execute_sret(&mut self) {
-        self.cpu.execute_sret();
+    fn execute_sret(&mut self) -> bool {
+        self.cpu.execute_sret()
     }
 
     fn tlb_flush(&mut self) {

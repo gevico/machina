@@ -238,9 +238,12 @@ impl RiscvCpu {
 
     /// Execute SRET: return from S-mode trap handler.
     ///
-    /// Restores privilege from mstatus.SPP, restores SIE from
-    /// SPIE, sets SPIE=1, SPP=0, and jumps to sepc.
-    pub fn execute_sret(&mut self) {
+    /// Returns false if the instruction is illegal
+    /// (current privilege < S-mode).
+    pub fn execute_sret(&mut self) -> bool {
+        if self.priv_level < PrivLevel::Supervisor {
+            return false;
+        }
         // Restore priv from SPP (1 bit: 0=U, 1=S).
         self.priv_level = if self.csr.mstatus & MSTATUS_SPP != 0 {
             PrivLevel::Supervisor
@@ -260,5 +263,6 @@ impl RiscvCpu {
         self.csr.mstatus &= !MSTATUS_SPP;
 
         self.pc = self.csr.sepc;
+        true
     }
 }
