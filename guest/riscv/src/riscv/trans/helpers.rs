@@ -216,31 +216,6 @@ impl RiscvDisasContext {
         self.base.is_jmp = crate::DisasJumpType::NoReturn;
     }
 
-    /// Generate a helper call for CSR read-modify-write.
-    ///
-    /// When `csr_helper` is set, calls the helper function
-    /// instead of exiting the TB. The helper performs the
-    /// full CSR operation and returns the old value.
-    pub(super) fn gen_csr_helper(
-        &self,
-        ir: &mut Context,
-        csr: i64,
-        rs1_val: TempIdx,
-        funct3: u32,
-        rd: i64,
-    ) {
-        let csr_arg =
-            ir.new_const(Type::I64, csr as u64);
-        let f3_arg =
-            ir.new_const(Type::I64, funct3 as u64);
-        let old = self.gen_helper_call(
-            ir,
-            self.csr_helper as usize,
-            &[self.env, csr_arg, rs1_val, f3_arg],
-        );
-        self.gen_set_gpr(ir, rd, old);
-    }
-
     pub(super) fn gen_csr_read(
         &self,
         ir: &mut Context,

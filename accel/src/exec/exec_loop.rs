@@ -64,6 +64,13 @@ where
     loop {
         per_cpu.stats.loop_iters += 1;
 
+        // Check interrupts BEFORE executing the next TB
+        // (matching QEMU's cpu_handle_interrupt).
+        if cpu.pending_interrupt() {
+            cpu.handle_interrupt();
+            next_tb_hint = None;
+        }
+
         let tb_idx = match next_tb_hint.take() {
             Some(idx) => {
                 per_cpu.stats.hint_used += 1;

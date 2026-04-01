@@ -557,14 +557,10 @@ impl GuestCpu for FullSystemCpu {
     fn check_mem_fault(&mut self) -> bool {
         let cause = self.cpu.mem_fault_cause;
         if cause != 0 {
-            self.cpu.mem_fault_cause = 0;
-            if cause == 0xFF {
-                // CSR helper already called
-                // raise_exception. Just clear flag.
-                return true;
-            }
             let tval = self.cpu.mem_fault_tval;
+            self.cpu.mem_fault_cause = 0;
             self.cpu.mem_fault_tval = 0;
+            // Use fault_pc for precise mepc.
             if self.cpu.fault_pc != 0 {
                 self.cpu.pc = self.cpu.fault_pc;
                 self.cpu.fault_pc = 0;
@@ -960,100 +956,4 @@ pub unsafe extern "C" fn machina_mem_write(
         }
         write_phys_sized(cpu, pa, val, size);
     }
-}
-
-// ---- CSR helper for JIT ----
-
-/// JIT helper: execute a CSR read-modify-write.
-///
-/// Called from JIT code via gen_call. Returns old CSR
-/// value for rd. On illegal CSR access, delivers the
-/// exception via raise_exception and sets mem_fault_cause
-/// so check_mem_fault will pick it up.
-#[no_mangle]
-pub unsafe extern "C" fn machina_csr_op(
-    env: *mut u8,
-    csr: u64,
-    rs1_val: u64,
-    funct3: u64,
-) -> u64 {
-    use machina_guest_riscv::riscv::csr::{
-        CSR_PMPADDR0, CSR_PMPCFG0, CSR_SATP, PMP_COUNT,
-    };
-    let cpu = &mut *(env as *mut RiscvCpu);
-    let csr_addr = csr as u16;
-    let priv_level = cpu.priv_level;
-
-    let old = match csr_addr {
-        machina_guest_riscv::riscv::csr::CSR_TIME
-        | machina_guest_riscv::riscv::csr::CSR_CYCLE => {
-            let asp = cpu.as_ptr;
-            if asp != 0 {
-                let a = &*(asp as *const AddressSpace);
-                a.read(GPA::new(0x0200_BFF8), 8)
-            } else {
-                0
-            }
-        }
-        machina_guest_riscv::riscv::csr::CSR_INSTRET => {
-            cpu.csr.instret
-        }
-        _ => match cpu.csr.read(csr_addr, priv_level) {
-            Ok(v) => v,
-            Err(_) => {
-                cpu.raise_exception(
-                    Exception::IllegalInstruction,
-                    0,
-                );
-                cpu.mem_fault_cause = 0xFF;
-                return 0;
-            }
-        },
-    };
-
-    let new_val = match funct3 {
-        1 | 5 => rs1_val,
-        2 | 6 => old | rs1_val,
-        3 | 7 => old & !rs1_val,
-        _ => return old,
-    };
-
-    let do_write = match funct3 {
-        1 | 5 => true,
-        _ => rs1_val != 0,
-    };
-
-    if do_write {
-        if cpu
-            .csr
-            .write(csr_addr, new_val, priv_level)
-            .is_err()
-        {
-            cpu.raise_exception(
-                Exception::IllegalInstruction,
-                0,
-            );
-            cpu.mem_fault_cause = 0xFF;
-            return 0;
-        }
-        let is_pmp =
-            (CSR_PMPCFG0..=CSR_PMPCFG0 + 3)
-                .contains(&csr_addr)
-                || (CSR_PMPADDR0
-                    ..CSR_PMPADDR0 + PMP_COUNT as u16)
-                    .contains(&csr_addr);
-        if is_pmp {
-            cpu.pmp.sync_from_csr(
-                &cpu.csr.pmpcfg,
-                &cpu.csr.pmpaddr,
-            );
-        }
-        if csr_addr == CSR_SATP {
-            cpu.mmu.set_satp(new_val);
-            cpu.mmu.flush();
-            cpu.tb_flush_pending = true;
-        }
-    }
-
-    old
 }

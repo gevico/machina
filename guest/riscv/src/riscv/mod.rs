@@ -55,10 +55,6 @@ pub struct RiscvDisasContext {
     pub cur_insn_len: u32,
     /// Pointer to guest code bytes for fetching.
     pub guest_base: *const u8,
-    /// Address of the CSR helper function for JIT call.
-    /// When non-zero, CSR ops that can't be inlined use
-    /// a helper call instead of exiting the TB.
-    pub csr_helper: u64,
 }
 
 impl RiscvDisasContext {
@@ -86,7 +82,6 @@ impl RiscvDisasContext {
             opcode: 0,
             cur_insn_len: 4,
             guest_base,
-            csr_helper: 0,
         }
     }
 
