@@ -228,7 +228,30 @@ impl FullSystemCpu {
                 &mem_read,
                 &mut mem_write,
             ) {
-                Ok(pa) => pa,
+                Ok(pa) => {
+                    // Fill TLB addend for data accesses on
+                    // the same page (code shares TLB entry).
+                    let ram_end = self.cpu.ram_end;
+                    let gb = self.cpu.guest_base as usize;
+                    let addend = if pa >= RAM_BASE
+                        && pa < ram_end
+                    {
+                        let gva_page =
+                            vpc & machina_guest_riscv::riscv::mmu::PAGE_MASK;
+                        let pa_page =
+                            pa & machina_guest_riscv::riscv::mmu::PAGE_MASK;
+                        gb.wrapping_add(pa_page as usize)
+                            .wrapping_sub(
+                                gva_page as usize,
+                            )
+                    } else {
+                        TLB_MMIO_ADDEND
+                    };
+                    self.cpu
+                        .mmu
+                        .fill_addend(vpc, addend);
+                    pa
+                }
                 Err(e) => {
                     self.cpu.mem_fault_cause = match e {
                         Exception::InstructionPageFault => 12,

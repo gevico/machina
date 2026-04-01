@@ -107,15 +107,38 @@ fn parse_args() -> Result<CliArgs, String> {
 
 fn install_crash_handler() {
     unsafe {
-        libc::signal(libc::SIGSEGV, crash_handler as *const () as usize);
+        let mut sa: libc::sigaction = std::mem::zeroed();
+        sa.sa_sigaction =
+            crash_handler as usize;
+        sa.sa_flags =
+            libc::SA_SIGINFO | libc::SA_NODEFER;
+        libc::sigaction(libc::SIGSEGV, &sa, std::ptr::null_mut());
     }
 }
 
-extern "C" fn crash_handler(_sig: libc::c_int) {
+extern "C" fn crash_handler(
+    _sig: libc::c_int,
+    info: *mut libc::siginfo_t,
+    ctx: *mut libc::c_void,
+) {
     let pc = LAST_TB_PC.load(Ordering::Relaxed);
+    let fault_addr = unsafe { (*info).si_addr() };
+    let uctx = ctx as *const libc::ucontext_t;
+    let rbp = unsafe {
+        (*uctx).uc_mcontext.gregs
+            [libc::REG_RBP as usize]
+    };
+    let rip = unsafe {
+        (*uctx).uc_mcontext.gregs
+            [libc::REG_RIP as usize]
+    };
     eprintln!(
-        "\nmachina: SIGSEGV in JIT code, \
+        "\nmachina: SIGSEGV at host {:#x}\n\
+         rip={:#x} rbp={:#x}\n\
          last TB pc={:#x}",
+        fault_addr as u64,
+        rip as u64,
+        rbp as u64,
         pc,
     );
     std::process::exit(139);
