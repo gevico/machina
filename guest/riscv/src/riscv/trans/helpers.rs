@@ -243,6 +243,13 @@ impl RiscvDisasContext {
             &[self.env, csr_arg, rs1_val, f3_arg],
         );
         self.gen_set_gpr(ir, rd, old);
+
+        // Advance PC past the CSR instruction (helper
+        // synced PC to cur_pc for exception handling,
+        // but on normal return we need next_pc).
+        let next_pc = cur_pc + self.cur_insn_len as u64;
+        let next = ir.new_const(Type::I64, next_pc);
+        ir.gen_mov(Type::I64, self.pc, next);
     }
 
     pub(super) fn gen_csr_read(

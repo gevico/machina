@@ -435,7 +435,7 @@ impl GuestCpu for FullSystemCpu {
                 fault_pc_offset() as i64,
                 "fault_pc",
             );
-            // d.csr_helper =
+            d.csr_helper =
                 machina_csr_op as *const () as u64;
             RiscvTranslator::tb_start(&mut d, ir);
             loop {

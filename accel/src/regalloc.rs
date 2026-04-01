@@ -356,7 +356,12 @@ fn regalloc_call(
         }
     }
 
-    // 5. Clobber all caller-saved registers.
+    // 5. Clobber all caller-saved registers AND
+    // invalidate all globals. Helpers may modify CPU
+    // state in memory, so cached register values for
+    // globals are stale. QEMU does this with
+    // save_globals() which sets all globals to
+    // TEMP_VAL_MEM.
     for &reg in &CALLER_SAVED {
         if let Some(tidx) = state.reg_to_temp[reg as usize] {
             let temp = ctx.temp(tidx);
@@ -367,6 +372,26 @@ fn regalloc_call(
                 t.mem_coherent = true;
             }
             state.free_reg(reg);
+        }
+    }
+    // Invalidate globals in callee-saved registers too:
+    // the helper may have modified CPU state via env ptr.
+    // Skip Fixed temps (env pointer stays in RBP).
+    let nb_globals = ctx.nb_globals() as usize;
+    for i in 0..nb_globals {
+        let tidx = TempIdx(i as u32);
+        let temp = ctx.temp(tidx);
+        if temp.kind == TempKind::Fixed {
+            continue;
+        }
+        if temp.val_type == TempVal::Reg {
+            if let Some(reg) = temp.reg {
+                let t = ctx.temp_mut(tidx);
+                t.val_type = TempVal::Mem;
+                t.reg = None;
+                t.mem_coherent = true;
+                state.free_reg(reg);
+            }
         }
     }
 
