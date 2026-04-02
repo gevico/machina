@@ -1,3 +1,5 @@
+use std::io::{BufRead, BufReader, Write};
+use std::net::TcpStream;
 use std::sync::{Arc, Mutex};
 
 use machina_core::monitor::{MonitorState, VmState};
@@ -180,4 +182,153 @@ fn test_hmp_info_cpus() {
     let svc = make_svc();
     let out = hmp::handle_line("info cpus", &svc);
     assert!(out.as_ref().unwrap().contains("CPU #0"));
+}
+
+// ── TCP socket-level tests ──────────────────────────
+
+fn read_json_line(
+    reader: &mut BufReader<TcpStream>,
+) -> serde_json::Value {
+    let mut line = String::new();
+    reader.read_line(&mut line).unwrap();
+    serde_json::from_str(&line).unwrap()
+}
+
+fn send_cmd(
+    stream: &mut TcpStream,
+    cmd: &str,
+) {
+    writeln!(stream, "{{\"execute\":\"{}\"}}", cmd)
+        .unwrap();
+    stream.flush().unwrap();
+}
+
+#[test]
+fn test_tcp_greeting_and_caps() {
+    let state = Arc::new(MonitorState::new());
+    let svc = Arc::new(Mutex::new(
+        MonitorService::new(Arc::clone(&state)),
+    ));
+    let listener = std::net::TcpListener::bind(
+        "127.0.0.1:0",
+    )
+    .unwrap();
+    let addr = listener.local_addr().unwrap();
+
+    let svc2 = Arc::clone(&svc);
+    let handle = std::thread::spawn(move || {
+        mmp::run_tcp(listener, svc2);
+    });
+
+    let stream = TcpStream::connect(addr).unwrap();
+    stream
+        .set_read_timeout(Some(
+            std::time::Duration::from_secs(3),
+        ))
+        .unwrap();
+    let mut reader = BufReader::new(
+        stream.try_clone().unwrap(),
+    );
+    let mut writer = stream;
+
+    // Read greeting.
+    let greeting = read_json_line(&mut reader);
+    assert!(greeting["QMP"]["version"]["machina"]
+        .is_object());
+
+    // Send qmp_capabilities.
+    send_cmd(&mut writer, "qmp_capabilities");
+    let resp = read_json_line(&mut reader);
+    assert!(resp["return"].is_object());
+
+    // Send query-status.
+    send_cmd(&mut writer, "query-status");
+    let resp = read_json_line(&mut reader);
+    assert_eq!(resp["return"]["running"], true);
+
+    // Send unknown command.
+    send_cmd(&mut writer, "nonexistent");
+    let resp = read_json_line(&mut reader);
+    assert_eq!(
+        resp["error"]["class"],
+        "CommandNotFound"
+    );
+
+    // Quit.
+    send_cmd(&mut writer, "quit");
+    let resp = read_json_line(&mut reader);
+    assert!(resp["return"].is_object());
+
+    handle.join().unwrap();
+}
+
+#[test]
+fn test_tcp_pre_caps_rejection() {
+    let state = Arc::new(MonitorState::new());
+    let svc = Arc::new(Mutex::new(
+        MonitorService::new(Arc::clone(&state)),
+    ));
+    let listener = std::net::TcpListener::bind(
+        "127.0.0.1:0",
+    )
+    .unwrap();
+    let addr = listener.local_addr().unwrap();
+
+    let svc2 = Arc::clone(&svc);
+    let handle = std::thread::spawn(move || {
+        mmp::run_tcp(listener, svc2);
+    });
+
+    let stream = TcpStream::connect(addr).unwrap();
+    stream
+        .set_read_timeout(Some(
+            std::time::Duration::from_secs(3),
+        ))
+        .unwrap();
+    let mut reader = BufReader::new(
+        stream.try_clone().unwrap(),
+    );
+    let mut writer = stream;
+
+    // Read greeting.
+    let _greeting = read_json_line(&mut reader);
+
+    // Send command before caps → should be rejected.
+    send_cmd(&mut writer, "query-status");
+    let resp = read_json_line(&mut reader);
+    assert!(resp["error"].is_object());
+    assert!(resp["error"]["desc"]
+        .as_str()
+        .unwrap()
+        .contains("qmp_capabilities"));
+
+    // Now send caps + quit.
+    send_cmd(&mut writer, "qmp_capabilities");
+    let _ = read_json_line(&mut reader);
+    send_cmd(&mut writer, "quit");
+    let _ = read_json_line(&mut reader);
+
+    handle.join().unwrap();
+}
+
+// ── HMP interactive session test ────────────────────
+
+#[test]
+fn test_hmp_interactive_session() {
+    let svc = make_svc();
+    let input = b"info status\nhelp\nquit\n";
+    let mut reader =
+        std::io::BufReader::new(&input[..]);
+    let mut output = Vec::new();
+
+    hmp::run_interactive(
+        &mut reader,
+        &mut output,
+        svc,
+    );
+
+    let text = String::from_utf8(output).unwrap();
+    assert!(text.contains("VM status: running"));
+    assert!(text.contains("info status"));
+    assert!(text.contains("(machina)"));
 }
