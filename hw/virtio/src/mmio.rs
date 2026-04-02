@@ -105,7 +105,11 @@ impl VirtioMmioState {
             return;
         }
         let q = &mut self.queues[sel];
-        if !q.ready {
+        if !q.ready || q.num == 0 {
+            return;
+        }
+        // Only process when DRIVER_OK (bit 2) is set.
+        if self.status & 0x4 == 0 {
             return;
         }
         let n = self.device.handle_queue(

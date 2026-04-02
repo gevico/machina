@@ -51,10 +51,11 @@ impl VirtQueue {
         ram_base: u64,
         ram_size: u64,
     ) -> Option<Desc> {
-        let off = self.desc_addr
-            + (idx as u64) * 16
-            - ram_base;
-        if off + 16 > ram_size {
+        let addr = self
+            .desc_addr
+            .checked_add((idx as u64) * 16)?;
+        let off = addr.checked_sub(ram_base)?;
+        if off.checked_add(16)? > ram_size {
             return None;
         }
         let p = unsafe { ram.add(off as usize) };
@@ -78,8 +79,14 @@ impl VirtQueue {
         ram_base: u64,
         ram_size: u64,
     ) -> u16 {
-        // avail.idx is at avail_addr + 2.
-        let off = self.avail_addr + 2 - ram_base;
+        let addr = match self.avail_addr.checked_add(2) {
+            Some(a) => a,
+            None => return self.last_avail_idx,
+        };
+        let off = match addr.checked_sub(ram_base) {
+            Some(o) => o,
+            None => return self.last_avail_idx,
+        };
         if off + 2 > ram_size {
             return self.last_avail_idx;
         }
@@ -97,7 +104,9 @@ impl VirtQueue {
         ram_base: u64,
         ram_size: u64,
     ) -> u16 {
-        // avail.ring[i] at avail_addr + 4 + i*2.
+        if self.num == 0 {
+            return 0;
+        }
         let i = (ring_idx as u64) % (self.num as u64);
         let off = self.avail_addr + 4 + i * 2 - ram_base;
         if off + 2 > ram_size {
@@ -119,6 +128,9 @@ impl VirtQueue {
         ram_base: u64,
         ram_size: u64,
     ) {
+        if self.num == 0 {
+            return;
+        }
         let i = (used_idx as u64) % (self.num as u64);
         // used.ring[i] at used_addr + 4 + i*8.
         let off = self.used_addr + 4 + i * 8 - ram_base;

@@ -183,8 +183,12 @@ impl VirtioBlk {
         // First descriptor: header (16 bytes,
         // device-readable).
         let hdr = &chain[0];
-        let hdr_off = hdr.addr - ram_base;
-        if hdr_off + 16 > ram_size || hdr.len < 16 {
+        let hdr_off = match hdr.addr.checked_sub(ram_base)
+        {
+            Some(o) if o + 16 <= ram_size => o,
+            _ => return 0,
+        };
+        if hdr.len < 16 {
             return 0;
         }
         let (req_type, sector) = unsafe {
@@ -198,7 +202,10 @@ impl VirtioBlk {
         // Last descriptor: status (1 byte,
         // device-writable).
         let status_desc = &chain[chain.len() - 1];
-        let status_off = status_desc.addr - ram_base;
+        let status_off = status_desc
+            .addr
+            .checked_sub(ram_base)
+            .unwrap_or(u64::MAX);
         let status_valid = status_off < ram_size
             && status_desc.flags & VRING_DESC_F_WRITE != 0;
 
@@ -245,12 +252,22 @@ impl VirtioBlk {
         ram_size: u64,
         total_written: &mut u32,
     ) -> u8 {
-        let mut disk_off = sector * SECTOR_SIZE;
+        let mut disk_off =
+            match sector.checked_mul(SECTOR_SIZE) {
+                Some(o) => o,
+                None => return VIRTIO_BLK_S_IOERR,
+            };
         for desc in data_descs {
             if desc.flags & VRING_DESC_F_WRITE == 0 {
-                continue; // skip non-writable
+                continue;
             }
-            let guest_off = desc.addr - ram_base;
+            let guest_off = match desc
+                .addr
+                .checked_sub(ram_base)
+            {
+                Some(o) => o,
+                None => return VIRTIO_BLK_S_IOERR,
+            };
             let len = desc.len as u64;
             if guest_off + len > ram_size {
                 return VIRTIO_BLK_S_IOERR;
@@ -281,13 +298,22 @@ impl VirtioBlk {
         ram_base: u64,
         ram_size: u64,
     ) -> u8 {
-        let mut disk_off = sector * SECTOR_SIZE;
+        let mut disk_off =
+            match sector.checked_mul(SECTOR_SIZE) {
+                Some(o) => o,
+                None => return VIRTIO_BLK_S_IOERR,
+            };
         for desc in data_descs {
             if desc.flags & VRING_DESC_F_WRITE != 0 {
-                continue; // skip writable (data is
-                          // device-readable for OUT)
+                continue;
             }
-            let guest_off = desc.addr - ram_base;
+            let guest_off = match desc
+                .addr
+                .checked_sub(ram_base)
+            {
+                Some(o) => o,
+                None => return VIRTIO_BLK_S_IOERR,
+            };
             let len = desc.len as u64;
             if guest_off + len > ram_size {
                 return VIRTIO_BLK_S_IOERR;
