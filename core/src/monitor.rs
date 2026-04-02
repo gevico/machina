@@ -100,8 +100,10 @@ impl MonitorState {
             return;
         }
         *state = VmState::PauseRequested;
-        // Wake CPU if in WFI (without injecting
-        // spurious IRQ).
+        // Only wake WFI if CPU is actually halted.
+        // Use cv.notify_all() instead of monitor_wake()
+        // to avoid latching a flag that could survive
+        // into a future WFI after cont.
         if let Some(ref wk) =
             *self.wfi_waker.lock().unwrap()
         {
@@ -124,10 +126,15 @@ impl MonitorState {
             return;
         }
         *state = VmState::Running;
-        // Wake both resume waiters AND stop waiters
-        // (in case stop was pending but not yet parked).
         self.resume_cv.notify_all();
         self.pause_barrier.notify_all();
+        // Clear stale monitor_wake so it doesn't affect
+        // future WFI instructions.
+        if let Some(ref wk) =
+            *self.wfi_waker.lock().unwrap()
+        {
+            wk.clear_monitor_wake();
+        }
     }
 
     /// Request clean process exit.

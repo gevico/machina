@@ -57,6 +57,14 @@ impl WfiWaker {
         self.cv.notify_all();
     }
 
+    /// Clear latched monitor_wake flag. Called after
+    /// monitor cont to prevent a stale flag from
+    /// waking a future WFI.
+    pub fn clear_monitor_wake(&self) {
+        let mut s = self.state.lock().unwrap();
+        s.monitor_wake = false;
+    }
+
     /// Force-unblock any waiting CPU (manager stop).
     pub fn stop(&self) {
         let mut s = self.state.lock().unwrap();
