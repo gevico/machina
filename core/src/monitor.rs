@@ -91,8 +91,9 @@ impl MonitorState {
         {
             wk.wake();
         }
-        // Wait for exec loop to park.
-        while *state != VmState::Paused {
+        // Wait for exec loop to park, or for cancel
+        // (cont/quit changed state back to Running).
+        while *state == VmState::PauseRequested {
             state = self
                 .pause_barrier
                 .wait(state)
@@ -107,7 +108,10 @@ impl MonitorState {
             return;
         }
         *state = VmState::Running;
+        // Wake both resume waiters AND stop waiters
+        // (in case stop was pending but not yet parked).
         self.resume_cv.notify_all();
+        self.pause_barrier.notify_all();
     }
 
     /// Request clean process exit.
@@ -124,6 +128,7 @@ impl MonitorState {
         let mut state = self.inner.lock().unwrap();
         *state = VmState::Running;
         self.resume_cv.notify_all();
+        self.pause_barrier.notify_all();
         // Wake WFI if halted.
         if let Some(ref wk) =
             *self.wfi_waker.lock().unwrap()

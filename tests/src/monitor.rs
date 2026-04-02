@@ -109,6 +109,9 @@ fn test_mmp_query_cpus_fast() {
     assert_eq!(arr.len(), 1);
     assert_eq!(arr[0]["cpu-index"], 0);
     assert_eq!(arr[0]["arch"], "riscv64");
+    // QMP-compatible fields.
+    assert!(arr[0]["thread-id"].is_number());
+    assert!(arr[0]["props"]["core-id"].is_number());
 }
 
 #[test]

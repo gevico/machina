@@ -148,9 +148,17 @@ pub fn dispatch(
                 .map(|c| {
                     json!({
                         "cpu-index": c.cpu_index,
-                        "pc": format!("{:#x}", c.pc),
+                        "qom-path": format!(
+                            "/machine/cpu[{}]",
+                            c.cpu_index
+                        ),
+                        "thread-id": 0,
                         "halted": c.halted,
                         "arch": c.arch,
+                        "props": {
+                            "core-id": c.cpu_index
+                        },
+                        "target": c.arch,
                     })
                 })
                 .collect();

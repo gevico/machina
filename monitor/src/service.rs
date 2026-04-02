@@ -17,7 +17,10 @@ impl MonitorService {
     }
 
     pub fn query_status(&self) -> bool {
-        self.state.vm_state() == VmState::Running
+        // Only report paused when actually parked.
+        let s = self.state.vm_state();
+        s == VmState::Running
+            || s == VmState::PauseRequested
     }
 
     pub fn stop(&self) {
