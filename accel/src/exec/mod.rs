@@ -152,7 +152,7 @@ impl Default for PerCpuState {
 
 /// Minimum remaining bytes in code buffer before refusing
 /// to translate a new TB.
-const MIN_CODE_BUF_REMAINING: usize = 4096;
+pub const MIN_CODE_BUF_REMAINING: usize = 4096;
 
 /// Convenience wrapper for single-threaded use.
 pub struct ExecEnv<B: HostCodeGen> {

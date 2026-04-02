@@ -1,5 +1,7 @@
 // machina: QEMU-style full-system emulator entry point.
 
+mod difftest;
+
 use std::env;
 use std::path::PathBuf;
 use std::process;
@@ -28,6 +30,10 @@ fn usage() {
     eprintln!("  -bios path    BIOS/firmware binary");
     eprintln!("  -kernel path  Kernel binary");
     eprintln!("  -nographic    Disable graphical output");
+    eprintln!(
+        "  --difftest    Instruction-level difftest \
+         vs QEMU"
+    );
     eprintln!("  -h, --help    Show this help");
 }
 
@@ -38,6 +44,7 @@ struct CliArgs {
     kernel: Option<PathBuf>,
     #[allow(dead_code)]
     nographic: bool,
+    difftest: bool,
 }
 
 impl Default for CliArgs {
@@ -48,6 +55,7 @@ impl Default for CliArgs {
             bios: None,
             kernel: None,
             nographic: false,
+            difftest: false,
         }
     }
 }
@@ -91,6 +99,9 @@ fn parse_args() -> Result<CliArgs, String> {
             }
             "-nographic" => {
                 cli.nographic = true;
+            }
+            "--difftest" => {
+                cli.difftest = true;
             }
             "-h" | "--help" => {
                 usage();
@@ -273,6 +284,11 @@ fn main() {
     };
 
     eprintln!("machina: riscv64-ref, {} MiB RAM", cli.ram_mib,);
+
+    if cli.difftest {
+        difftest::run_difftest(&opts, cli.ram_mib);
+        return;
+    }
 
     // Outer loop: supports machine reset via SiFive Test.
     loop {

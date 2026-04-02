@@ -17,6 +17,7 @@ members = [
     "hw/char",
     "hw/riscv",
     "tests/mtest",
+    "tools/difftest",
 ]
 resolver = "2"
 
@@ -39,4 +40,5 @@ machina-accel = { path = "accel" }
 machina-memory = { path = "memory" }
 machina-hw-riscv = { path = "hw/riscv" }
 machina-system = { path = "system" }
+machina-difftest = { path = "tools/difftest" }
 libc = "0.2"

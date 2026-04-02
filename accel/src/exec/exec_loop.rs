@@ -106,6 +106,32 @@ where
                 match tb_find(shared, per_cpu, cpu, pc, flags) {
                     Some(idx) => idx,
                     None => {
+                        // Temporary: log fetch failures
+                        // in M-mode handler range.
+                        if pc >= 0x80000060
+                            && pc < 0x80000100
+                        {
+                            use std::sync::atomic::{
+                                AtomicU64,
+                                Ordering as AO,
+                            };
+                            static FF: AtomicU64 =
+                                AtomicU64::new(0);
+                            let n = FF.fetch_add(
+                                1, AO::Relaxed,
+                            );
+                            if n < 10 {
+                                eprintln!(
+                                    "FETCH FAIL pc={:#x} \
+                                     flags={:#x} fault={}",
+                                    pc, flags,
+                                    cpu.check_mem_fault(),
+                                );
+                                // Already consumed
+                                // by check_mem_fault
+                                continue;
+                            }
+                        }
                         // Might be a fetch fault.
                         if cpu.check_mem_fault() {
                             continue;
@@ -118,6 +144,7 @@ where
 
         let raw_exit = cpu_tb_exec(shared, cpu, tb_idx);
         let (last_tb, exit_code) = decode_tb_exit(raw_exit);
+
         let src_tb = last_tb.unwrap_or(tb_idx);
 
         match exit_code {
@@ -291,6 +318,7 @@ where
         // this iteration to preserve priority.
         if !cpu.check_mem_fault() && cpu.pending_interrupt() {
             cpu.handle_interrupt();
+            next_tb_hint = None;
         }
 
         // External stop check (SiFive Test shutdown, etc).

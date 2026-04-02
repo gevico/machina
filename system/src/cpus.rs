@@ -23,7 +23,7 @@ use machina_guest_riscv::{translator_loop, DisasJumpType, TranslatorOps};
 const NUM_GPRS: usize = 32;
 pub const RAM_BASE: u64 = 0x8000_0000;
 const MSTATUS_SIE: u64 = 1 << 1;
-const MSTATUS_MIE: u64 = 1 << 50;
+const MSTATUS_MIE: u64 = 1 << 3;
 
 /// Compute the byte offset of the TLB Box pointer from
 /// the start of RiscvCpu (env pointer). Used by the JIT
@@ -69,6 +69,7 @@ pub fn fault_pc_offset() -> usize {
 
 /// Last translated TB PC for crash diagnosis.
 pub static LAST_TB_PC: AtomicU64 = AtomicU64::new(0);
+
 
 /// Shared mip register for IRQ delivery from devices.
 pub type SharedMip = Arc<AtomicU64>;
@@ -271,6 +272,36 @@ impl FullSystemCpu {
 
     pub fn wfi_waker(&self) -> Arc<WfiWaker> {
         self.wfi_waker.clone()
+    }
+
+    /// Fetch a 32-bit instruction at the current PC,
+    /// going through MMU translation. Returns 0 on
+    /// failure.
+    pub fn fetch_insn_at_pc(&mut self) -> u32 {
+        let pc = self.cpu.pc;
+        let saved_fc = self.cpu.mem_fault_cause;
+        let saved_ft = self.cpu.mem_fault_tval;
+        let saved_fp = self.cpu.fault_pc;
+        let phys_pc = self.translate_pc(pc);
+        if phys_pc == u64::MAX {
+            self.cpu.mem_fault_cause = saved_fc;
+            self.cpu.mem_fault_tval = saved_ft;
+            self.cpu.fault_pc = saved_fp;
+            return 0;
+        }
+        self.cpu.mem_fault_cause = saved_fc;
+        self.cpu.mem_fault_tval = saved_ft;
+        self.cpu.fault_pc = saved_fp;
+        let (rp, rb, rs) =
+            self.resolve_fetch_region(phys_pc);
+        let off = phys_pc.wrapping_sub(rb);
+        if rp.is_null() || off >= rs {
+            return 0;
+        }
+        unsafe {
+            let ptr = rp.add(off as usize);
+            std::ptr::read_unaligned(ptr as *const u32)
+        }
     }
 }
 
