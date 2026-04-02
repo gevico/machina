@@ -51,11 +51,17 @@ impl MonitorState {
     }
 
     /// Set the CpuManager stop flag for quit.
+    /// Replays latched quit if already requested.
     pub fn set_stop_flag(
         &self,
         flag: Arc<AtomicBool>,
     ) {
-        *self.stop_flag.lock().unwrap() = Some(flag);
+        *self.stop_flag.lock().unwrap() =
+            Some(Arc::clone(&flag));
+        // Replay latched quit.
+        if self.is_quit_requested() {
+            flag.store(false, Ordering::SeqCst);
+        }
     }
 
     /// Store a CPU snapshot (called by exec loop when
@@ -70,11 +76,19 @@ impl MonitorState {
     }
 
     /// Set the WFI waker for CPU wake-on-pause.
+    /// Replays latched stop/quit if already pending.
     pub fn set_wfi_waker(
         &self,
         wk: Arc<crate::wfi::WfiWaker>,
     ) {
-        *self.wfi_waker.lock().unwrap() = Some(wk);
+        *self.wfi_waker.lock().unwrap() =
+            Some(Arc::clone(&wk));
+        // Replay latched stop/quit.
+        if self.is_quit_requested()
+            || self.is_pause_requested()
+        {
+            wk.wake();
+        }
     }
 
     /// Request vCPU to pause. Blocks until the exec
