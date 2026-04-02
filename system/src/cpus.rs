@@ -314,8 +314,20 @@ impl GuestCpu for FullSystemCpu {
 
     fn get_flags(&self) -> u32 {
         let priv_bits = self.cpu.priv_level as u32;
-        let satp_mode = (self.cpu.mmu.get_satp() >> 60) as u32 & 0xF;
-        priv_bits | (satp_mode << 2)
+        let satp = self.cpu.mmu.get_satp();
+        let satp_mode = (satp >> 60) as u32 & 0xF;
+        if satp_mode == 0 {
+            // BARE mode: no address space tagging.
+            return priv_bits;
+        }
+        // Sv39+: include page-table root PPN hash to
+        // distinguish TBs from different address spaces.
+        // This avoids global TB invalidation on satp
+        // writes / sfence.vma (matches QEMU behavior).
+        let ppn = satp as u32;
+        let ppn_hash =
+            (ppn ^ (ppn >> 16)) & 0xFFFF;
+        priv_bits | (satp_mode << 2) | (ppn_hash << 6)
     }
 
     fn gen_code(&mut self, ir: &mut Context, pc: u64, max_insns: u32) -> u32 {
@@ -770,7 +782,10 @@ impl GuestCpu for FullSystemCpu {
             if csr_addr == CSR_SATP {
                 self.cpu.mmu.set_satp(new_val);
                 self.cpu.mmu.flush();
-                self.cpu.tb_flush_pending = true;
+                // No TB flush: matches QEMU behavior.
+                // TLB flush ensures slow-path page walk
+                // on next access. TB correctness relies
+                // on phys_pc validation in tb_find.
             }
         }
 

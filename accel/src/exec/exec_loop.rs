@@ -232,10 +232,13 @@ where
             }
             v if v == EXCP_SFENCE_VMA as usize => {
                 per_cpu.stats.real_exit += 1;
+                // sfence.vma: flush TLB and jump cache only.
+                // TBs are NOT invalidated (matches QEMU).
+                // The TLB flush ensures the next memory
+                // access goes through slow-path page walk.
+                // TB correctness is maintained by phys_pc
+                // validation in tb_find.
                 cpu.tlb_flush();
-                shared
-                    .tb_store
-                    .invalidate_all(shared.code_buf(), &shared.backend);
                 per_cpu.jump_cache.invalidate();
                 next_tb_hint = None;
             }
