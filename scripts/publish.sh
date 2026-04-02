@@ -71,10 +71,17 @@ fail=0
 
 for crate in "${CRATES[@]}"; do
     echo ">>> Publishing ${crate} ..."
-    if cargo publish -p "${crate}" ${REGISTRY} ${DRY_RUN} ${ALLOW_DIRTY} ${NO_VERIFY}; then
+    # Skip already-published crates.
+    output=$(cargo publish -p "${crate}" ${REGISTRY} ${DRY_RUN} ${ALLOW_DIRTY} ${NO_VERIFY} 2>&1)
+    rc=$?
+    if [ $rc -eq 0 ]; then
         echo "    ${crate} OK"
         ok=$((ok + 1))
+    elif echo "$output" | grep -q "already exists"; then
+        echo "    ${crate} SKIPPED (already published)"
+        ok=$((ok + 1))
     else
+        echo "$output" | tail -3
         echo "    ${crate} FAILED (retrying in ${SLEEP_SECS}s...)"
         sleep "${SLEEP_SECS}"
         if cargo publish -p "${crate}" ${REGISTRY} ${DRY_RUN} ${ALLOW_DIRTY} ${NO_VERIFY}; then
