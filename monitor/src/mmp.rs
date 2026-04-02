@@ -164,6 +164,15 @@ pub fn dispatch(
                 .collect();
             json!({"return": arr})
         }
+        "system_reset" => {
+            json!({
+                "error": {
+                    "class": "GenericError",
+                    "desc": "system_reset not \
+                             implemented (deferred)"
+                }
+            })
+        }
         _ => {
             json!({
                 "error": {
