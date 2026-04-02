@@ -482,10 +482,17 @@ fn main() {
     // Outer loop: supports machine reset via SiFive Test.
     loop {
         eprintln!("machina: entering execution loop");
+        let ms = if cli.monitor.is_some()
+            || cli.nographic
+        {
+            Some(Arc::clone(&monitor_state))
+        } else {
+            None
+        };
         let reason = run_machine_cycle(
             &opts,
             ram_size,
-            Some(Arc::clone(&monitor_state)),
+            ms,
             Arc::clone(&monitor_svc),
         );
 
