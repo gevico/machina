@@ -180,13 +180,34 @@ pub fn run_difftest(opts: &MachineOpts, ram_mib: u64) {
         &stop_flag,
     );
 
+    // Check QEMU exit status to distinguish clean
+    // shutdown from crash.
+    let qemu_status = match qemu.try_wait() {
+        Ok(Some(s)) => Some(s),
+        _ => {
+            let _ = qemu.kill();
+            qemu.wait().ok()
+        }
+    };
+    let qemu_ok = qemu_status
+        .map(|s| s.success())
+        .unwrap_or(false);
+
     match result {
         DifftestResult::Pass(count) => {
-            eprintln!(
-                "DIFFTEST PASS: {} instructions, \
-                 zero divergences",
-                count
-            );
+            if qemu_ok {
+                eprintln!(
+                    "DIFFTEST PASS: {} instructions, \
+                     zero divergences (QEMU exited ok)",
+                    count
+                );
+            } else {
+                eprintln!(
+                    "DIFFTEST PASS: {} instructions, \
+                     zero divergences (QEMU exit: {:?})",
+                    count, qemu_status
+                );
+            }
         }
         DifftestResult::Divergence {
             insn_count,
@@ -203,9 +224,6 @@ pub fn run_difftest(opts: &MachineOpts, ram_mib: u64) {
             eprintln!("DIFFTEST ERROR: {}", e);
         }
     }
-
-    let _ = qemu.kill();
-    let _ = qemu.wait();
 }
 
 enum DifftestResult {

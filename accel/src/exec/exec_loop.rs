@@ -196,8 +196,11 @@ where
                     {
                         if cpu.pending_interrupt() {
                             cpu.handle_interrupt();
+                            // Interrupt changed PC; don't
+                            // reuse cached TB.
+                        } else {
+                            next_tb_hint = Some(cached);
                         }
-                        next_tb_hint = Some(cached);
                         continue;
                     }
                 }
