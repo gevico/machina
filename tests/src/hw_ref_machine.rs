@@ -2,6 +2,7 @@ use machina_core::address::GPA;
 use machina_core::machine::{Machine, MachineOpts};
 use machina_guest_riscv::riscv::csr::PrivLevel;
 use machina_hw_riscv::ref_machine::{RefMachine, MROM_BASE, RAM_BASE};
+use std::fs;
 use std::io::Write;
 
 fn default_opts() -> MachineOpts {
@@ -103,6 +104,27 @@ fn test_ref_machine_virtio_is_realized_via_sysbus() {
 }
 
 #[test]
+fn test_ref_machine_sysbus_owner_set_matches_migrated_devices() {
+    let mut image = tempfile::NamedTempFile::new().unwrap();
+    image.write_all(&[0u8; 512]).unwrap();
+
+    let mut m = RefMachine::new();
+    let mut opts = default_opts();
+    opts.drive = Some(image.path().to_path_buf());
+    m.init(&opts).expect("init failed");
+
+    let mut owners = m
+        .sysbus()
+        .mappings()
+        .iter()
+        .map(|mapping| mapping.owner.as_str())
+        .collect::<Vec<_>>();
+    owners.sort_unstable();
+
+    assert_eq!(owners, vec!["aclint0", "plic0", "uart0", "virtio-mmio0"]);
+}
+
+#[test]
 fn test_ref_machine_fdt_virtio_node_tracks_sysbus_mapping() {
     let mut image = tempfile::NamedTempFile::new().unwrap();
     image.write_all(&[0u8; 512]).unwrap();
@@ -126,6 +148,31 @@ fn test_ref_machine_fdt_virtio_node_tracks_sysbus_mapping() {
             .any(|window| window == node_name.as_bytes()),
         "FDT should use sysbus-derived virtio-mmio node name"
     );
+}
+
+#[test]
+fn test_ref_machine_source_has_no_direct_migrated_mmio_root_wiring() {
+    let path = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../hw/riscv/src/ref_machine.rs"
+    );
+    let source = fs::read_to_string(path).expect("read ref_machine.rs");
+    let compact = source
+        .chars()
+        .filter(|ch| !ch.is_whitespace())
+        .collect::<String>();
+
+    for forbidden in [
+        "root.add_subregion(plic_region,GPA::new(PLIC_BASE))",
+        "root.add_subregion(aclint_region,GPA::new(ACLINT_BASE))",
+        "root.add_subregion(uart_region,GPA::new(UART0_BASE))",
+        "root.add_subregion(virtio_region,GPA::new(VIRTIO0_BASE))",
+    ] {
+        assert!(
+            !compact.contains(forbidden),
+            "migrated devices must not bypass MOM/sysbus: found {forbidden}"
+        );
+    }
 }
 
 #[test]
