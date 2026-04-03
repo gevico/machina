@@ -81,6 +81,7 @@ CRATES=(
     machina-hw-char
     machina-hw-intc
     machina-hw-virtio
+    machina-softfloat
     machina-guest-riscv
     machina-system
     machina-hw-riscv
