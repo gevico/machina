@@ -90,10 +90,12 @@ pub trait GuestCpu {
     }
 
     /// Translate a virtual PC to physical PC using the
-    /// current page table.  Returns 0 if translation is
-    /// not applicable (e.g. M-mode bare addressing).
+    /// current page table.  Returns `u64::MAX` if the
+    /// physical address is unknown (TLB miss / not
+    /// applicable).  The exec loop skips phys_pc
+    /// validation when MAX is returned.
     fn translate_pc(&self, _vpc: u64) -> u64 {
-        0
+        u64::MAX
     }
 
     /// Take the set of dirty physical pages (for

@@ -758,9 +758,9 @@ impl GuestCpu for FullSystemCpu {
         if let Some(pa) = self.cpu.mmu.tlb_lookup_code_phys(vpc) {
             return pa;
         }
-        // TLB miss — return 0 (skip phys_pc check,
-        // let gen_code do the page walk).
-        0
+        // TLB miss — return MAX to skip phys_pc check;
+        // gen_code will do the full page walk.
+        u64::MAX
     }
 
     fn take_dirty_pages(&mut self) -> Vec<u64> {

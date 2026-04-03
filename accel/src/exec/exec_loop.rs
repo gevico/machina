@@ -378,31 +378,34 @@ where
     // validation. After sfence.vma, the TLB is flushed
     // so this triggers a page walk in gen_code.
     // cur_phys == pc means bare/M-mode (no translation).
-    // cur_phys == 0 means TLB miss (page walk needed).
+    // cur_phys == u64::MAX means unknown (skip check).
     let cur_phys = cpu.translate_pc(pc);
 
     // Fast path: jump cache (per-CPU, no lock needed)
-    if cur_phys != 0 {
-        if let Some(idx) = per_cpu.jump_cache.lookup(pc) {
-            let tb = shared.tb_store.get(idx);
-            if !tb.invalid.load(Ordering::Acquire)
-                && tb.pc == pc
-                && tb.flags == flags
-                && tb.phys_pc == cur_phys
-            {
-                per_cpu.stats.jc_hit += 1;
-                return Some(idx);
-            }
+    if let Some(idx) = per_cpu.jump_cache.lookup(pc) {
+        let tb = shared.tb_store.get(idx);
+        if !tb.invalid.load(Ordering::Acquire)
+            && tb.pc == pc
+            && tb.flags == flags
+            && (cur_phys == u64::MAX
+                || tb.phys_pc == cur_phys)
+        {
+            per_cpu.stats.jc_hit += 1;
+            return Some(idx);
         }
+    }
 
-        // Slow path: hash table.
-        if let Some(idx) = shared.tb_store.lookup(pc, flags) {
-            let tb = shared.tb_store.get(idx);
-            if tb.phys_pc == cur_phys {
-                per_cpu.jump_cache.insert(pc, idx);
-                per_cpu.stats.ht_hit += 1;
-                return Some(idx);
-            }
+    // Slow path: hash table.
+    if let Some(idx) =
+        shared.tb_store.lookup(pc, flags)
+    {
+        let tb = shared.tb_store.get(idx);
+        if cur_phys == u64::MAX
+            || tb.phys_pc == cur_phys
+        {
+            per_cpu.jump_cache.insert(pc, idx);
+            per_cpu.stats.ht_hit += 1;
+            return Some(idx);
         }
     }
 
