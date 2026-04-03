@@ -31,6 +31,9 @@ fn test_monitor_state_stop_resume() {
         ms2.check_pause(); // blocks if PauseRequested
     });
 
+    // Give the spawned thread time to enter check_pause.
+    std::thread::sleep(std::time::Duration::from_millis(50));
+
     // Request stop — should block until parked.
     ms.request_stop();
     assert_eq!(ms.vm_state(), VmState::Paused);
@@ -50,6 +53,7 @@ fn test_monitor_state_stop_idempotent() {
         ms2.check_pause();
     });
 
+    std::thread::sleep(std::time::Duration::from_millis(50));
     ms.request_stop();
     // Second stop when already paused is idempotent.
     ms.request_stop();
