@@ -236,6 +236,10 @@ impl TbStore {
                 self.invalidate(i, code_buf, backend);
             }
         }
+        // Clear code-page bitmap: no valid TBs remain.
+        for b in &self.code_pages {
+            b.store(0, Ordering::Relaxed);
+        }
     }
 
     /// Invalidate all TBs whose phys_pc falls within the
