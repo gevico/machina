@@ -22,46 +22,62 @@ fn test_monitor_state_initial() {
 }
 
 #[test]
-#[ignore = "deadlocks after MOM refactor — needs MonitorState rework"]
 fn test_monitor_state_stop_resume() {
     let ms = Arc::new(MonitorState::new());
     let ms2 = Arc::clone(&ms);
 
-    // Spawn a thread that parks when pause requested.
+    // Simulate exec loop: keep calling check_pause()
+    // until quit is requested.
     let handle = std::thread::spawn(move || {
-        ms2.check_pause(); // blocks if PauseRequested
+        while !ms2.check_pause() {
+            std::thread::sleep(
+                std::time::Duration::from_millis(1),
+            );
+        }
     });
 
-    // Give the spawned thread time to enter check_pause.
-    std::thread::sleep(std::time::Duration::from_millis(50));
+    // Give the exec-loop thread time to start polling.
+    std::thread::sleep(
+        std::time::Duration::from_millis(20),
+    );
 
-    // Request stop — should block until parked.
+    // Stop: blocks until the thread parks.
     ms.request_stop();
     assert_eq!(ms.vm_state(), VmState::Paused);
 
-    // Resume.
+    // Resume: thread continues polling.
     ms.request_cont();
-    handle.join().unwrap();
     assert_eq!(ms.vm_state(), VmState::Running);
+
+    // Quit to break the exec-loop thread.
+    ms.request_quit();
+    handle.join().unwrap();
 }
 
 #[test]
-#[ignore = "deadlocks after MOM refactor — needs MonitorState rework"]
 fn test_monitor_state_stop_idempotent() {
     let ms = Arc::new(MonitorState::new());
     let ms2 = Arc::clone(&ms);
 
     let handle = std::thread::spawn(move || {
-        ms2.check_pause();
+        while !ms2.check_pause() {
+            std::thread::sleep(
+                std::time::Duration::from_millis(1),
+            );
+        }
     });
 
-    std::thread::sleep(std::time::Duration::from_millis(50));
+    std::thread::sleep(
+        std::time::Duration::from_millis(20),
+    );
+
     ms.request_stop();
     // Second stop when already paused is idempotent.
     ms.request_stop();
     assert_eq!(ms.vm_state(), VmState::Paused);
 
     ms.request_cont();
+    ms.request_quit();
     handle.join().unwrap();
 }
 
