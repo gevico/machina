@@ -366,7 +366,7 @@ fn is_nondeterministic_csr(
     }
     let csr_addr = (insn >> 20) & 0xFFF;
     // CSR_CYCLE=0xC00, CSR_TIME=0xC01, CSR_INSTRET=0xC02
-    matches!(csr_addr, 0xC00 | 0xC01 | 0xC02)
+    matches!(csr_addr, 0xC00..=0xC02)
 }
 
 /// Main difftest comparison loop.
@@ -530,7 +530,7 @@ fn difftest_loop<B: HostCodeGen>(
         }
 
         // Print progress every 100K instructions.
-        if insn_count % 100_000 == 0 {
+        if insn_count.is_multiple_of(100_000) {
             eprintln!(
                 "difftest: {} insns, pc={:#x} \
                  (resyncs={})",
@@ -726,8 +726,7 @@ fn tb_gen_single<B: HostCodeGen>(
         return Some(idx);
     }
 
-    let tb_idx =
-        unsafe { shared.tb_store.alloc(pc, flags, 0) };
+    let tb_idx = unsafe { shared.tb_store.alloc(pc, flags, 0) }?;
 
     guard.ir_ctx.reset();
     guard.ir_ctx.tb_idx = tb_idx as u32;

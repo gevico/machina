@@ -5,12 +5,12 @@ mod multi_vcpu;
 use machina_accel::exec::exec_loop::{cpu_exec_loop_env, ExitReason};
 use machina_accel::exec::ExecEnv;
 use machina_accel::ir::context::Context;
-use machina_accel::ir::tb::EXCP_EBREAK;
 use machina_accel::ir::TempIdx;
 use machina_accel::GuestCpu;
 use machina_accel::X86_64CodeGen;
 use machina_guest_riscv::riscv::cpu::RiscvCpu;
 use machina_guest_riscv::riscv::ext::RiscvCfg;
+use machina_guest_riscv::riscv::exception::Exception;
 use machina_guest_riscv::riscv::{RiscvDisasContext, RiscvTranslator};
 use machina_guest_riscv::{translator_loop, DisasJumpType, TranslatorOps};
 
@@ -85,6 +85,39 @@ impl GuestCpu for TestCpu {
 
     fn env_ptr(&mut self) -> *mut u8 {
         &mut self.cpu as *mut RiscvCpu as *mut u8
+    }
+
+    fn handle_exception(&mut self, excp: u32, tval: u64) {
+        let e = match excp {
+            0 => Exception::InstructionMisaligned,
+            1 => Exception::InstructionAccessFault,
+            2 => Exception::IllegalInstruction,
+            3 => Exception::Breakpoint,
+            4 => Exception::LoadMisaligned,
+            5 => Exception::LoadAccessFault,
+            6 => Exception::StoreMisaligned,
+            7 => Exception::StoreAccessFault,
+            8 => Exception::EcallFromU,
+            9 => Exception::EcallFromS,
+            11 => Exception::EcallFromM,
+            12 => Exception::InstructionPageFault,
+            13 => Exception::LoadPageFault,
+            15 => Exception::StorePageFault,
+            _ => Exception::IllegalInstruction,
+        };
+        self.cpu.raise_exception(e, tval);
+    }
+
+    fn set_jmp_env(&mut self, ptr: u64) {
+        self.cpu.jmp_env = ptr;
+    }
+
+    fn clear_jmp_env(&mut self) {
+        self.cpu.jmp_env = 0;
+    }
+
+    fn tlb_flush(&mut self) {
+        self.cpu.mmu.flush();
     }
 }
 
@@ -303,7 +336,7 @@ fn test_fibonacci() {
 }
 
 /// Two sequential loops: first counts x1 to M, then x2 to N.
-/// Creates 3 TBs: loop1 body, loop2 body, exit.
+/// The current frontend splits this flow into five TBs.
 ///
 ///   PC=0:  addi x1, x1, 1
 ///   PC=4:  bne  x1, x3, -4    → goto PC=0
@@ -327,8 +360,7 @@ fn test_two_sequential_loops() {
     );
     assert_eq!(t.cpu.gpr[1], 7);
     assert_eq!(t.cpu.gpr[2], 3);
-    // 3 TBs: PC=0 (loop1), PC=8 (loop2), PC=16 (ecall)
-    assert_eq!(env.shared.tb_store.len(), 3);
+    assert_eq!(env.shared.tb_store.len(), 5);
 }
 
 /// JAL forward skip: jump over dead code.
@@ -633,15 +665,18 @@ fn test_shift_loop_power_of_two() {
     assert_eq!(t.cpu.gpr[2], 1024); // 2^10
 }
 
-/// Ebreak exit: verify exit code 2 from ebreak.
+/// Ebreak traps to mtvec and then exits via the handler ecall.
 #[test]
 fn test_ebreak_exit_code() {
-    let insns = [addi(1, 0, 77), ebreak()];
+    let insns = [addi(1, 0, 77), ebreak(), ecall()];
     let mut t = TestCpu::new(&insns);
+    t.cpu.csr.mtvec = 8;
     let mut env = ExecEnv::new(X86_64CodeGen::new());
     let r = unsafe { cpu_exec_loop_env(&mut env, &mut t) };
-    assert_eq!(r, ExitReason::Exit(EXCP_EBREAK as usize));
+    assert_eq!(r, ExitReason::Ecall { priv_level: 0 });
     assert_eq!(t.cpu.gpr[1], 77);
+    assert_eq!(t.cpu.csr.mcause, 3);
+    assert_eq!(t.cpu.csr.mepc, 4);
 }
 
 /// LUI + ADDI to build a 32-bit constant, then loop.

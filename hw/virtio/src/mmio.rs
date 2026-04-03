@@ -112,12 +112,14 @@ impl VirtioMmioState {
         if self.status & 0x4 == 0 {
             return;
         }
-        let n = self.device.handle_queue(
-            q,
-            self.ram_ptr,
-            self.ram_base,
-            self.ram_size,
-        );
+        let n = unsafe {
+            self.device.handle_queue(
+                q,
+                self.ram_ptr,
+                self.ram_base,
+                self.ram_size,
+            )
+        };
         if n > 0 {
             self.interrupt_status |= 1;
             self.irq.set(true);
@@ -172,9 +174,9 @@ impl MmioOps for VirtioMmio {
                 let feat = s.device.features();
                 let sel = s.device_features_sel;
                 if sel == 0 {
-                    (feat & 0xFFFF_FFFF) as u64
+                    feat & 0xFFFF_FFFF
                 } else {
-                    ((feat >> 32) & 0xFFFF_FFFF) as u64
+                    (feat >> 32) & 0xFFFF_FFFF
                 }
             }
             QUEUE_NUM_MAX => {
@@ -199,10 +201,8 @@ impl MmioOps for VirtioMmio {
                     .get(sel)
                     .map(|q| {
                         if s.guest_page_size > 0 {
-                            (q.desc_addr
-                                / s.guest_page_size
-                                    as u64)
-                                as u64
+                            q.desc_addr
+                                / s.guest_page_size as u64
                         } else {
                             0
                         }
@@ -333,13 +333,9 @@ impl MmioOps for VirtioMmio {
                         let avail_off =
                             (q.num as u64) * 16;
                         q.avail_addr = base + avail_off;
-                        let used_off = ((base
+                        let used_off = (base
                             + avail_off
-                            + 6
-                            + (q.num as u64) * 2
-                            + align
-                            - 1)
-                            / align)
+                            + 6 + (q.num as u64) * 2).div_ceil(align)
                             * align;
                         q.used_addr = used_off;
                         q.ready = true;

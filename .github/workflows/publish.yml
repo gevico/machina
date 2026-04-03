@@ -1,6 +1,9 @@
 name: Publish to crates.io
 
 on:
+  push:
+    tags:
+      - 'v*'
   workflow_dispatch:
     inputs:
       dry_run:
@@ -26,5 +29,5 @@ jobs:
           if [ "${{ inputs.dry_run }}" = "true" ]; then
             DRY_RUN="--dry-run"
           fi
-          SLEEP_SECS=160 bash scripts/publish.sh \
+          SLEEP_SECS=125 bash scripts/publish.sh \
             --no-verify $DRY_RUN

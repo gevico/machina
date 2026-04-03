@@ -19,4 +19,6 @@ mod tools;
 #[cfg(test)]
 mod virtio;
 #[cfg(test)]
+mod softfloat;
+#[cfg(test)]
 mod monitor;

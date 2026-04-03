@@ -17,21 +17,45 @@ Options:
   -h, --help         Show this help message
 
 Environment:
-  SLEEP_SECS  Seconds to wait between publishes (default: 1)
+  SLEEP_SECS   Base seconds between publishes (default: 160)
+  MAX_RETRIES  Max retry attempts per crate (default: 4)
 
 Examples:
   $PROG                        # publish all crates
   $PROG --dry-run              # dry-run validation
   $PROG -d -a                  # dry-run with uncommitted changes
-  SLEEP_SECS=5 $PROG           # wait 5 seconds between publishes
+  SLEEP_SECS=1 $PROG -d -a      # fast dry-run (skip rate limit)
 EOF
 }
 
-SLEEP_SECS="${SLEEP_SECS:-1}"
+SLEEP_SECS="${SLEEP_SECS:-160}"
+MAX_RETRIES="${MAX_RETRIES:-4}"
 REGISTRY="--registry crates-io"
 DRY_RUN=""
 ALLOW_DIRTY=""
 NO_VERIFY=""
+
+# Temporarily disable source replacement (e.g. aliyun mirror)
+# so that dependency verification during packaging resolves
+# directly from crates.io. Without this, just-published
+# workspace crates may not be found due to mirror sync delay.
+CARGO_CONFIG="${HOME}/.cargo/config.toml"
+disable_mirror() {
+    if [ -f "$CARGO_CONFIG" ] && \
+       grep -q '^replace-with' "$CARGO_CONFIG"; then
+        sed -i 's/^replace-with/#&/' "$CARGO_CONFIG"
+        echo "Disabled source mirror in ${CARGO_CONFIG}"
+    fi
+}
+restore_mirror() {
+    if [ -f "$CARGO_CONFIG" ] && \
+       grep -q '^#replace-with' "$CARGO_CONFIG"; then
+        sed -i 's/^#\(replace-with\)/\1/' "$CARGO_CONFIG"
+        echo "Restored source mirror in ${CARGO_CONFIG}"
+    fi
+}
+trap restore_mirror EXIT
+disable_mirror
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -71,28 +95,35 @@ fail=0
 
 for crate in "${CRATES[@]}"; do
     echo ">>> Publishing ${crate} ..."
-    # Skip already-published crates.
-    output=$(cargo publish -p "${crate}" ${REGISTRY} ${DRY_RUN} ${ALLOW_DIRTY} ${NO_VERIFY} 2>&1)
-    rc=$?
-    if [ $rc -eq 0 ]; then
-        echo "    ${crate} OK"
-        ok=$((ok + 1))
-    elif echo "$output" | grep -q "already exists"; then
-        echo "    ${crate} SKIPPED (already published)"
-        ok=$((ok + 1))
-    else
-        echo "$output" | tail -3
-        echo "    ${crate} FAILED (retrying in ${SLEEP_SECS}s...)"
-        sleep "${SLEEP_SECS}"
-        if cargo publish -p "${crate}" ${REGISTRY} ${DRY_RUN} ${ALLOW_DIRTY} ${NO_VERIFY}; then
-            echo "    ${crate} OK (retry)"
-            ok=$((ok + 1))
-        else
-            echo "    ${crate} FAILED"
-            fail=$((fail + 1))
+    published=false
+    for attempt in $(seq 1 "$MAX_RETRIES"); do
+        rc=0
+        output=$(cargo publish -p "${crate}" \
+            ${REGISTRY} ${DRY_RUN} ${ALLOW_DIRTY} \
+            ${NO_VERIFY} 2>&1) || rc=$?
+        if [ $rc -eq 0 ]; then
+            echo "    ${crate} OK"
+            ok=$((ok + 1)); published=true; break
+        elif echo "$output" | grep -q "already exists"
+        then
+            echo "    ${crate} SKIPPED (already published)"
+            ok=$((ok + 1)); published=skipped; break
         fi
+        # Exponential backoff: SLEEP_SECS * attempt
+        delay=$((SLEEP_SECS * attempt))
+        echo "$output" | tail -3
+        echo "    ${crate} FAILED [${attempt}/${MAX_RETRIES}]" \
+             "(retry in ${delay}s...)"
+        sleep "$delay"
+    done
+    if [ "$published" = false ]; then
+        echo "    ${crate} FAILED (all retries exhausted)"
+        fail=$((fail + 1))
     fi
-    sleep "${SLEEP_SECS}"
+    # Only sleep for rate limit if we actually uploaded.
+    if [ "$published" = true ]; then
+        sleep "${SLEEP_SECS}"
+    fi
 done
 
 echo

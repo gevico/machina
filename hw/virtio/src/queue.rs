@@ -27,6 +27,12 @@ pub struct VirtQueue {
     pub last_avail_idx: u16,
 }
 
+impl Default for VirtQueue {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl VirtQueue {
     pub fn new() -> Self {
         Self {
@@ -73,7 +79,11 @@ impl VirtQueue {
     }
 
     /// Read the available ring index (avail.idx).
-    pub fn read_avail_idx(
+    ///
+    /// # Safety
+    /// Caller must ensure `ram` is valid for the range
+    /// [`ram_base`, `ram_base + ram_size`).
+    pub unsafe fn read_avail_idx(
         &self,
         ram: *const u8,
         ram_base: u64,
@@ -97,7 +107,11 @@ impl VirtQueue {
     }
 
     /// Read an entry from the available ring.
-    pub fn read_avail_ring(
+    ///
+    /// # Safety
+    /// Caller must ensure `ram` is valid for the range
+    /// [`ram_base`, `ram_base + ram_size`).
+    pub unsafe fn read_avail_ring(
         &self,
         ring_idx: u16,
         ram: *const u8,
@@ -119,7 +133,11 @@ impl VirtQueue {
     }
 
     /// Write an entry to the used ring.
-    pub fn write_used(
+    ///
+    /// # Safety
+    /// Caller must ensure `ram` is valid for the range
+    /// [`ram_base`, `ram_base + ram_size`).
+    pub unsafe fn write_used(
         &self,
         used_idx: u16,
         desc_id: u32,
@@ -145,7 +163,11 @@ impl VirtQueue {
     }
 
     /// Write the used ring index (used.idx).
-    pub fn write_used_idx(
+    ///
+    /// # Safety
+    /// Caller must ensure `ram` is valid for the range
+    /// [`ram_base`, `ram_base + ram_size`).
+    pub unsafe fn write_used_idx(
         &self,
         idx: u16,
         ram: *mut u8,

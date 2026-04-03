@@ -39,7 +39,7 @@ impl VirtioBlk {
             .write(true)
             .open(path)?;
         let len = file.metadata()?.len() as usize;
-        if len == 0 || len % SECTOR_SIZE as usize != 0 {
+        if len == 0 || !len.is_multiple_of(SECTOR_SIZE as usize) {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 format!(
@@ -108,7 +108,11 @@ impl VirtioBlk {
     }
 
     /// Process all pending requests in the queue.
-    pub fn handle_queue(
+    ///
+    /// # Safety
+    /// Caller must ensure `ram` is valid for the range
+    /// [`ram_base`, `ram_base + ram_size`).
+    pub unsafe fn handle_queue(
         &self,
         queue: &mut VirtQueue,
         ram: *mut u8,
@@ -361,8 +365,8 @@ fn read_sub(bytes: &[u8], off: usize, size: u32) -> u64 {
         }
         4 => {
             let mut b = [0u8; 4];
-            for i in 0..4 {
-                b[i] = bytes
+            for (i, item) in b.iter_mut().enumerate() {
+                *item = bytes
                     .get(off + i)
                     .copied()
                     .unwrap_or(0);
@@ -371,8 +375,8 @@ fn read_sub(bytes: &[u8], off: usize, size: u32) -> u64 {
         }
         8 => {
             let mut b = [0u8; 8];
-            for i in 0..8 {
-                b[i] = bytes
+            for (i, item) in b.iter_mut().enumerate() {
+                *item = bytes
                     .get(off + i)
                     .copied()
                     .unwrap_or(0);

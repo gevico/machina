@@ -19,11 +19,13 @@ members = [
     "hw/virtio",
     "tests/mtest",
     "tools/difftest",
+    "softfloat",
 ]
 resolver = "2"
 
 [workspace.dependencies]
 # Internal crates
+machina-softfloat   = { version = "0.1.0", path = "softfloat" }
 machina-core        = { version = "0.1.0", path = "core" }
 machina-decode      = { version = "0.1.0", path = "decode" }
 machina-disas       = { version = "0.1.0", path = "disas" }
@@ -38,7 +40,7 @@ machina-hw-char     = { version = "0.1.0", path = "hw/char" }
 machina-hw-intc     = { version = "0.1.0", path = "hw/intc" }
 machina-hw-virtio   = { version = "0.1.0", path = "hw/virtio" }
 machina-system      = { version = "0.1.0", path = "system" }
-machina-hw-riscv    = { version = "0.1.0", path = "hw/riscv" }
+machina-hw-riscv    = { version = "0.1.1", path = "hw/riscv" }
 machina-tests       = { version = "0.1.0", path = "tests" }
 machina-mtest       = { version = "0.1.0", path = "tests/mtest" }
 machina-irdump      = { version = "0.1.0", path = "tools/irdump" }
@@ -51,7 +53,7 @@ tempfile    = "3"
 
 [package]
 name = "machina-emu"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 description = "CLI entry point for the Machina RISC-V full-system emulator"
 license = "MIT"

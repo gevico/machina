@@ -1,6 +1,6 @@
 [package]
 name = "machina-hw-riscv"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 description = "RISC-V reference machine with boot flow, SBI firmware interface, and device integration"
 license = "MIT"

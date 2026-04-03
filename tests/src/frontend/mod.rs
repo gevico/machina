@@ -255,6 +255,9 @@ fn run_rv_insns_with_cfg(
     insns: &[u32],
     cfg: RiscvCfg,
 ) -> usize {
+    if cfg.misa.contains(MisaExt::F) || cfg.misa.contains(MisaExt::D) {
+        cpu.csr.mstatus |= 0x3 << 13;
+    }
     let code: Vec<u8> = insns.iter().flat_map(|i| i.to_le_bytes()).collect();
     let guest_base = code.as_ptr();
 

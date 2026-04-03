@@ -22,6 +22,9 @@ use machina_memory::region::{MemoryRegion, MmioOps};
 
 use crate::sifive_test::SifiveTest;
 
+type MonitorCallback =
+    Arc<Mutex<dyn FnMut(u8) + Send>>;
+
 // QEMU virt memory map base addresses.
 pub const MROM_BASE: u64 = 0x0000_1000;
 const SIFIVE_TEST_BASE: u64 = 0x0010_0000;
@@ -190,9 +193,7 @@ pub struct RefMachine {
     // Monitor callbacks for StdioChardev.
     quit_cb:
         Option<Arc<dyn Fn() + Send + Sync>>,
-    monitor_cb: Option<
-        Arc<Mutex<dyn FnMut(u8) + Send>>,
-    >,
+    monitor_cb: Option<MonitorCallback>,
 }
 
 impl RefMachine {
@@ -616,7 +617,7 @@ impl Machine for RefMachine {
                 .ram_block
                 .as_ref()
                 .unwrap()
-                .as_ptr() as *mut u8;
+                .as_ptr();
             let virtio_mmio = VirtioMmio::new(
                 blk,
                 virtio_irq,

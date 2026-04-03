@@ -1,6 +1,7 @@
 //! SoftMMU/TLB regression tests covering plan ACs.
 
 use machina_guest_riscv::riscv::csr::PrivLevel;
+use machina_guest_riscv::riscv::exception::Exception;
 use machina_guest_riscv::riscv::mmu::{
     AccessType, Mmu, TLB_MMIO_ADDEND, TLB_SIZE,
 };
@@ -509,7 +510,7 @@ fn test_mmio_sentinel_forces_slow_path() {
     assert!(mmu.tlb_lookup_code(mmio).is_none());
 }
 
-/// Sv39 write without D bit → TLB miss on write.
+/// Sv39 write without D bit raises a page fault until software sets D.
 #[test]
 fn test_sv39_write_without_dirty_bit() {
     let va = 0xC000_0000u64;
@@ -538,8 +539,7 @@ fn test_sv39_write_without_dirty_bit() {
         &mut mem_write,
     );
     assert!(r.is_ok());
-    // Write should still succeed because translate_miss
-    // handles A/D bit setting.
+    // Write must fault because A/D bits are software-managed.
     let w = mmu.translate(
         va,
         AccessType::Write,
@@ -550,12 +550,7 @@ fn test_sv39_write_without_dirty_bit() {
         &mem_read,
         &mut mem_write,
     );
-    assert!(
-        w.is_ok(),
-        "write with A/D hardware update should \
-         succeed, got {:?}",
-        w,
-    );
+    assert_eq!(w, Err(Exception::StorePageFault));
 }
 
 // ═══════════════════════════════════════════════════════
@@ -709,7 +704,7 @@ fn test_fence_i_invalidates_dirty_page_tbs() {
     use std::sync::atomic::Ordering;
 
     let store = TbStore::new();
-    let idx = unsafe { store.alloc(0x8000_1000, 0, 0) };
+    let idx = unsafe { store.alloc(0x8000_1000, 0, 0).unwrap() };
     unsafe {
         store.get_mut(idx).phys_pc = 0x8000_1000;
     }

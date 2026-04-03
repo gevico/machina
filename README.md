@@ -66,6 +66,7 @@ cargo build --release
 # Instruction-level difftest against QEMU
 ./target/release/machina --difftest \
   -bios none -kernel path/to/ch1.elf
+
 ```
 
 ### Keyboard Shortcuts (-nographic)

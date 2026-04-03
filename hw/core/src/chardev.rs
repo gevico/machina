@@ -4,6 +4,9 @@ use std::io::Write as _;
 use std::os::unix::net::UnixStream;
 use std::sync::{Arc, Mutex};
 
+/// Shared mutable byte callback.
+pub type ByteCb = Arc<Mutex<dyn FnMut(u8) + Send>>;
+
 /// Trait for character device backends.
 ///
 /// A chardev provides byte-level I/O used by serial ports,
@@ -21,7 +24,7 @@ pub trait Chardev: Send {
     /// Start delivering input bytes via the callback.
     /// The backend is responsible for how (thread, poll,
     /// etc.). The callback is invoked with each byte.
-    fn start_input(&mut self, _cb: Arc<Mutex<dyn FnMut(u8) + Send>>) {}
+    fn start_input(&mut self, _cb: ByteCb) {}
 }
 
 // -- CharFrontend ------------------------------------------------
@@ -45,7 +48,7 @@ impl CharFrontend {
 
     /// Start receiving input from the backend. The
     /// callback is invoked for each byte received.
-    pub fn start_input(&mut self, cb: Arc<Mutex<dyn FnMut(u8) + Send>>) {
+    pub fn start_input(&mut self, cb: ByteCb) {
         self.backend.start_input(cb);
     }
 }
@@ -80,7 +83,7 @@ pub struct StdioChardev {
     saved_termios: Option<libc::termios>,
     /// Monitor line callback for Ctrl+A C toggle.
     monitor_cb: Option<
-        Arc<Mutex<dyn FnMut(u8) + Send>>,
+        ByteCb,
     >,
     /// Quit callback for Ctrl+A X.
     quit_cb: Option<Arc<dyn Fn() + Send + Sync>>,
@@ -116,7 +119,7 @@ impl StdioChardev {
     /// Set a monitor line callback for Ctrl+A C toggle.
     pub fn set_monitor_cb(
         &mut self,
-        cb: Arc<Mutex<dyn FnMut(u8) + Send>>,
+        cb: ByteCb,
     ) {
         self.monitor_cb = Some(cb);
     }
@@ -153,7 +156,7 @@ impl Chardev for StdioChardev {
 
     fn start_input(
         &mut self,
-        cb: Arc<Mutex<dyn FnMut(u8) + Send>>,
+        cb: ByteCb,
     ) {
         let quit_cb = self.quit_cb.clone();
         let mon_cb = self.monitor_cb.clone();
@@ -245,9 +248,9 @@ impl Chardev for StdioChardev {
 }
 
 fn send_to(
-    serial_cb: &Arc<Mutex<dyn FnMut(u8) + Send>>,
+    serial_cb: &ByteCb,
     monitor_cb: &Option<
-        Arc<Mutex<dyn FnMut(u8) + Send>>,
+        ByteCb,
     >,
     in_monitor: bool,
     ch: u8,

@@ -44,10 +44,8 @@ impl GdbClient {
         addr: &str,
         retries: u32,
     ) -> io::Result<Self> {
-        let mut last_err = io::Error::new(
-            io::ErrorKind::Other,
-            "no attempts",
-        );
+        let mut last_err =
+            io::Error::other("no attempts");
         for i in 0..retries {
             match TcpStream::connect(addr) {
                 Ok(stream) => {

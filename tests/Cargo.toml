@@ -14,6 +14,7 @@ machina-core = { workspace = true }
 machina-hw-core = { workspace = true }
 machina-hw-virtio = { workspace = true }
 machina-monitor = { workspace = true }
+machina-softfloat = { workspace = true }
 libc = { workspace = true }
 serde_json = { workspace = true }
 tempfile = { workspace = true }

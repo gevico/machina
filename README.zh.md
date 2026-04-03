@@ -66,6 +66,7 @@ cargo build --release
 # 与 QEMU 逐指令对比测试
 ./target/release/machina --difftest \
   -bios none -kernel path/to/ch1.elf
+
 ```
 
 ### 快捷键（-nographic 模式）
