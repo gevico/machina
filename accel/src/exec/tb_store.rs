@@ -80,12 +80,19 @@ impl TbStore {
     }
 
     /// Get a shared reference to a TB by index.
+    #[inline(always)]
     pub fn get(&self, idx: usize) -> &TranslationBlock {
-        let len = self.len.load(Ordering::Acquire);
-        assert!(idx < len, "TB index out of bounds");
-        // SAFETY: idx < len, and the entry at idx is fully
-        // initialized (written before len was published).
-        unsafe { &(&*self.tbs.get())[idx] }
+        debug_assert!(
+            idx < self.len.load(Ordering::Relaxed),
+            "TB index out of bounds"
+        );
+        // SAFETY: idx < len, and the entry at idx is
+        // fully initialized (written before len was
+        // published with Release ordering in alloc).
+        unsafe {
+            let tbs = &*self.tbs.get();
+            tbs.get_unchecked(idx)
+        }
     }
 
     /// Get a mutable reference to a TB by index.
