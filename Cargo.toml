@@ -31,27 +31,27 @@ members = [
 resolver = "2"
 
 [workspace.dependencies]
-# Internal crates (version inherited from workspace.package)
-machina-softfloat   = { path = "softfloat" }
-machina-core        = { path = "core" }
-machina-decode      = { path = "decode" }
-machina-disas       = { path = "disas" }
-machina-util        = { path = "util" }
-machina-difftest    = { path = "tools/difftest" }
-machina-memory      = { path = "memory" }
-machina-hw-core     = { path = "hw/core" }
-machina-monitor     = { path = "monitor" }
-machina-accel       = { path = "accel" }
-machina-guest-riscv = { path = "guest/riscv" }
-machina-hw-char     = { path = "hw/char" }
-machina-hw-intc     = { path = "hw/intc" }
-machina-hw-virtio   = { path = "hw/virtio" }
-machina-system      = { path = "system" }
-machina-hw-riscv    = { path = "hw/riscv" }
-machina-tests       = { path = "tests" }
-machina-mtest       = { path = "tests/mtest" }
-machina-irdump      = { path = "tools/irdump" }
-machina-irbackend   = { path = "tools/irbackend" }
+# Internal crates — version required for crates.io publish
+machina-softfloat   = { version = "0.1.2", path = "softfloat" }
+machina-core        = { version = "0.1.2", path = "core" }
+machina-decode      = { version = "0.1.2", path = "decode" }
+machina-disas       = { version = "0.1.2", path = "disas" }
+machina-util        = { version = "0.1.2", path = "util" }
+machina-difftest    = { version = "0.1.2", path = "tools/difftest" }
+machina-memory      = { version = "0.1.2", path = "memory" }
+machina-hw-core     = { version = "0.1.2", path = "hw/core" }
+machina-monitor     = { version = "0.1.2", path = "monitor" }
+machina-accel       = { version = "0.1.2", path = "accel" }
+machina-guest-riscv = { version = "0.1.2", path = "guest/riscv" }
+machina-hw-char     = { version = "0.1.2", path = "hw/char" }
+machina-hw-intc     = { version = "0.1.2", path = "hw/intc" }
+machina-hw-virtio   = { version = "0.1.2", path = "hw/virtio" }
+machina-system      = { version = "0.1.2", path = "system" }
+machina-hw-riscv    = { version = "0.1.2", path = "hw/riscv" }
+machina-tests       = { version = "0.1.2", path = "tests" }
+machina-mtest       = { version = "0.1.2", path = "tests/mtest" }
+machina-irdump      = { version = "0.1.2", path = "tools/irdump" }
+machina-irbackend   = { version = "0.1.2", path = "tools/irbackend" }
 
 # External dependencies
 libc        = "0.2"
