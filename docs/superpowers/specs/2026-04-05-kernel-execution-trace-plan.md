@@ -180,13 +180,14 @@ against real ELF binaries may be minimal.
 
 ### Allowed Choices
 
-- Can use: Arc for shared TraceCollector, AtomicBool for fast-path
+- Can use: Arc for shared SymbolTable, AtomicBool for fast-path
   enabled check, existing helper call mechanism (extern "C" + IR
   Call opcode), ANSI escape codes for terminal colours
-- Can use: `object` crate or hand-rolled ELF section parser for
-  .symtab
+- Can use: `object` crate for ELF symbol table parsing (DEC-2)
+- Can use: per-vCPU TraceCollector with independent ring buffers,
+  merged by sequence number at output time (DEC-1)
 - Cannot use: global mutable statics for TraceCollector (must use
-  Arc)
+  per-vCPU instances passed through CPU state)
 - Cannot use: conditional compilation (cfg) for tracing (must be
   runtime toggle)
 
@@ -211,17 +212,19 @@ Add `pub mod trace;` to `core/src/lib.rs`.
 
 **Phase 2 -- Collection infrastructure (monitor/)**
 
-Create `monitor/src/symbol_table.rs`: parse ELF .symtab sections,
-build sorted Vec of (start_pc, end_pc, name) tuples, binary search
-for lookup(pc) -> Option<&str>.  The existing loader in
+Create `monitor/src/symbol_table.rs`: use the `object` crate (DEC-2)
+to parse ELF .symtab sections.  Build a sorted Vec of
+(start_pc, end_pc, name) tuples, binary search for
+lookup(pc) -> Option<&str>.  The existing loader in
 `hw/core/src/loader.rs` only parses PT_LOAD segments and returns
-LoadInfo; symbol parsing needs to read the raw ELF bytes before
-segments are loaded.
+LoadInfo; symbol parsing reads the raw ELF bytes independently.
 
-Create `monitor/src/trace_collector.rs`: RingBuffer<TraceEvent> with
-8192 capacity, AtomicBool enabled flag, EventFilter, Arc<SymbolTable>,
-AtomicU64 sequence counter.  Methods: `push(event)`, `drain()`,
-`set_filter()`, `enable()/disable()`.
+Create `monitor/src/trace_collector.rs`: per-vCPU (DEC-1)
+RingBuffer<TraceEvent> with 8192 capacity, AtomicBool enabled flag,
+EventFilter, Arc<SymbolTable> (shared read-only), AtomicU64 sequence
+counter.  Each FullSystemCpu / vCPU holds its own TraceCollector.
+Methods: `push(event)`, `drain()`, `set_filter()`,
+`enable()/disable()`.
 
 Create `monitor/src/terminal_sink.rs`: implement TraceSink, format
 each event as a coloured line with sequence number and optional
@@ -335,15 +338,15 @@ the exec loop starts.  Parse ELF symbols at kernel load time.
 | Task ID | Description | Target AC | Tag | Depends On |
 |---------|-------------|-----------|-----|------------|
 | task1 | Create core/src/trace.rs with TraceEvent enum (7 variants), TraceSink trait, EventFilter bitfield | AC-1 | coding | - |
-| task2 | Create monitor/src/symbol_table.rs: parse ELF .symtab, sorted intervals, binary search lookup | AC-2 | coding | task1 |
-| task3 | Create monitor/src/trace_collector.rs: ring buffer (8192), AtomicBool enabled, EventFilter, seq counter | AC-3 | coding | task1, task2 |
-| task4 | Create monitor/src/terminal_sink.rs: implement TraceSink with coloured output format | AC-4 | coding | task1 |
-| task5 | Create guest/riscv trace helpers: extern "C" functions for ecall/sret/mret/sfence event construction | AC-5 | coding | task1, task3 |
+| task2 | Create monitor/src/symbol_table.rs: use `object` crate to parse ELF .symtab, sorted intervals, binary search lookup | AC-2 | coding | task1 |
+| task3 | Create monitor/src/trace_collector.rs: per-vCPU ring buffer (8192), AtomicBool enabled, EventFilter, seq counter; SymbolTable is Arc-shared (read-only) | AC-3 | coding | task1, task2 |
+| task4 | Create monitor/src/terminal_sink.rs: implement TraceSink with coloured output format; merge events from multiple per-vCPU collectors by sequence number | AC-4 | coding | task1 |
+| task5 | Create guest/riscv trace helpers: extern "C" functions for ecall/sret/mret/sfence event construction; each helper writes to its vCPU's own TraceCollector | AC-5 | coding | task1, task3 |
 | task6 | Modify guest/riscv trans/mod.rs: emit trace helper calls in ecall/sret/mret/sfence translation branches | AC-5 | coding | task5 |
-| task7 | Modify accel exec_loop.rs: add CSR snapshot diff and PC range match after TB execution | AC-6 | coding | task1, task2, task3 |
+| task7 | Modify accel exec_loop.rs: add CSR snapshot diff and PC range match after TB execution; each vCPU has its own collector | AC-6 | coding | task1, task2, task3 |
 | task8 | Extend monitor/src/hmp.rs: add trace start/stop/status command handlers | AC-7 | coding | task3, task4 |
 | task9 | Extend monitor/src/mmp.rs: add trace-start/trace-stop/trace-status JSON command handlers | AC-8 | coding | task3 |
-| task10 | Modify src/main.rs: add -trace CLI option, wire SymbolTable loading at kernel boot | AC-9 | coding | task2, task3, task8 |
+| task10 | Modify src/main.rs: add -trace CLI option, wire SymbolTable loading at kernel boot via `object` crate | AC-9 | coding | task2, task3, task8 |
 | task11 | Unit tests for SymbolTable, TraceCollector, EventFilter, TerminalSink | AC-2, AC-3, AC-4 | coding | task2, task3, task4 |
 | task12 | Integration test: boot tg-rcore-ch2 ELF with tracing, verify trap/syscall events | AC-10 | coding | task10 |
 | task13 | Integration test: boot tg-rcore-ch3 ELF with tracing, verify timer/task switch events | AC-11 | coding | task10 |
@@ -374,27 +377,27 @@ the exec loop starts.  Parse ELF symbols at kernel load time.
 - Final Status: `partially_converged` (Codex CLI unavailable;
   Claude-only analysis with user-validated design)
 
-## Pending User Decisions
+## Resolved User Decisions
 
 - DEC-1: TraceCollector sharing strategy for multi-vCPU
   - Claude Position: Use a single global Arc<TraceCollector> shared
-    across all vCPU threads; teaching scenarios typically use 1-2
-    vCPUs and the simplicity outweighs lock contention.
+    across all vCPU threads.
   - Codex Position: N/A (Codex unavailable)
-  - Tradeoff Summary: Global collector is simpler but may need
-    per-vCPU buffers if contention appears.  Start simple, optimize
-    later.
-  - Decision Status: `PENDING`
+  - Tradeoff Summary: Global collector is simpler; per-vCPU avoids
+    lock contention and scales to multi-core.
+  - Decision Status: `Per-vCPU TraceCollector` -- each vCPU holds its
+    own TraceCollector with an independent ring buffer.  Output merges
+    events from all collectors by monotonic sequence number.
+    SymbolTable remains Arc-shared (read-only after init).
 
 - DEC-2: ELF symbol parser implementation
-  - Claude Position: Hand-rolled parser for .symtab/.strtab
-    sections, since the `object` crate is a heavy dependency and
-    tg-rcore ELFs have simple symbol tables.
+  - Claude Position: Hand-rolled parser for .symtab/.strtab.
   - Codex Position: N/A (Codex unavailable)
-  - Tradeoff Summary: Hand-rolled is fewer dependencies but more
-    code to maintain.  The `object` crate is battle-tested for edge
-    cases.
-  - Decision Status: `PENDING`
+  - Tradeoff Summary: Hand-rolled has fewer dependencies; `object`
+    crate is battle-tested and handles ELF edge cases.
+  - Decision Status: `object crate` -- use the `object` crate for
+    ELF symbol table parsing.  Add it as a dependency to the
+    monitor crate.
 
 ## Implementation Notes
 
