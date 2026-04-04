@@ -71,6 +71,7 @@ impl CpuManager {
         let mut per_cpu = PerCpuState::new();
         loop {
             let r = cpu_exec_loop(shared, &mut per_cpu, cpu);
+            cpu.drain_trace_output();
             match r {
                 ExitReason::Halted => {
                     if !running.load(Ordering::SeqCst) {

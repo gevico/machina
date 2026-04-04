@@ -137,15 +137,6 @@ impl TraceEvent {
             }
         }
     }
-
-    /// Monotonically-increasing sequence number attached by the
-    /// collector before the event enters the ring buffer.
-    pub fn seq(&self) -> u64 {
-        match self {
-            Self::TrapEnter { .. } => 0,
-            _ => 0,
-        }
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -153,6 +144,9 @@ impl TraceEvent {
 // ---------------------------------------------------------------------------
 
 /// Abstraction for consuming trace events (terminal, JSON stream, …).
+///
+/// `seq` is the per-collector monotonic index assigned when the event
+/// was recorded (`TraceCollector::push`).
 pub trait TraceSink {
-    fn emit(&mut self, event: &TraceEvent);
+    fn emit(&mut self, seq: u64, event: &TraceEvent);
 }

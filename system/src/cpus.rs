@@ -6,7 +6,7 @@
 // pending_interrupt().
 
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use machina_core::trace::TraceEvent;
 use machina_core::wfi::WfiWaker;
@@ -20,6 +20,7 @@ use machina_guest_riscv::riscv::exception::Exception;
 use machina_guest_riscv::riscv::ext::RiscvCfg;
 use machina_guest_riscv::riscv::{RiscvDisasContext, RiscvTranslator};
 use machina_guest_riscv::{translator_loop, DisasJumpType, TranslatorOps};
+use machina_monitor::service::MonitorService;
 use machina_monitor::trace_collector::TraceCollector;
 
 const NUM_GPRS: usize = 32;
@@ -98,6 +99,7 @@ pub struct FullSystemCpu {
     trace_collector: Option<Arc<TraceCollector>>,
     trace_prev_satp: u64,
     trace_prev_pc: u64,
+    trace_monitor: Option<Arc<Mutex<MonitorService>>>,
 }
 
 // SAFETY: ram_ptr points to mmap'd memory owned by
@@ -139,6 +141,25 @@ impl FullSystemCpu {
             trace_collector: None,
             trace_prev_satp: 0,
             trace_prev_pc: 0,
+            trace_monitor: None,
+        }
+    }
+
+    /// Bridge to [`MonitorService`] so trace buffers can be drained
+    /// to the terminal during execution.
+    pub fn set_trace_monitor_svc(
+        &mut self,
+        svc: Arc<Mutex<MonitorService>>,
+    ) {
+        self.trace_monitor = Some(svc);
+    }
+
+    /// Flush pending trace events to the active sink (if wired).
+    pub fn drain_trace_output(&self) {
+        if let Some(ref svc) = self.trace_monitor {
+            if let Ok(mut g) = svc.lock() {
+                g.trace_drain();
+            }
         }
     }
 
@@ -1034,6 +1055,7 @@ impl GuestCpu for FullSystemCpu {
             }
         }
         self.trace_prev_pc = pc;
+        self.drain_trace_output();
     }
 
     fn trace_on_ecall_trap(&mut self, from_priv: u8) {

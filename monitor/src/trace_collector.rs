@@ -128,8 +128,8 @@ pub fn drain_and_emit(
         all.extend(tc.drain());
     }
     all.sort_by_key(|(seq, _)| *seq);
-    for (_, event) in &all {
-        sink.emit(event);
+    for (seq, event) in &all {
+        sink.emit(*seq, event);
     }
 }
 

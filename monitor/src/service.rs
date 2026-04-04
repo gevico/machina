@@ -123,12 +123,18 @@ impl MonitorService {
             total += tc.seq();
         }
         self.trace_enabled = false;
+        self.trace_drain();
         total
     }
 
     /// Drain all collectors and emit through terminal sink.
     pub fn trace_drain(&mut self) {
-        if !self.trace_enabled {
+        if self.trace_collectors.is_empty() {
+            return;
+        }
+        let pending: usize =
+            self.trace_collectors.iter().map(|c| c.len()).sum();
+        if !self.trace_enabled && pending == 0 {
             return;
         }
         let mut sink = TerminalSink::new();

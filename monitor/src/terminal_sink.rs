@@ -10,20 +10,18 @@ const YELLOW: &str = "\x1b[33m";
 const RESET: &str = "\x1b[0m";
 
 /// Sink that writes coloured trace events to stderr.
-pub struct TerminalSink {
-    seq: u64,
-}
+pub struct TerminalSink;
 
 impl TerminalSink {
     pub fn new() -> Self {
-        Self { seq: 0 }
+        Self
     }
 }
 
 impl TraceSink for TerminalSink {
-    fn emit(&mut self, event: &TraceEvent) {
-        self.seq += 1;
-        let seq = self.seq;
+    fn emit(&mut self, seq: u64, event: &TraceEvent) {
+        // Collector uses 0-based seq; spec shows 1-based [#NNNN].
+        let n = seq + 1;
         let line = match event {
             TraceEvent::TrapEnter {
                 from_priv,
@@ -41,7 +39,7 @@ impl TraceSink for TerminalSink {
                 format!(
                     "[#{:04}] {}[trap]     {}->{} \
                      cause={}{} pc=0x{:x}{}",
-                    seq,
+                    n,
                     RED,
                     from,
                     to,
@@ -66,7 +64,7 @@ impl TraceSink for TerminalSink {
                 format!(
                     "[#{:04}] {}[trap]     {}->{} \
                      sepc=0x{:x}{}",
-                    seq,
+                    n,
                     RED,
                     from,
                     to,
@@ -79,7 +77,7 @@ impl TraceSink for TerminalSink {
                     "[#{:04}] {}[syscall]  id={}({}) \
                      a0=0x{:x} a1=0x{:x} a2=0x{:x} \
                      pc=0x{:x}",
-                    seq,
+                    n,
                     YELLOW,
                     id,
                     syscall_name(*id),
@@ -101,7 +99,7 @@ impl TraceSink for TerminalSink {
                 format!(
                     "[#{:04}] {}[sched]    task switch \
                      0x{:x}->0x{:x}{}",
-                    seq,
+                    n,
                     GREEN,
                     from_pc,
                     to_pc,
@@ -113,7 +111,7 @@ impl TraceSink for TerminalSink {
                 format!(
                     "[#{:04}] {}[timer]    {}-mode timer \
                      interrupt pc=0x{:x}",
-                    seq,
+                    n,
                     GREEN,
                     pl,
                     pc,
@@ -133,7 +131,7 @@ impl TraceSink for TerminalSink {
                 format!(
                     "[#{:04}] {}[vm]       satp asid \
                      {}->{} pc=0x{:x}{}",
-                    seq,
+                    n,
                     BLUE,
                     old_asid,
                     new_asid,
@@ -149,7 +147,7 @@ impl TraceSink for TerminalSink {
                 format!(
                     "[#{:04}] {}[vm]       tlb flush \
                      pc=0x{:x}{}",
-                    seq,
+                    n,
                     BLUE,
                     pc,
                     fn_part,
@@ -230,7 +228,6 @@ mod tests {
             pc: 0x80400024,
             fn_name: Some("hello_world".into()),
         };
-        sink.emit(&evt);
-        assert_eq!(sink.seq, 1);
+        sink.emit(11, &evt);
     }
 }

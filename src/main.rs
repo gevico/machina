@@ -376,6 +376,8 @@ fn run_machine_cycle(
         fs_cpu.set_monitor_state(Arc::clone(ms));
     }
 
+    fs_cpu.set_trace_monitor_svc(Arc::clone(&monitor_svc));
+
     // -- Trace wiring --
     if let Some(ref trace_filter) = trace_opt {
         // Parse ELF symbols from the kernel binary.
@@ -391,27 +393,17 @@ fn run_machine_cycle(
         let collector =
             Arc::new(machina_monitor::trace_collector::TraceCollector::new(Arc::clone(&sym_tab)));
 
-        // Enable tracing immediately if -trace was given.
-        let filter_str = trace_filter.as_str();
-        match machina_core::trace::EventFilter::from_str(filter_str) {
-            Ok(filter) => {
-                collector.set_filter(filter);
-                collector.enable();
-            }
-            Err(e) => {
-                eprintln!("machina: -trace: {}", e);
-                machina_hw_core::chardev::restore_terminal();
-                process::exit(1);
-            }
-        }
-
         fs_cpu.set_trace_collector(Arc::clone(&collector));
 
-        // Wire into monitor service for runtime control.
-        monitor_svc.lock().unwrap()
-            .set_trace_collectors(vec![collector]);
-        monitor_svc.lock().unwrap()
-            .set_symbol_table(sym_tab);
+        let mut svc = monitor_svc.lock().unwrap();
+        svc.set_trace_collectors(vec![collector]);
+        svc.set_symbol_table(sym_tab);
+        if let Err(e) = svc.trace_start(trace_filter.as_str()) {
+            eprintln!("machina: -trace: {}", e);
+            drop(svc);
+            machina_hw_core::chardev::restore_terminal();
+            process::exit(1);
+        }
     }
 
     cpu_mgr.add_cpu(fs_cpu);
@@ -433,6 +425,8 @@ fn run_machine_cycle(
     }
 
     let _exit = unsafe { cpu_mgr.run(&shared) };
+
+    monitor_svc.lock().unwrap().trace_drain();
 
     let result = shutdown_reason.lock().unwrap().take();
     result
