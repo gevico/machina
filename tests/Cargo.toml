@@ -1,18 +1,24 @@
 [package]
 name = "machina-tests"
-version = "0.1.0"
-edition = "2021"
+version.workspace = true
+edition.workspace = true
+publish = false
+build = "build.rs"
 
 [dependencies]
-machina-accel = { path = "../accel" }
-machina-guest-riscv = { path = "../guest/riscv" }
-machina-decode = { path = "../decode" }
-machina-system = { path = "../system" }
-machina-memory = { path = "../memory" }
-machina-core = { path = "../core" }
-machina-hw-core = { path = "../hw/core" }
-machina-hw-virtio = { path = "../hw/virtio" }
-machina-monitor = { path = "../monitor" }
-libc = "0.2"
-serde_json = "1"
-tempfile = "3"
+machina-accel = { workspace = true }
+machina-guest-riscv = { workspace = true }
+machina-decode = { workspace = true }
+machina-system = { workspace = true }
+machina-memory = { workspace = true }
+machina-core = { workspace = true }
+machina-hw-core = { workspace = true }
+machina-hw-intc = { workspace = true }
+machina-hw-char = { workspace = true }
+machina-hw-riscv = { workspace = true }
+machina-hw-virtio = { workspace = true }
+machina-monitor = { workspace = true }
+machina-softfloat = { workspace = true }
+libc = { workspace = true }
+serde_json = { workspace = true }
+tempfile = { workspace = true }

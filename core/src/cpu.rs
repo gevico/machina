@@ -25,6 +25,11 @@ pub trait GuestCpu {
     fn pending_interrupt(&self) -> bool {
         false
     }
+    /// Check if any interrupt is pending for WFI wakeup
+    /// (ignores privilege-level delegation checks).
+    fn pending_wfi_wakeup(&self) -> bool {
+        self.pending_interrupt()
+    }
     fn is_halted(&self) -> bool {
         false
     }
@@ -33,9 +38,11 @@ pub trait GuestCpu {
         0
     }
     fn handle_interrupt(&mut self) {}
-    fn handle_exception(&mut self, _excp: u32, _tval: u64) {}
+    fn handle_exception(&mut self, _cause: u64, _tval: u64) {}
     fn execute_mret(&mut self) {}
-    fn execute_sret(&mut self) -> bool { true }
+    fn execute_sret(&mut self) -> bool {
+        true
+    }
 
     /// Set the jmp_env pointer for longjmp from helpers.
     fn set_jmp_env(&mut self, _ptr: u64) {}
@@ -80,6 +87,15 @@ pub trait GuestCpu {
     /// call (for TB phys_pc recording).
     fn last_phys_pc(&self) -> u64 {
         0
+    }
+
+    /// Translate a virtual PC to physical PC using the
+    /// current page table.  Returns `u64::MAX` if the
+    /// physical address is unknown (TLB miss / not
+    /// applicable).  The exec loop skips phys_pc
+    /// validation when MAX is returned.
+    fn translate_pc(&self, _vpc: u64) -> u64 {
+        u64::MAX
     }
 
     /// Take the set of dirty physical pages (for

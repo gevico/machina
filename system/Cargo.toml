@@ -1,11 +1,17 @@
 [package]
 name = "machina-system"
-version = "0.1.0"
-edition = "2021"
+version.workspace = true
+edition.workspace = true
+description = "Full-system CPU bridge, CPU manager, and WFI handling"
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+keywords = ["riscv", "emulator", "system", "cpu"]
+categories = ["emulators"]
 
 [dependencies]
-machina-core = { path = "../core" }
-machina-accel = { path = "../accel" }
-machina-guest-riscv = { path = "../guest/riscv" }
-machina-memory = { path = "../memory" }
-machina-monitor = { path = "../monitor" }
+machina-core = { workspace = true }
+machina-accel = { workspace = true }
+machina-guest-riscv = { workspace = true }
+machina-memory = { workspace = true }
+machina-monitor = { workspace = true }

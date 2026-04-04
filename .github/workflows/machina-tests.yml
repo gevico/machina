@@ -1,0 +1,36 @@
+name: machina-tests
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      CARGO_TERM_COLOR: always
+    steps:
+      - name: Checkout machina
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            gcc-riscv64-linux-gnu \
+            qemu-user
+
+      - name: Build tests
+        run: cargo test --workspace --no-run
+
+      - name: Run workspace tests
+        run: cargo test --workspace

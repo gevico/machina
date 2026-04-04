@@ -40,21 +40,13 @@ impl RegState {
 impl GdbClient {
     /// Connect to QEMU's GDB stub at the given address.
     /// Retries up to `retries` times with 200ms delay.
-    pub fn connect(
-        addr: &str,
-        retries: u32,
-    ) -> io::Result<Self> {
-        let mut last_err = io::Error::new(
-            io::ErrorKind::Other,
-            "no attempts",
-        );
+    pub fn connect(addr: &str, retries: u32) -> io::Result<Self> {
+        let mut last_err = io::Error::other("no attempts");
         for i in 0..retries {
             match TcpStream::connect(addr) {
                 Ok(stream) => {
                     stream.set_nodelay(true)?;
-                    stream.set_read_timeout(Some(
-                        Duration::from_secs(60),
-                    ))?;
+                    stream.set_read_timeout(Some(Duration::from_secs(60)))?;
                     let mut client = Self {
                         stream,
                         no_ack: false,
@@ -66,9 +58,7 @@ impl GdbClient {
                 Err(e) => {
                     last_err = e;
                     if i + 1 < retries {
-                        std::thread::sleep(
-                            Duration::from_millis(200),
-                        );
+                        std::thread::sleep(Duration::from_millis(200));
                     }
                 }
             }
@@ -80,8 +70,7 @@ impl GdbClient {
     fn negotiate(&mut self) -> io::Result<()> {
         let resp = self.command("qSupported")?;
         if resp.contains("QStartNoAckMode+") {
-            let ack_resp =
-                self.command("QStartNoAckMode")?;
+            let ack_resp = self.command("QStartNoAckMode")?;
             if ack_resp == "OK" {
                 self.no_ack = true;
             }
@@ -90,10 +79,7 @@ impl GdbClient {
     }
 
     /// Send a GDB RSP command and return the response.
-    pub fn command(
-        &mut self,
-        cmd: &str,
-    ) -> io::Result<String> {
+    pub fn command(&mut self, cmd: &str) -> io::Result<String> {
         self.send_packet(cmd)?;
         self.recv_packet()
     }
@@ -157,17 +143,15 @@ impl GdbClient {
             self.stream.flush()?;
         }
 
-        String::from_utf8(self.buf.clone()).map_err(|e| {
-            io::Error::new(io::ErrorKind::InvalidData, e)
-        })
+        String::from_utf8(self.buf.clone())
+            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
     }
 
     /// Single-step one instruction on thread 1.
     pub fn step(&mut self) -> io::Result<()> {
         let resp = self.command("vCont;s:1")?;
         // Expect a stop reply like "T05..." or "S05".
-        if !resp.starts_with('T') && !resp.starts_with('S')
-        {
+        if !resp.starts_with('T') && !resp.starts_with('S') {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 format!("unexpected step reply: {}", resp),
@@ -184,10 +168,7 @@ impl GdbClient {
 
     /// Write gpr[0..31] + pc, preserving other registers
     /// (FP, CSRs) from the current QEMU state.
-    pub fn write_regs(
-        &mut self,
-        state: &RegState,
-    ) -> io::Result<()> {
+    pub fn write_regs(&mut self, state: &RegState) -> io::Result<()> {
         // Read current full register hex from QEMU.
         let full_hex = self.command("g")?;
         if full_hex.len() < GDB_NUM_REGS * REG_BYTES * 2 {
@@ -198,11 +179,8 @@ impl GdbClient {
         }
         // Overwrite GPR + PC portion (first 33 regs).
         let mut new_hex = encode_regs_hex(state);
-        new_hex.push_str(
-            &full_hex[GDB_NUM_REGS * REG_BYTES * 2..],
-        );
-        let resp =
-            self.command(&format!("G{}", new_hex))?;
+        new_hex.push_str(&full_hex[GDB_NUM_REGS * REG_BYTES * 2..]);
+        let resp = self.command(&format!("G{}", new_hex))?;
         if resp != "OK" {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
@@ -213,21 +191,9 @@ impl GdbClient {
     }
 
     /// Write memory at `addr` with `data`.
-    pub fn write_mem(
-        &mut self,
-        addr: u64,
-        data: &[u8],
-    ) -> io::Result<()> {
-        let hex: String = data
-            .iter()
-            .map(|b| format!("{:02x}", b))
-            .collect();
-        let cmd = format!(
-            "M{:x},{:x}:{}",
-            addr,
-            data.len(),
-            hex
-        );
+    pub fn write_mem(&mut self, addr: u64, data: &[u8]) -> io::Result<()> {
+        let hex: String = data.iter().map(|b| format!("{:02x}", b)).collect();
+        let cmd = format!("M{:x},{:x}:{}", addr, data.len(), hex);
         let resp = self.command(&cmd)?;
         if resp != "OK" {
             return Err(io::Error::new(
@@ -244,10 +210,7 @@ impl GdbClient {
     }
 
     /// Step N instructions on REF. Uses vCont;s in a loop.
-    pub fn step_n(
-        &mut self,
-        n: u64,
-    ) -> io::Result<()> {
+    pub fn step_n(&mut self, n: u64) -> io::Result<()> {
         for _ in 0..n {
             self.step()?;
         }
@@ -255,14 +218,8 @@ impl GdbClient {
     }
 
     /// Set a software breakpoint at `addr`.
-    pub fn set_breakpoint(
-        &mut self,
-        addr: u64,
-    ) -> io::Result<()> {
-        let resp = self.command(&format!(
-            "Z0,{:x},4",
-            addr
-        ))?;
+    pub fn set_breakpoint(&mut self, addr: u64) -> io::Result<()> {
+        let resp = self.command(&format!("Z0,{:x},4", addr))?;
         if resp != "OK" {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
@@ -273,21 +230,12 @@ impl GdbClient {
     }
 
     /// Remove a software breakpoint at `addr`.
-    pub fn remove_breakpoint(
-        &mut self,
-        addr: u64,
-    ) -> io::Result<()> {
-        let resp = self.command(&format!(
-            "z0,{:x},4",
-            addr
-        ))?;
+    pub fn remove_breakpoint(&mut self, addr: u64) -> io::Result<()> {
+        let resp = self.command(&format!("z0,{:x},4", addr))?;
         if resp != "OK" {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
-                format!(
-                    "remove_breakpoint failed: {}",
-                    resp
-                ),
+                format!("remove_breakpoint failed: {}", resp),
             ));
         }
         Ok(())
@@ -302,11 +250,7 @@ fn parse_regs_hex(hex: &str) -> io::Result<RegState> {
     if hex.len() < min_len {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
-            format!(
-                "g response too short: {} < {}",
-                hex.len(),
-                min_len
-            ),
+            format!("g response too short: {} < {}", hex.len(), min_len),
         ));
     }
     let mut state = RegState {
@@ -330,21 +274,15 @@ fn parse_le_hex_u64(s: &str) -> io::Result<u64> {
     }
     let mut bytes = [0u8; 8];
     for i in 0..8 {
-        bytes[i] = u8::from_str_radix(
-            &s[i * 2..i * 2 + 2],
-            16,
-        )
-        .map_err(|e| {
-            io::Error::new(io::ErrorKind::InvalidData, e)
-        })?;
+        bytes[i] = u8::from_str_radix(&s[i * 2..i * 2 + 2], 16)
+            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
     }
     Ok(u64::from_le_bytes(bytes))
 }
 
 /// Encode register state as hex for `G` command.
 fn encode_regs_hex(state: &RegState) -> String {
-    let mut hex =
-        String::with_capacity(GDB_NUM_REGS * REG_BYTES * 2);
+    let mut hex = String::with_capacity(GDB_NUM_REGS * REG_BYTES * 2);
     for &val in &state.regs {
         for b in val.to_le_bytes() {
             hex.push_str(&format!("{:02x}", b));

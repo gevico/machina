@@ -150,6 +150,7 @@ impl RiscvCpu {
             self.pc = tvec_addr(self.csr.mtvec, cause, is_interrupt);
             self.priv_level = PrivLevel::Machine;
         }
+        self.mmu.flush();
     }
 
     /// Raise a synchronous exception.
@@ -234,6 +235,7 @@ impl RiscvCpu {
         self.csr.mstatus &= !MSTATUS_MPP_MASK;
 
         self.pc = self.csr.mepc;
+        self.mmu.flush();
     }
 
     /// Execute SRET: return from S-mode trap handler.
@@ -263,6 +265,7 @@ impl RiscvCpu {
         self.csr.mstatus &= !MSTATUS_SPP;
 
         self.pc = self.csr.sepc;
+        self.mmu.flush();
         true
     }
 }

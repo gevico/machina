@@ -32,9 +32,7 @@ pub struct MonitorState {
     wfi_waker: Mutex<Option<Arc<crate::wfi::WfiWaker>>>,
     snapshot: Mutex<Option<CpuSnapshot>>,
     /// CpuManager running flag — cleared on quit.
-    stop_flag: Mutex<
-        Option<Arc<AtomicBool>>,
-    >,
+    stop_flag: Mutex<Option<Arc<AtomicBool>>>,
 }
 
 impl MonitorState {
@@ -52,12 +50,8 @@ impl MonitorState {
 
     /// Set the CpuManager stop flag for quit.
     /// Replays latched quit if already requested.
-    pub fn set_stop_flag(
-        &self,
-        flag: Arc<AtomicBool>,
-    ) {
-        *self.stop_flag.lock().unwrap() =
-            Some(Arc::clone(&flag));
+    pub fn set_stop_flag(&self, flag: Arc<AtomicBool>) {
+        *self.stop_flag.lock().unwrap() = Some(Arc::clone(&flag));
         // Replay latched quit.
         if self.is_quit_requested() {
             flag.store(false, Ordering::SeqCst);
@@ -77,18 +71,13 @@ impl MonitorState {
 
     /// Set the WFI waker for CPU wake-on-pause.
     /// Replays latched stop/quit if already pending.
-    pub fn set_wfi_waker(
-        &self,
-        wk: Arc<crate::wfi::WfiWaker>,
-    ) {
+    pub fn set_wfi_waker(&self, wk: Arc<crate::wfi::WfiWaker>) {
         // Check pending state BEFORE locking wfi_waker
         // to maintain lock order: inner -> wfi_waker.
-        let needs_wake = self.is_quit_requested()
-            || self.is_pause_requested();
-        *self.wfi_waker.lock().unwrap() =
-            Some(Arc::clone(&wk));
+        let needs_wake = self.is_quit_requested() || self.is_pause_requested();
+        *self.wfi_waker.lock().unwrap() = Some(Arc::clone(&wk));
         if needs_wake {
-            wk.wake();
+            wk.monitor_wake();
         }
     }
 
@@ -100,19 +89,17 @@ impl MonitorState {
             return;
         }
         *state = VmState::PauseRequested;
-        // Wake CPU if in WFI.
-        if let Some(ref wk) =
-            *self.wfi_waker.lock().unwrap()
-        {
-            wk.wake();
+        // Only wake WFI if CPU is actually halted.
+        // Use cv.notify_all() instead of monitor_wake()
+        // to avoid latching a flag that could survive
+        // into a future WFI after cont.
+        if let Some(ref wk) = *self.wfi_waker.lock().unwrap() {
+            wk.monitor_wake();
         }
         // Wait for exec loop to park, or for cancel
         // (cont/quit changed state back to Running).
         while *state == VmState::PauseRequested {
-            state = self
-                .pause_barrier
-                .wait(state)
-                .unwrap();
+            state = self.pause_barrier.wait(state).unwrap();
         }
     }
 
@@ -123,10 +110,13 @@ impl MonitorState {
             return;
         }
         *state = VmState::Running;
-        // Wake both resume waiters AND stop waiters
-        // (in case stop was pending but not yet parked).
         self.resume_cv.notify_all();
         self.pause_barrier.notify_all();
+        // Clear stale monitor_wake so it doesn't affect
+        // future WFI instructions.
+        if let Some(ref wk) = *self.wfi_waker.lock().unwrap() {
+            wk.clear_monitor_wake();
+        }
     }
 
     /// Request clean process exit.
@@ -134,9 +124,7 @@ impl MonitorState {
         self.quit_requested.store(true, Ordering::SeqCst);
         // Clear CpuManager running flag so the outer
         // run() loop exits after cpu_exec_loop returns.
-        if let Some(ref flag) =
-            *self.stop_flag.lock().unwrap()
-        {
+        if let Some(ref flag) = *self.stop_flag.lock().unwrap() {
             flag.store(false, Ordering::SeqCst);
         }
         // Resume if paused, so exec loop can exit.
@@ -145,9 +133,7 @@ impl MonitorState {
         self.resume_cv.notify_all();
         self.pause_barrier.notify_all();
         // Wake WFI if halted.
-        if let Some(ref wk) =
-            *self.wfi_waker.lock().unwrap()
-        {
+        if let Some(ref wk) = *self.wfi_waker.lock().unwrap() {
             wk.stop();
         }
     }
@@ -171,8 +157,7 @@ impl MonitorState {
             self.pause_barrier.notify_all();
             // Wait for resume or quit.
             while *state == VmState::Paused {
-                state =
-                    self.resume_cv.wait(state).unwrap();
+                state = self.resume_cv.wait(state).unwrap();
             }
         }
         self.is_quit_requested()
@@ -186,8 +171,7 @@ impl MonitorState {
     /// Check if pause is requested (non-blocking).
     pub fn is_pause_requested(&self) -> bool {
         let s = self.inner.lock().unwrap();
-        *s == VmState::PauseRequested
-            || *s == VmState::Paused
+        *s == VmState::PauseRequested || *s == VmState::Paused
     }
 }
 

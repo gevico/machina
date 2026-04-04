@@ -1,9 +1,16 @@
 [package]
 name = "machina-hw-virtio"
-version = "0.1.0"
-edition = "2021"
+version.workspace = true
+edition.workspace = true
+description = "VirtIO MMIO transport and block device model"
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+keywords = ["riscv", "emulator", "virtio", "block-device"]
+categories = ["emulators", "hardware-support"]
 
 [dependencies]
-machina-hw-core = { path = "../core" }
-machina-memory = { path = "../../memory" }
-libc = "0.2"
+machina-core = { workspace = true }
+machina-hw-core = { workspace = true }
+machina-memory = { workspace = true }
+libc = { workspace = true }

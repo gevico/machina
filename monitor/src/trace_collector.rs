@@ -64,7 +64,10 @@ impl TraceCollector {
     /// Fast-path check: is tracing enabled *and* does the filter
     /// accept this category?  Callers should check this before
     /// constructing expensive events.
-    pub fn should_collect(&self, category: machina_core::trace::TraceCategory) -> bool {
+    pub fn should_collect(
+        &self,
+        category: machina_core::trace::TraceCategory,
+    ) -> bool {
         self.enabled.load(Ordering::Relaxed)
             && self.filter.lock().unwrap().matches(category)
     }
@@ -91,6 +94,10 @@ impl TraceCollector {
     /// Number of events currently in the buffer.
     pub fn len(&self) -> usize {
         self.buf.lock().unwrap().len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
     }
 
     /// Monotonic sequence counter value.

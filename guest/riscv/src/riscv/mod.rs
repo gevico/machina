@@ -5,7 +5,6 @@ pub mod csr;
 pub mod exception;
 pub mod ext;
 mod fpu;
-#[allow(dead_code)]
 mod insn_decode;
 pub mod mmu;
 pub mod pmp;

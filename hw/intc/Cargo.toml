@@ -1,8 +1,15 @@
 [package]
 name = "machina-hw-intc"
-version = "0.1.0"
-edition = "2021"
+version.workspace = true
+edition.workspace = true
+description = "RISC-V interrupt controllers: PLIC and ACLINT (MTIMER + MSWI)"
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+keywords = ["riscv", "emulator", "interrupt", "plic"]
+categories = ["emulators", "hardware-support"]
 
 [dependencies]
-machina-core = { path = "../../core" }
-machina-hw-core = { path = "../core" }
+machina-core = { workspace = true }
+machina-hw-core = { workspace = true }
+machina-memory = { workspace = true }

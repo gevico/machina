@@ -40,10 +40,9 @@ const PTE_R: u8 = 1 << 1;
 const PTE_W: u8 = 1 << 2;
 const PTE_X: u8 = 1 << 3;
 const PTE_U: u8 = 1 << 4;
-#[allow(dead_code)]
-const PTE_G: u8 = 1 << 5;
 const PTE_A: u8 = 1 << 6;
 const PTE_D: u8 = 1 << 7;
+const PTE_N: u64 = 1 << 63;
 
 // mstatus bits used by permission checks
 const MSTATUS_MXR: u64 = 1 << 19;
@@ -232,6 +231,21 @@ impl Mmu {
         }
     }
 
+    /// Lookup TLB for code fetch and return the guest
+    /// physical address (not host address).
+    /// Returns None on miss or MMIO.
+    pub fn tlb_lookup_code_phys(&self, gva: u64) -> Option<u64> {
+        let idx = tlb_index(gva);
+        let entry = &self.tlb[idx];
+        let tag = gva & PAGE_MASK;
+        if entry.addr_code == tag && entry.addend != TLB_MMIO_ADDEND {
+            let offset = gva & !PAGE_MASK;
+            Some((entry.phys_page << 12) | offset)
+        } else {
+            None
+        }
+    }
+
     /// Lookup TLB for a read/load access.
     /// Returns `Some(addend)` on hit (non-MMIO), None on
     /// miss or MMIO.
@@ -356,13 +370,16 @@ impl Mmu {
 
         self.check_perm(perm, access, priv_level, mstatus)?;
 
-        // Hardware A/D bit management
+        // Hardware A/D bit management (Svadu): set A
+        // unconditionally, set D on writes.  This matches
+        // the default behaviour expected by most OSes
+        // (Linux, rCore) that do not handle A/D page
+        // faults themselves.
         let mut new_pte = pte | (PTE_A as u64);
         if access == AccessType::Write {
             new_pte |= PTE_D as u64;
         }
         if new_pte != pte {
-            // PMP check on PTE write for A/D update.
             if let Some(p) = pmp {
                 p.check_access(
                     pte_addr,
@@ -446,8 +463,7 @@ impl Mmu {
         }
         entry.addend = addend;
         entry.phys_page = gva >> 12;
-        entry.perm =
-            PTE_R | PTE_W | PTE_X | PTE_A | PTE_D;
+        entry.perm = PTE_R | PTE_W | PTE_X | PTE_A | PTE_D;
         entry.asid = 0;
         entry.page_size = PAGE_SIZE;
     }
@@ -497,6 +513,19 @@ impl Mmu {
 
             // Leaf PTE
             if r || x {
+                let mut ppn = pte >> 10;
+                if (pte & PTE_N) != 0 {
+                    if level != 0 {
+                        return Err(page_fault(access));
+                    }
+                    let napot_bits = ppn.trailing_zeros() as u64 + 1;
+                    if napot_bits != 4 {
+                        return Err(page_fault(access));
+                    }
+                    let napot_mask = (1u64 << napot_bits) - 1;
+                    let vpn = gva >> 12;
+                    ppn = (ppn & !napot_mask) | (vpn & napot_mask);
+                }
                 if level > 0 {
                     let ppn_raw = pte >> 10;
                     let align_mask = (1u64 << (level as u32 * VPN_BITS)) - 1;
@@ -504,7 +533,6 @@ impl Mmu {
                         return Err(page_fault(access));
                     }
                 }
-                let ppn = pte >> 10;
                 let pg_size = level_page_size(level);
                 return Ok((ppn, flags, pg_size, pte_addr, pte));
             }

@@ -11,9 +11,17 @@
 //   7: SCR
 
 use std::collections::VecDeque;
+use std::sync::{Arc, Mutex};
 
+use machina_core::address::GPA;
+use machina_hw_core::bus::{SysBus, SysBusDeviceState, SysBusError};
+use machina_hw_core::chardev::ByteCb;
 use machina_hw_core::chardev::CharFrontend;
 use machina_hw_core::irq::IrqLine;
+use machina_hw_core::mdev::MDeviceError;
+use machina_hw_core::property::{MPropertySpec, MPropertyType, MPropertyValue};
+use machina_memory::address_space::AddressSpace;
+use machina_memory::region::{MemoryRegion, MmioOps};
 
 // IER bits
 const IER_RX_AVAIL: u8 = 1 << 0;
@@ -33,7 +41,37 @@ const LCR_DLAB: u8 = 1 << 7;
 
 const FIFO_SIZE: usize = 16;
 
+#[derive(Debug)]
+pub enum UartError {
+    Device(MDeviceError),
+    SysBus(SysBusError),
+}
+
+impl std::fmt::Display for UartError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Device(err) => write!(f, "{err}"),
+            Self::SysBus(err) => write!(f, "{err}"),
+        }
+    }
+}
+
+impl std::error::Error for UartError {}
+
+impl From<MDeviceError> for UartError {
+    fn from(value: MDeviceError) -> Self {
+        Self::Device(value)
+    }
+}
+
+impl From<SysBusError> for UartError {
+    fn from(value: SysBusError) -> Self {
+        Self::SysBus(value)
+    }
+}
+
 pub struct Uart16550 {
+    state: SysBusDeviceState,
     rbr: u8,
     thr: u8,
     ier: u8,
@@ -50,11 +88,23 @@ pub struct Uart16550 {
     irq_pending: bool,
     irq_line: Option<IrqLine>,
     chardev: Option<CharFrontend>,
+    configured_chardev: Option<CharFrontend>,
 }
 
 impl Uart16550 {
     pub fn new() -> Self {
+        Self::new_named("uart")
+    }
+
+    pub fn new_named(local_id: &str) -> Self {
+        let mut state = SysBusDeviceState::new(local_id);
+        state
+            .device_mut()
+            .define_property(MPropertySpec::new("chardev", MPropertyType::Link))
+            .expect("UART chardev property schema must be valid");
+
         Self {
+            state,
             rbr: 0,
             thr: 0,
             ier: 0,
@@ -71,17 +121,103 @@ impl Uart16550 {
             irq_pending: false,
             irq_line: None,
             chardev: None,
+            configured_chardev: None,
         }
     }
 
-    /// Connect an IRQ output line.
-    pub fn attach_irq(&mut self, irq: IrqLine) {
-        self.irq_line = Some(irq);
+    pub fn set_chardev_property(
+        &mut self,
+        path: &str,
+    ) -> Result<(), MDeviceError> {
+        self.state
+            .device_mut()
+            .set_property("chardev", MPropertyValue::Link(path.to_string()))
     }
 
-    /// Attach a character device frontend.
-    pub fn attach_chardev(&mut self, fe: CharFrontend) {
-        self.chardev = Some(fe);
+    pub fn chardev_property(&self) -> Option<&str> {
+        match self.state.device().property("chardev") {
+            Some(MPropertyValue::Link(path)) => Some(path.as_str()),
+            _ => None,
+        }
+    }
+
+    pub fn realized(&self) -> bool {
+        self.state.device().is_realized()
+    }
+
+    pub fn attach_to_bus(&mut self, bus: &SysBus) -> Result<(), SysBusError> {
+        self.state.attach_to_bus(bus)
+    }
+
+    pub fn register_mmio(
+        &mut self,
+        region: MemoryRegion,
+        base: GPA,
+    ) -> Result<(), SysBusError> {
+        self.state.register_mmio(region, base)
+    }
+
+    pub fn attach_irq(&mut self, irq: IrqLine) -> Result<(), SysBusError> {
+        self.state.register_irq(irq)
+    }
+
+    pub fn attach_chardev(
+        &mut self,
+        fe: CharFrontend,
+    ) -> Result<(), MDeviceError> {
+        if self.state.device().is_realized() {
+            return Err(MDeviceError::LateMutation("chardev_frontend"));
+        }
+        self.configured_chardev = Some(fe);
+        Ok(())
+    }
+
+    pub fn realize_onto(
+        &mut self,
+        bus: &mut SysBus,
+        address_space: &mut AddressSpace,
+        rx_cb: ByteCb,
+    ) -> Result<(), UartError> {
+        self.state.realize_onto(bus, address_space)?;
+        self.irq_line = self.state.irq_outputs().first().cloned();
+
+        if let Some(mut fe) = self.configured_chardev.take() {
+            fe.start_input(rx_cb);
+            self.chardev = Some(fe);
+        }
+
+        Ok(())
+    }
+
+    pub fn unrealize_from(
+        &mut self,
+        bus: &mut SysBus,
+        address_space: &mut AddressSpace,
+    ) -> Result<(), UartError> {
+        self.chardev = None;
+        self.irq_line = None;
+        self.state.unrealize_from(bus, address_space)?;
+        Ok(())
+    }
+
+    pub fn reset_runtime(&mut self) {
+        self.rbr = 0;
+        self.thr = 0;
+        self.ier = 0;
+        self.iir = IIR_NONE;
+        self.fcr = 0;
+        self.lcr = 0;
+        self.mcr = 0;
+        self.lsr = LSR_THRE | LSR_TEMT;
+        self.msr = 0;
+        self.scr = 0;
+        self.dll = 0;
+        self.dlm = 0;
+        self.rx_fifo.clear();
+        self.irq_pending = false;
+        if let Some(ref line) = self.irq_line {
+            line.lower();
+        }
     }
 
     /// Push a byte into the receive FIFO.
@@ -205,5 +341,17 @@ impl Uart16550 {
 impl Default for Uart16550 {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+pub struct Uart16550Mmio(pub Arc<Mutex<Uart16550>>);
+
+impl MmioOps for Uart16550Mmio {
+    fn read(&self, offset: u64, _size: u32) -> u64 {
+        self.0.lock().unwrap().read(offset) as u64
+    }
+
+    fn write(&self, offset: u64, _size: u32, val: u64) {
+        self.0.lock().unwrap().write(offset, val as u8);
     }
 }

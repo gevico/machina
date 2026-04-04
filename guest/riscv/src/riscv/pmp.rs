@@ -34,7 +34,7 @@ pub enum PmpAddrMatch {
 }
 
 impl PmpAddrMatch {
-    fn from_cfg(cfg: u8) -> Self {
+    pub fn from_cfg(cfg: u8) -> Self {
         match (cfg & PMP_A_MASK) >> PMP_A_SHIFT {
             0 => Self::Off,
             1 => Self::Tor,
@@ -214,7 +214,7 @@ impl Default for Pmp {
 ///   G = number of trailing ones in pmpaddr
 ///   size = 2^(G + 3) bytes
 ///   base = (pmpaddr & ~((1 << (G+1)) - 1)) << 2
-fn napot_range(pmpaddr: u64) -> (u64, u64) {
+pub fn napot_range(pmpaddr: u64) -> (u64, u64) {
     let g = (!pmpaddr).trailing_zeros() as u64;
     let size: u64 = 1u64 << (g + 3);
     let mask = size - 1;
@@ -229,35 +229,5 @@ fn access_fault(access: AccessType) -> Exception {
         AccessType::Read => Exception::LoadAccessFault,
         AccessType::Write => Exception::StoreAccessFault,
         AccessType::Execute => Exception::InstructionAccessFault,
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_napot_decode() {
-        // pmpaddr = 0x1F (binary ...0001_1111, G=5)
-        // size = 2^(5+3) = 256, base = 0
-        let (base, end) = napot_range(0x1F);
-        assert_eq!(base, 0);
-        assert_eq!(end, 256);
-
-        // pmpaddr = 0x23 (binary ...0010_0011, G=2)
-        // size = 2^(2+3) = 32
-        // base = (0x23 << 2) & !31 = 0x8C & !0x1F
-        //      = 140 & !31 = 128
-        let (base, end) = napot_range(0x23);
-        assert_eq!(base, 128);
-        assert_eq!(end, 160);
-    }
-
-    #[test]
-    fn test_pmp_addr_match_from_cfg() {
-        assert_eq!(PmpAddrMatch::from_cfg(0x00), PmpAddrMatch::Off,);
-        assert_eq!(PmpAddrMatch::from_cfg(0x08), PmpAddrMatch::Tor,);
-        assert_eq!(PmpAddrMatch::from_cfg(0x10), PmpAddrMatch::Na4,);
-        assert_eq!(PmpAddrMatch::from_cfg(0x18), PmpAddrMatch::Napot,);
     }
 }

@@ -11,6 +11,8 @@ use std::time::Instant;
 struct WfiState {
     irq_pending: bool,
     stopped: bool,
+    /// Set by monitor pause to wake without IRQ.
+    monitor_wake: bool,
     /// Nearest timer deadline (if any). wait() uses
     /// condvar::wait_timeout when this is set.
     deadline: Option<Instant>,
@@ -34,6 +36,7 @@ impl WfiWaker {
             state: Mutex::new(WfiState {
                 irq_pending: false,
                 stopped: false,
+                monitor_wake: false,
                 deadline: None,
             }),
             cv: Condvar::new(),
@@ -45,6 +48,21 @@ impl WfiWaker {
         let mut s = self.state.lock().unwrap();
         s.irq_pending = true;
         self.cv.notify_all();
+    }
+
+    /// Wake for monitor pause (no spurious IRQ).
+    pub fn monitor_wake(&self) {
+        let mut s = self.state.lock().unwrap();
+        s.monitor_wake = true;
+        self.cv.notify_all();
+    }
+
+    /// Clear latched monitor_wake flag. Called after
+    /// monitor cont to prevent a stale flag from
+    /// waking a future WFI.
+    pub fn clear_monitor_wake(&self) {
+        let mut s = self.state.lock().unwrap();
+        s.monitor_wake = false;
     }
 
     /// Force-unblock any waiting CPU (manager stop).
@@ -69,10 +87,10 @@ impl WfiWaker {
         s.deadline = None;
     }
 
-    /// Block until woken by `wake()`, `stop()`, or timer
-    /// deadline expiry.
+    /// Block until woken by `wake()`, `stop()`,
+    /// `monitor_wake()`, or timer deadline expiry.
     /// Returns true if woken by IRQ or timer, false if
-    /// stopped.
+    /// stopped or monitor wake.
     pub fn wait(&self) -> bool {
         let mut s = self.state.lock().unwrap();
         loop {
@@ -82,6 +100,15 @@ impl WfiWaker {
             }
             if s.stopped {
                 return false;
+            }
+            if s.monitor_wake {
+                s.monitor_wake = false;
+                // Return true (woken) but the exec
+                // loop's WFI handler will see that
+                // check_monitor_pause returns true,
+                // parking at the barrier instead of
+                // continuing past WFI.
+                return true;
             }
             if let Some(deadline) = s.deadline {
                 let now = Instant::now();

@@ -1,8 +1,15 @@
 [package]
 name = "machina-hw-char"
-version = "0.1.0"
-edition = "2021"
+version.workspace = true
+edition.workspace = true
+description = "UART 16550A serial device model"
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+keywords = ["riscv", "emulator", "uart", "serial"]
+categories = ["emulators", "hardware-support"]
 
 [dependencies]
-machina-core = { path = "../../core" }
-machina-hw-core = { path = "../core" }
+machina-core = { workspace = true }
+machina-hw-core = { workspace = true }
+machina-memory = { workspace = true }

@@ -19,7 +19,7 @@ use machina_guest_riscv::riscv::csr::PrivLevel;
 use machina_guest_riscv::riscv::exception::Exception;
 use machina_guest_riscv::riscv::ext::RiscvCfg;
 use machina_guest_riscv::riscv::{RiscvDisasContext, RiscvTranslator};
-use machina_guest_riscv::{translator_loop, DisasJumpType, TranslatorOps};
+use machina_guest_riscv::{DisasJumpType, TranslatorOps};
 use machina_monitor::service::MonitorService;
 use machina_monitor::trace_collector::TraceCollector;
 
@@ -27,6 +27,25 @@ const NUM_GPRS: usize = 32;
 pub const RAM_BASE: u64 = 0x8000_0000;
 const MSTATUS_SIE: u64 = 1 << 1;
 const MSTATUS_MIE: u64 = 1 << 3;
+const MSTATUS_MPRV: u64 = 1 << 17;
+const MSTATUS_MPP_MASK: u64 = 0x3 << 11;
+const MSTATUS_MPP_SHIFT: u32 = 11;
+
+fn effective_data_priv(priv_level: PrivLevel, mstatus: u64) -> PrivLevel {
+    if priv_level == PrivLevel::Machine && (mstatus & MSTATUS_MPRV) != 0 {
+        return match (mstatus & MSTATUS_MPP_MASK) >> MSTATUS_MPP_SHIFT {
+            0 => PrivLevel::User,
+            1 => PrivLevel::Supervisor,
+            _ => PrivLevel::Machine,
+        };
+    }
+    priv_level
+}
+
+fn should_flush_data_tlb_on_status_write(csr_addr: u16) -> bool {
+    use machina_guest_riscv::riscv::csr::{CSR_MSTATUS, CSR_SSTATUS};
+    matches!(csr_addr, CSR_MSTATUS | CSR_SSTATUS)
+}
 
 /// Compute the byte offset of the TLB Box pointer from
 /// the start of RiscvCpu (env pointer). Used by the JIT
@@ -73,7 +92,6 @@ pub fn fault_pc_offset() -> usize {
 /// Last translated TB PC for crash diagnosis.
 pub static LAST_TB_PC: AtomicU64 = AtomicU64::new(0);
 
-
 /// Shared mip register for IRQ delivery from devices.
 pub type SharedMip = Arc<AtomicU64>;
 
@@ -93,9 +111,10 @@ pub struct FullSystemCpu {
     shared_mip: SharedMip,
     wfi_waker: Arc<WfiWaker>,
     stop_flag: Arc<AtomicBool>,
-    monitor_state: Option<
-        Arc<machina_core::monitor::MonitorState>,
-    >,
+    monitor_state: Option<Arc<machina_core::monitor::MonitorState>>,
+    // HTIF tohost: offset within RAM to poll for exit.
+    htif_tohost_off: Option<u64>,
+    htif_exit_code: Arc<AtomicU64>,
     trace_collector: Option<Arc<TraceCollector>>,
     trace_prev_satp: u64,
     trace_prev_pc: u64,
@@ -138,6 +157,8 @@ impl FullSystemCpu {
             wfi_waker,
             stop_flag,
             monitor_state: None,
+            htif_tohost_off: None,
+            htif_exit_code: Arc::new(AtomicU64::new(0)),
             trace_collector: None,
             trace_prev_satp: 0,
             trace_prev_pc: 0,
@@ -147,10 +168,7 @@ impl FullSystemCpu {
 
     /// Bridge to [`MonitorService`] so trace buffers can be drained
     /// to the terminal during execution.
-    pub fn set_trace_monitor_svc(
-        &mut self,
-        svc: Arc<Mutex<MonitorService>>,
-    ) {
+    pub fn set_trace_monitor_svc(&mut self, svc: Arc<Mutex<MonitorService>>) {
         self.trace_monitor = Some(svc);
     }
 
@@ -163,6 +181,32 @@ impl FullSystemCpu {
         }
     }
 
+    /// Configure HTIF tohost polling address (GPA).
+    /// The address must be within RAM.
+    pub fn set_htif_tohost(&mut self, gpa: u64) {
+        let off = gpa.wrapping_sub(RAM_BASE);
+        if off < self.ram_size {
+            self.htif_tohost_off = Some(off);
+        }
+    }
+
+    /// Return a clone of the HTIF exit code atomic.
+    /// Value 0 = not exited.  1 = pass.
+    /// Other (test_num << 1 | 1) = fail.
+    pub fn htif_exit_code(&self) -> Arc<AtomicU64> {
+        Arc::clone(&self.htif_exit_code)
+    }
+
+    /// Set code-page bitmap pointer for store helper.
+    pub fn set_code_pages(
+        &mut self,
+        ptr: *const std::sync::atomic::AtomicU8,
+        len: usize,
+    ) {
+        self.cpu.code_pages_ptr = ptr as u64;
+        self.cpu.code_pages_len = len as u64;
+    }
+
     /// Attach monitor state for pause/resume control.
     pub fn set_monitor_state(
         &mut self,
@@ -172,18 +216,13 @@ impl FullSystemCpu {
     }
 
     /// Attach trace collector for execution tracing.
-    pub fn set_trace_collector(
-        &mut self,
-        tc: Arc<TraceCollector>,
-    ) {
+    pub fn set_trace_collector(&mut self, tc: Arc<TraceCollector>) {
         self.trace_collector = Some(tc);
     }
 
     /// Check whether tracing is enabled (fast path).
     fn is_trace_enabled(&self) -> bool {
-        self.trace_collector
-            .as_ref()
-            .map_or(false, |tc| tc.enabled())
+        self.trace_collector.as_ref().is_some_and(|tc| tc.enabled())
     }
 
     /// Read ACLINT mtime register via AddressSpace MMIO.
@@ -194,18 +233,14 @@ impl FullSystemCpu {
             return 0;
         }
         unsafe {
-            let as_ =
-                &*(asp as *const AddressSpace);
+            let as_ = &*(asp as *const AddressSpace);
             as_.read(GPA::new(ACLINT_MTIME), 8)
         }
     }
 
     /// Resolve a physical address to (host_ptr, base, size)
     /// for instruction fetch.
-    fn resolve_fetch_region(
-        &self,
-        pa: u64,
-    ) -> (*const u8, u64, u64) {
+    fn resolve_fetch_region(&self, pa: u64) -> (*const u8, u64, u64) {
         let ram_off = pa.wrapping_sub(RAM_BASE);
         if ram_off < self.ram_size {
             return (self.ram_ptr, RAM_BASE, self.ram_size);
@@ -213,23 +248,14 @@ impl FullSystemCpu {
         if !self.mrom_ptr.is_null() {
             let mrom_off = pa.wrapping_sub(self.mrom_base);
             if mrom_off < self.mrom_size {
-                return (
-                    self.mrom_ptr,
-                    self.mrom_base,
-                    self.mrom_size,
-                );
+                return (self.mrom_ptr, self.mrom_base, self.mrom_size);
             }
         }
         (std::ptr::null(), 0, 0)
     }
 
     /// Register MROM region for instruction fetch.
-    pub fn set_mrom(
-        &mut self,
-        ptr: *const u8,
-        base: u64,
-        size: u64,
-    ) {
+    pub fn set_mrom(&mut self, ptr: *const u8, base: u64, size: u64) {
         self.mrom_ptr = ptr;
         self.mrom_base = base;
         self.mrom_size = size;
@@ -241,9 +267,7 @@ impl FullSystemCpu {
     fn translate_pc(&mut self, vpc: u64) -> u64 {
         // M-mode always uses BARE (physical addressing),
         // regardless of satp setting.
-        let mode = if self.cpu.priv_level
-            == PrivLevel::Machine
-        {
+        let mode = if self.cpu.priv_level == PrivLevel::Machine {
             0
         } else {
             self.cpu.mmu.satp_mode()
@@ -290,23 +314,17 @@ impl FullSystemCpu {
                     // the same page (code shares TLB entry).
                     let ram_end = self.cpu.ram_end;
                     let gb = self.cpu.guest_base as usize;
-                    let addend = if pa >= RAM_BASE
-                        && pa < ram_end
-                    {
+                    let addend = if pa >= RAM_BASE && pa < ram_end {
                         let gva_page =
                             vpc & machina_guest_riscv::riscv::mmu::PAGE_MASK;
                         let pa_page =
                             pa & machina_guest_riscv::riscv::mmu::PAGE_MASK;
                         gb.wrapping_add(pa_page as usize)
-                            .wrapping_sub(
-                                gva_page as usize,
-                            )
+                            .wrapping_sub(gva_page as usize)
                     } else {
                         TLB_MMIO_ADDEND
                     };
-                    self.cpu
-                        .mmu
-                        .fill_addend(vpc, addend);
+                    self.cpu.mmu.fill_addend(vpc, addend);
                     pa
                 }
                 Err(e) => {
@@ -348,8 +366,7 @@ impl FullSystemCpu {
         self.cpu.mem_fault_cause = saved_fc;
         self.cpu.mem_fault_tval = saved_ft;
         self.cpu.fault_pc = saved_fp;
-        let (rp, rb, rs) =
-            self.resolve_fetch_region(phys_pc);
+        let (rp, rb, rs) = self.resolve_fetch_region(phys_pc);
         let off = phys_pc.wrapping_sub(rb);
         if rp.is_null() || off >= rs {
             return 0;
@@ -381,8 +398,7 @@ impl GuestCpu for FullSystemCpu {
         // This avoids global TB invalidation on satp
         // writes / sfence.vma (matches QEMU behavior).
         let ppn = satp as u32;
-        let ppn_hash =
-            (ppn ^ (ppn >> 16)) & 0xFFFF;
+        let ppn_hash = (ppn ^ (ppn >> 16)) & 0xFFFF;
         priv_bits | (satp_mode << 2) | (ppn_hash << 6)
     }
 
@@ -409,14 +425,9 @@ impl GuestCpu for FullSystemCpu {
             if ram_off < self.ram_size {
                 (self.ram_ptr, RAM_BASE, self.ram_size)
             } else if !self.mrom_ptr.is_null() {
-                let mrom_off =
-                    phys_pc.wrapping_sub(self.mrom_base);
+                let mrom_off = phys_pc.wrapping_sub(self.mrom_base);
                 if mrom_off < self.mrom_size {
-                    (
-                        self.mrom_ptr,
-                        self.mrom_base,
-                        self.mrom_size,
-                    )
+                    (self.mrom_ptr, self.mrom_base, self.mrom_size)
                 } else {
                     self.cpu.mem_fault_cause = 1;
                     self.cpu.mem_fault_tval = pc;
@@ -434,8 +445,7 @@ impl GuestCpu for FullSystemCpu {
         // (AC-10). Limit avail to remaining bytes in
         // the current 4K page.
         let page_remain = 4096 - (phys_pc & 0xFFF);
-        let avail_bytes =
-            page_remain.min(region_size - phys_offset);
+        let avail_bytes = page_remain.min(region_size - phys_offset);
         // Allow 2-byte (compressed) instructions.
         let avail = avail_bytes / 2;
         let limit = max_insns.min(avail as u32);
@@ -444,8 +454,7 @@ impl GuestCpu for FullSystemCpu {
         }
 
         // Use phys_pc-based pointer for instruction fetch.
-        let base = (region_ptr as usize)
-            .wrapping_sub(region_base as usize)
+        let base = (region_ptr as usize).wrapping_sub(region_base as usize)
             as *const u8;
         let base = (base as usize)
             .wrapping_add(phys_pc as usize)
@@ -457,49 +466,37 @@ impl GuestCpu for FullSystemCpu {
         // be the first half of a 32-bit instruction.
         let cross_page = if page_remain % 4 == 2 {
             let boundary_pa = phys_pc + page_remain - 2;
-            let boundary_off =
-                boundary_pa.wrapping_sub(region_base);
+            let boundary_off = boundary_pa.wrapping_sub(region_base);
             if boundary_off < region_size {
                 let lo = unsafe {
-                    let p =
-                        region_ptr.add(boundary_off as usize);
+                    let p = region_ptr.add(boundary_off as usize);
                     (p as *const u16).read_unaligned()
                 };
-                let is_32bit = (lo & 0x3) == 0x3
-                    && ((lo >> 2) & 0x7) != 0x7;
+                let is_32bit = (lo & 0x3) == 0x3 && ((lo >> 2) & 0x7) != 0x7;
                 if is_32bit {
                     let next_vpc = pc + page_remain;
                     let sfc = self.cpu.mem_fault_cause;
                     let sft = self.cpu.mem_fault_tval;
                     let sfp = self.cpu.fault_pc;
-                    let next_phys =
-                        self.translate_pc(next_vpc);
+                    let next_phys = self.translate_pc(next_vpc);
                     if next_phys == u64::MAX {
                         0u32
                     } else {
                         self.cpu.mem_fault_cause = sfc;
                         self.cpu.mem_fault_tval = sft;
                         self.cpu.fault_pc = sfp;
-                        let (np, nb, ns) =
-                            self.resolve_fetch_region(
-                                next_phys,
-                            );
-                        let noff = next_phys
-                            .wrapping_sub(nb);
+                        let (np, nb, ns) = self.resolve_fetch_region(next_phys);
+                        let noff = next_phys.wrapping_sub(nb);
                         if np.is_null() || noff >= ns {
                             self.cpu.mem_fault_cause = 1;
-                            self.cpu.mem_fault_tval =
-                                pc + page_remain;
+                            self.cpu.mem_fault_tval = pc + page_remain;
                             0u32
                         } else {
                             let hi = unsafe {
-                                let p = np
-                                    .add(noff as usize);
-                                (p as *const u16)
-                                    .read_unaligned()
+                                let p = np.add(noff as usize);
+                                (p as *const u16).read_unaligned()
                             };
-                            (lo as u32)
-                                | ((hi as u32) << 16)
+                            (lo as u32) | ((hi as u32) << 16)
                         }
                     }
                 } else {
@@ -535,18 +532,21 @@ impl GuestCpu for FullSystemCpu {
             d.base.max_insns = limit;
             d.cross_page_insn = cross_page;
             d.cross_page_pc = xpage_pc;
-            translator_loop::<RiscvTranslator>(&mut d, ir);
-            d.base.num_insns * 4
-        } else {
-            let mut d = RiscvDisasContext::new(pc, base, cfg);
-            d.base.max_insns = limit;
-            d.cross_page_insn = cross_page;
-            d.cross_page_pc = xpage_pc;
-            d.env = TempIdx(0);
+            d.env = ir.new_fixed(machina_accel::ir::types::Type::I64, 5, "env");
             for i in 0..NUM_GPRS {
-                d.gpr[i] = TempIdx(1 + i as u32);
+                d.gpr[i] = ir.new_global(
+                    machina_accel::ir::types::Type::I64,
+                    d.env,
+                    machina_guest_riscv::riscv::cpu::gpr_offset(i),
+                    "gpr",
+                );
             }
-            d.pc = TempIdx(1 + NUM_GPRS as u32);
+            d.pc = ir.new_global(
+                machina_accel::ir::types::Type::I64,
+                d.env,
+                machina_guest_riscv::riscv::cpu::PC_OFFSET,
+                "pc",
+            );
             d.load_res = ir.new_global(
                 machina_accel::ir::types::Type::I64,
                 d.env,
@@ -565,8 +565,33 @@ impl GuestCpu for FullSystemCpu {
                 fault_pc_offset() as i64,
                 "fault_pc",
             );
-            // d.csr_helper =
-                machina_csr_op as *const () as u64;
+            RiscvTranslator::tb_start(&mut d, ir);
+            loop {
+                RiscvTranslator::insn_start(&mut d, ir);
+                RiscvTranslator::translate_insn(&mut d, ir);
+                if d.base.is_jmp != DisasJumpType::Next {
+                    break;
+                }
+                if d.base.num_insns >= d.base.max_insns {
+                    d.base.is_jmp = DisasJumpType::TooMany;
+                    break;
+                }
+            }
+            RiscvTranslator::tb_stop(&mut d, ir);
+            d.base.num_insns * 4
+        } else {
+            let mut d = RiscvDisasContext::new(pc, base, cfg);
+            d.base.max_insns = limit;
+            d.cross_page_insn = cross_page;
+            d.cross_page_pc = xpage_pc;
+            d.env = TempIdx(0);
+            for i in 0..NUM_GPRS {
+                d.gpr[i] = TempIdx(1 + i as u32);
+            }
+            d.pc = TempIdx(1 + NUM_GPRS as u32);
+            d.load_res = TempIdx(1 + NUM_GPRS as u32 + 1);
+            d.load_val = TempIdx(1 + NUM_GPRS as u32 + 2);
+            d.fault_pc = TempIdx(1 + NUM_GPRS as u32 + 3);
             RiscvTranslator::tb_start(&mut d, ir);
             loop {
                 RiscvTranslator::insn_start(&mut d, ir);
@@ -592,8 +617,7 @@ impl GuestCpu for FullSystemCpu {
 
     fn pending_interrupt(&self) -> bool {
         let dev_mip = self.shared_mip.load(Ordering::Relaxed);
-        let pending =
-            (self.cpu.csr.mip | dev_mip) & self.cpu.csr.mie;
+        let pending = (self.cpu.csr.mip | dev_mip) & self.cpu.csr.mie;
         if pending == 0 {
             return false;
         }
@@ -605,24 +629,25 @@ impl GuestCpu for FullSystemCpu {
                 continue;
             }
 
-            let delegated =
-                (self.cpu.csr.mideleg >> irq) & 1 != 0;
+            let delegated = (self.cpu.csr.mideleg >> irq) & 1 != 0;
             if delegated {
                 let s = PrivLevel::Supervisor as u64;
                 return cur_priv < s
                     || (cur_priv == s
-                        && self.cpu.csr.mstatus & MSTATUS_SIE
-                            != 0);
+                        && self.cpu.csr.mstatus & MSTATUS_SIE != 0);
             }
 
             let m = PrivLevel::Machine as u64;
             return cur_priv < m
-                || (cur_priv == m
-                    && self.cpu.csr.mstatus & MSTATUS_MIE
-                        != 0);
+                || (cur_priv == m && self.cpu.csr.mstatus & MSTATUS_MIE != 0);
         }
 
         false
+    }
+
+    fn pending_wfi_wakeup(&self) -> bool {
+        let dev_mip = self.shared_mip.load(Ordering::Relaxed);
+        ((self.cpu.csr.mip | dev_mip) & self.cpu.csr.mie) != 0
     }
 
     fn is_halted(&self) -> bool {
@@ -645,7 +670,7 @@ impl GuestCpu for FullSystemCpu {
         self.cpu.csr.mip &= !dev_mip;
     }
 
-    fn handle_exception(&mut self, excp: u32, tval: u64) {
+    fn handle_exception(&mut self, excp: u64, tval: u64) {
         let e = match excp {
             0 => Exception::InstructionMisaligned,
             1 => Exception::InstructionAccessFault,
@@ -691,25 +716,35 @@ impl GuestCpu for FullSystemCpu {
     }
 
     fn should_exit(&self) -> bool {
-        !self.stop_flag.load(Ordering::Relaxed)
+        if !self.stop_flag.load(Ordering::Relaxed) {
+            return true;
+        }
+        // Poll HTIF tohost for riscv-tests exit.
+        if let Some(off) = self.htif_tohost_off {
+            let val = unsafe {
+                let p = self.ram_ptr.add(off as usize) as *const u64;
+                std::ptr::read_volatile(p)
+            };
+            if val != 0 {
+                self.htif_exit_code.store(val, Ordering::SeqCst);
+                self.stop_flag.store(false, Ordering::SeqCst);
+                self.wfi_waker.stop();
+                return true;
+            }
+        }
+        false
     }
 
     fn check_monitor_pause(&self) -> bool {
         if let Some(ref ms) = self.monitor_state {
             // Save CPU snapshot before parking.
             if ms.is_pause_requested() {
-                ms.store_snapshot(
-                    machina_core::monitor::CpuSnapshot {
-                        gpr: self.cpu.gpr,
-                        pc: self.cpu.pc,
-                        priv_level:
-                            self.cpu.priv_level as u8,
-                        halted: self
-                            .cpu
-                            .halted
-                            .load(Ordering::Relaxed),
-                    },
-                );
+                ms.store_snapshot(machina_core::monitor::CpuSnapshot {
+                    gpr: self.cpu.gpr,
+                    pc: self.cpu.pc,
+                    priv_level: self.cpu.priv_level as u8,
+                    halted: self.cpu.halted.load(Ordering::Relaxed),
+                });
             }
             return ms.check_pause();
         }
@@ -727,7 +762,7 @@ impl GuestCpu for FullSystemCpu {
                 self.cpu.pc = self.cpu.fault_pc;
                 self.cpu.fault_pc = 0;
             }
-            self.handle_exception(cause as u32, tval);
+            self.handle_exception(cause, tval);
             true
         } else {
             false
@@ -742,6 +777,26 @@ impl GuestCpu for FullSystemCpu {
 
     fn last_phys_pc(&self) -> u64 {
         self.cpu.last_phys_pc
+    }
+
+    fn translate_pc(&self, vpc: u64) -> u64 {
+        // In M-mode with satp=0 (bare addressing),
+        // virtual == physical.
+        use machina_guest_riscv::riscv::csr::PrivLevel;
+        if self.cpu.priv_level == PrivLevel::Machine {
+            return vpc;
+        }
+        let satp = self.cpu.csr.satp;
+        if (satp >> 60) == 0 {
+            return vpc; // Bare mode
+        }
+        // TLB lookup: return guest physical address.
+        if let Some(pa) = self.cpu.mmu.tlb_lookup_code_phys(vpc) {
+            return pa;
+        }
+        // TLB miss — return MAX to skip phys_pc check;
+        // gen_code will do the full page walk.
+        u64::MAX
     }
 
     fn take_dirty_pages(&mut self) -> Vec<u64> {
@@ -768,8 +823,7 @@ impl GuestCpu for FullSystemCpu {
         if phys_pc == u64::MAX {
             return self.cpu.mem_fault_cause != 0;
         }
-        let (rp, rb, rs) =
-            self.resolve_fetch_region(phys_pc);
+        let (rp, rb, rs) = self.resolve_fetch_region(phys_pc);
         let off = phys_pc.wrapping_sub(rb);
         if rp.is_null() || off >= rs {
             self.cpu.mem_fault_cause = 1;
@@ -815,8 +869,7 @@ impl GuestCpu for FullSystemCpu {
             machina_guest_riscv::riscv::csr::CSR_INSTRET => {
                 self.cpu.csr.instret
             }
-            _ => match self.cpu.csr.read(csr_addr, priv_level)
-            {
+            _ => match self.cpu.csr.read(csr_addr, priv_level) {
                 Ok(v) => v,
                 Err(_) => return false,
             },
@@ -864,6 +917,8 @@ impl GuestCpu for FullSystemCpu {
                 // TLB flush ensures slow-path page walk
                 // on next access. TB correctness relies
                 // on phys_pc validation in tb_find.
+            } else if should_flush_data_tlb_on_status_write(csr_addr) {
+                self.cpu.mmu.flush();
             }
         }
 
@@ -885,11 +940,7 @@ impl GuestCpu for FullSystemCpu {
         self.cpu.csr.mepc
     }
 
-    fn trace_on_sret_exit(
-        &mut self,
-        pre_priv: u8,
-        pre_sepc: u64,
-    ) {
+    fn trace_on_sret_exit(&mut self, pre_priv: u8, pre_sepc: u64) {
         if !self.is_trace_enabled() {
             return;
         }
@@ -911,11 +962,7 @@ impl GuestCpu for FullSystemCpu {
         }
     }
 
-    fn trace_on_mret_exit(
-        &mut self,
-        pre_priv: u8,
-        pre_mepc: u64,
-    ) {
+    fn trace_on_mret_exit(&mut self, pre_priv: u8, pre_mepc: u64) {
         if !self.is_trace_enabled() {
             return;
         }
@@ -958,9 +1005,7 @@ impl GuestCpu for FullSystemCpu {
         if !self.is_trace_enabled() {
             return;
         }
-        let cause = if self.cpu.priv_level
-            == PrivLevel::Supervisor
-        {
+        let cause = if self.cpu.priv_level == PrivLevel::Supervisor {
             self.cpu.csr.scause
         } else {
             self.cpu.csr.mcause
@@ -1037,7 +1082,7 @@ impl GuestCpu for FullSystemCpu {
         let in_switch = self
             .trace_collector
             .as_ref()
-            .map_or(false, |tc| tc.in_switch_range(pc));
+            .is_some_and(|tc| tc.in_switch_range(pc));
         if in_switch {
             let fn_name = self
                 .trace_collector
@@ -1133,8 +1178,9 @@ unsafe fn translate_for_helper(
     access: AccessType,
     size: u32,
 ) -> Option<u64> {
+    let eff_priv = effective_data_priv(cpu.priv_level, cpu.csr.mstatus);
     // M-mode always uses BARE regardless of satp.
-    let mode = if cpu.priv_level == PrivLevel::Machine {
+    let mode = if eff_priv == PrivLevel::Machine {
         0
     } else {
         cpu.mmu.satp_mode()
@@ -1142,10 +1188,7 @@ unsafe fn translate_for_helper(
     if mode == 0 {
         // BARE mode: VA == PA.
         // PMP check.
-        match cpu
-            .pmp
-            .check_access(gva, size as u64, access, cpu.priv_level)
-        {
+        match cpu.pmp.check_access(gva, size as u64, access, eff_priv) {
             Ok(()) => {}
             Err(e) => {
                 cpu.mem_fault_cause = match e {
@@ -1169,7 +1212,7 @@ unsafe fn translate_for_helper(
         Some(gva)
     } else {
         // Sv39: full MMU translation.
-        let priv_level = cpu.priv_level;
+        let priv_level = eff_priv;
         let mstatus = cpu.csr.mstatus;
         let ram_end = cpu.ram_end;
         let guest_base = cpu.guest_base;
@@ -1263,11 +1306,28 @@ unsafe fn write_phys_sized(cpu: *mut RiscvCpu, pa: u64, val: u64, size: u32) {
             8 => (ptr as *mut u64).write_unaligned(val),
             _ => {}
         }
-        // Track dirty page for fence.i invalidation.
-        let page = pa >> 12;
-        let cpu_mut = &mut *cpu;
-        if !cpu_mut.dirty_pages.contains(&page) {
-            cpu_mut.dirty_pages.push(page);
+        // Track dirty page ONLY if writing to a code
+        // page (page that contains translated TBs).
+        // This matches QEMU's PAGE_WRITE_INV / notdirty
+        // mechanism: data-only pages are not tracked.
+        let cp = cpu_ref.code_pages_ptr;
+        if cp != 0 {
+            let page = pa >> 12;
+            let idx = (page as usize) / 8;
+            let bit = (page as usize) % 8;
+            let len = cpu_ref.code_pages_len as usize;
+            if idx < len {
+                use std::sync::atomic::AtomicU8;
+                let bp = cp as *const AtomicU8;
+                let v =
+                    (*bp.add(idx)).load(std::sync::atomic::Ordering::Relaxed);
+                if v & (1u8 << bit) != 0 {
+                    let cpu_mut = &mut *cpu;
+                    if !cpu_mut.dirty_pages.contains(&page) {
+                        cpu_mut.dirty_pages.push(page);
+                    }
+                }
+            }
         }
     } else {
         let asp = cpu_ref.as_ptr;
@@ -1294,7 +1354,8 @@ unsafe fn write_phys(cpu: *mut RiscvCpu, pa: u64, val: u64) {
 /// RAM or a mapped MMIO device.
 fn is_phys_backed(cpu: &RiscvCpu, pa: u64, size: u32) -> bool {
     if pa >= RAM_BASE
-        && pa.checked_add(size as u64)
+        && pa
+            .checked_add(size as u64)
             .is_some_and(|end| end <= cpu.ram_end)
     {
         return true;
@@ -1318,12 +1379,7 @@ pub unsafe extern "C" fn machina_mem_read(
     size: u32,
 ) -> u64 {
     let cpu = &mut *(env as *mut RiscvCpu);
-    match translate_for_helper(
-        cpu,
-        gva,
-        AccessType::Read,
-        size,
-    ) {
+    match translate_for_helper(cpu, gva, AccessType::Read, size) {
         Some(pa) => {
             if !is_phys_backed(cpu, pa, size) {
                 cpu.mem_fault_cause = 5;
@@ -1348,12 +1404,7 @@ pub unsafe extern "C" fn machina_mem_write(
     size: u32,
 ) {
     let cpu = &mut *(env as *mut RiscvCpu);
-    if let Some(pa) = translate_for_helper(
-        cpu,
-        gva,
-        AccessType::Write,
-        size,
-    ) {
+    if let Some(pa) = translate_for_helper(cpu, gva, AccessType::Write, size) {
         if !is_phys_backed(cpu, pa, size) {
             cpu.mem_fault_cause = 7;
             cpu.mem_fault_tval = gva;
@@ -1388,6 +1439,10 @@ unsafe fn cpu_loop_exit(cpu: &RiscvCpu) -> ! {
 /// Called from JIT code via gen_call instead of exiting
 /// the TB. On illegal CSR access, delivers the exception
 /// via raise_exception + longjmp back to exec loop.
+///
+/// # Safety
+/// Caller must ensure `env` is a valid pointer to a
+/// `RiscvCpu` instance.
 #[no_mangle]
 pub unsafe extern "C" fn machina_csr_op(
     env: *mut u8,
@@ -1413,16 +1468,11 @@ pub unsafe extern "C" fn machina_csr_op(
                 0
             }
         }
-        machina_guest_riscv::riscv::csr::CSR_INSTRET => {
-            cpu.csr.instret
-        }
+        machina_guest_riscv::riscv::csr::CSR_INSTRET => cpu.csr.instret,
         _ => match cpu.csr.read(csr_addr, priv_level) {
             Ok(v) => v,
             Err(_) => {
-                cpu.raise_exception(
-                    Exception::IllegalInstruction,
-                    0,
-                );
+                cpu.raise_exception(Exception::IllegalInstruction, 0);
                 cpu_loop_exit(cpu);
             }
         },
@@ -1441,33 +1491,22 @@ pub unsafe extern "C" fn machina_csr_op(
     };
 
     if do_write {
-        if cpu
-            .csr
-            .write(csr_addr, new_val, priv_level)
-            .is_err()
-        {
-            cpu.raise_exception(
-                Exception::IllegalInstruction,
-                0,
-            );
+        if cpu.csr.write(csr_addr, new_val, priv_level).is_err() {
+            cpu.raise_exception(Exception::IllegalInstruction, 0);
             cpu_loop_exit(cpu);
         }
-        let is_pmp =
-            (CSR_PMPCFG0..=CSR_PMPCFG0 + 3)
-                .contains(&csr_addr)
-                || (CSR_PMPADDR0
-                    ..CSR_PMPADDR0 + PMP_COUNT as u16)
-                    .contains(&csr_addr);
+        let is_pmp = (CSR_PMPCFG0..=CSR_PMPCFG0 + 3).contains(&csr_addr)
+            || (CSR_PMPADDR0..CSR_PMPADDR0 + PMP_COUNT as u16)
+                .contains(&csr_addr);
         if is_pmp {
-            cpu.pmp.sync_from_csr(
-                &cpu.csr.pmpcfg,
-                &cpu.csr.pmpaddr,
-            );
+            cpu.pmp.sync_from_csr(&cpu.csr.pmpcfg, &cpu.csr.pmpaddr);
         }
         if csr_addr == CSR_SATP {
             cpu.mmu.set_satp(new_val);
             cpu.mmu.flush();
             cpu.tb_flush_pending = true;
+        } else if should_flush_data_tlb_on_status_write(csr_addr) {
+            cpu.mmu.flush();
         }
     }
 

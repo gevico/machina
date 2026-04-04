@@ -43,10 +43,21 @@ pub const CSR_STVAL: u16 = 0x143;
 pub const CSR_SIP: u16 = 0x144;
 pub const CSR_SATP: u16 = 0x180;
 
+// Machine counter CSRs (read-write)
+pub const CSR_MCYCLE: u16 = 0xB00;
+pub const CSR_MINSTRET: u16 = 0xB02;
+
 // Counter CSRs (read-only)
 pub const CSR_CYCLE: u16 = 0xC00;
 pub const CSR_TIME: u16 = 0xC01;
 pub const CSR_INSTRET: u16 = 0xC02;
+
+// Debug/Trace trigger CSRs (stubs)
+pub const CSR_TSELECT: u16 = 0x7A0;
+pub const CSR_TDATA1: u16 = 0x7A1;
+pub const CSR_TDATA2: u16 = 0x7A2;
+pub const CSR_TDATA3: u16 = 0x7A3;
+pub const CSR_TCONTROL: u16 = 0x7A5;
 
 // Floating-point CSRs
 pub const CSR_FFLAGS: u16 = 0x001;
@@ -70,9 +81,11 @@ const MSTATUS_TVM: u64 = 1 << 20;
 const MSTATUS_TW: u64 = 1 << 21;
 const MSTATUS_TSR: u64 = 1 << 22;
 const MSTATUS_UXL: u64 = 3 << 32;
-#[allow(dead_code)]
-const MSTATUS_SXL: u64 = 3 << 34;
 const MSTATUS_SD: u64 = 1 << 63;
+
+/// UXL=2 (64-bit) and SXL=2 (64-bit) for RV64.
+const MSTATUS_UXL_64: u64 = 2 << 32;
+const MSTATUS_SXL_64: u64 = 2 << 34;
 
 /// Writable mask for mstatus (WARL).
 const MSTATUS_WRITE_MASK: u64 = MSTATUS_SIE
@@ -273,7 +286,10 @@ impl CsrFile {
         }
         match addr {
             // -- M-level --
-            CSR_MSTATUS => Ok(self.mstatus | self.sd_bit()),
+            CSR_MSTATUS => Ok(self.mstatus
+                | self.sd_bit()
+                | MSTATUS_UXL_64
+                | MSTATUS_SXL_64),
             CSR_MISA => Ok(self.misa),
             CSR_MEDELEG => Ok(self.medeleg),
             CSR_MIDELEG => Ok(self.mideleg),
@@ -304,7 +320,10 @@ impl CsrFile {
             }
 
             // -- S-level (aliased) --
-            CSR_SSTATUS => Ok((self.mstatus | self.sd_bit()) & SSTATUS_MASK),
+            CSR_SSTATUS => {
+                Ok((self.mstatus | self.sd_bit() | MSTATUS_UXL_64)
+                    & SSTATUS_MASK)
+            }
             CSR_SIE => Ok(self.mie & self.mideleg & SIP_MASK),
             CSR_STVEC => Ok(self.stvec),
             CSR_SCOUNTEREN => Ok(self.scounteren),
@@ -321,9 +340,15 @@ impl CsrFile {
             CSR_MARCHID => Ok(0),
             CSR_MIMPID => Ok(0),
 
-            // -- Counters (read-only) --
+            // -- Counters --
             CSR_CYCLE | CSR_TIME => Ok(self.cycle),
             CSR_INSTRET => Ok(self.instret),
+            CSR_MCYCLE => Ok(self.cycle),
+            CSR_MINSTRET => Ok(self.instret),
+
+            // -- Debug/Trace trigger stubs --
+            CSR_TSELECT | CSR_TDATA1 | CSR_TDATA2 | CSR_TDATA3
+            | CSR_TCONTROL => Ok(0),
 
             // -- FP --
             CSR_FFLAGS => Ok(self.fflags & FFLAGS_MASK),
@@ -495,6 +520,20 @@ impl CsrFile {
                 self.frm = (val >> 5) & FRM_MASK;
                 Ok(())
             }
+
+            // Machine counters (writable)
+            CSR_MCYCLE => {
+                self.cycle = val;
+                Ok(())
+            }
+            CSR_MINSTRET => {
+                self.instret = val;
+                Ok(())
+            }
+
+            // Debug/Trace trigger stubs (write-ignore)
+            CSR_TSELECT | CSR_TDATA1 | CSR_TDATA2 | CSR_TDATA3
+            | CSR_TCONTROL => Ok(()),
 
             // Machine HPM counters and event selectors:
             // silently ignore writes.

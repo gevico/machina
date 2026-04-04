@@ -1,0 +1,89 @@
+name: riscv-tests
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      riscv_tests_ref:
+        description: "Optional riscv-tests ref or commit"
+        required: false
+        default: ""
+        type: string
+
+env:
+  TOOLCHAIN_TAG: "2026.03.28"
+  TOOLCHAIN_ASSET: riscv64-glibc-ubuntu-24.04-gcc.tar.xz
+
+jobs:
+  riscv-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      RISCV_TESTS_REPO: https://github.com/riscv-software-src/riscv-tests.git
+      RISCV_TESTS_DIR: /tmp/riscv-tests
+      RISCV_TESTS_REF: ${{ inputs.riscv_tests_ref || '' }}
+      CARGO_TERM_COLOR: always
+    steps:
+      - name: Checkout machina
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Cache RISC-V toolchain
+        id: cache-riscv
+        uses: actions/cache@v4
+        with:
+          path: /opt/riscv
+          key: riscv-toolchain-${{ env.TOOLCHAIN_TAG }}
+
+      - name: Install RISC-V cross-compiler
+        if: steps.cache-riscv.outputs.cache-hit != 'true'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential git
+          curl -fsSL "https://github.com/riscv-collab/riscv-gnu-toolchain/releases/download/${TOOLCHAIN_TAG}/${TOOLCHAIN_ASSET}" \
+            | sudo tar -xJ -C /opt
+          ls /opt/riscv/bin/riscv64-unknown-linux-gnu-gcc
+
+      - name: Set toolchain PATH
+        run: |
+          echo "/opt/riscv/bin" >> "${GITHUB_PATH}"
+          echo "RISCV_PREFIX=riscv64-unknown-linux-gnu-" >> "${GITHUB_ENV}"
+
+      - name: Clone riscv-tests
+        run: |
+          git clone --recursive "${RISCV_TESTS_REPO}" "${RISCV_TESTS_DIR}"
+          if [ -n "${RISCV_TESTS_REF}" ]; then
+            git -C "${RISCV_TESTS_DIR}" fetch --depth 1 origin "${RISCV_TESTS_REF}"
+            git -C "${RISCV_TESTS_DIR}" checkout --detach FETCH_HEAD
+            git -C "${RISCV_TESTS_DIR}" submodule update --init --recursive
+          fi
+          git -C "${RISCV_TESTS_DIR}" rev-parse HEAD
+
+      - name: Build and run riscv-tests on machina
+        run: |
+          chmod +x ./scripts/run-riscv-tests.sh
+          ./scripts/run-riscv-tests.sh
+
+      - name: Publish summary
+        if: always()
+        run: |
+          if [ -f target/riscv-tests/summary.txt ]; then
+            cat target/riscv-tests/summary.txt >> "${GITHUB_STEP_SUMMARY}"
+          fi
+
+      - name: Upload riscv-tests artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: riscv-tests-results
+          path: |
+            target/riscv-tests/pass.txt
+            target/riscv-tests/fail.txt
+            target/riscv-tests/timeout.txt
+            target/riscv-tests/summary.txt

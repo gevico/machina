@@ -4,9 +4,13 @@
 // and delegates device-specific operations to a VirtioBlk
 // backend.
 
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
+use machina_core::address::GPA;
+use machina_hw_core::bus::{SysBus, SysBusDeviceState, SysBusError};
 use machina_hw_core::irq::IrqLine;
+use machina_memory::address_space::AddressSpace;
+use machina_memory::region::MemoryRegion;
 use machina_memory::region::MmioOps;
 
 use crate::block::VirtioBlk;
@@ -92,9 +96,7 @@ impl VirtioMmioState {
         self.irq.set(false);
     }
 
-    fn current_queue(
-        &mut self,
-    ) -> Option<&mut VirtQueue> {
+    fn current_queue(&mut self) -> Option<&mut VirtQueue> {
         let sel = self.queue_sel as usize;
         self.queues.get_mut(sel)
     }
@@ -112,12 +114,14 @@ impl VirtioMmioState {
         if self.status & 0x4 == 0 {
             return;
         }
-        let n = self.device.handle_queue(
-            q,
-            self.ram_ptr,
-            self.ram_base,
-            self.ram_size,
-        );
+        let n = unsafe {
+            self.device.handle_queue(
+                q,
+                self.ram_ptr,
+                self.ram_base,
+                self.ram_size,
+            )
+        };
         if n > 0 {
             self.interrupt_status |= 1;
             self.irq.set(true);
@@ -127,7 +131,8 @@ impl VirtioMmioState {
 
 /// VirtIO MMIO device wrapper implementing MmioOps.
 pub struct VirtioMmio {
-    state: Mutex<VirtioMmioState>,
+    device: SysBusDeviceState,
+    state: Arc<Mutex<VirtioMmioState>>,
 }
 
 impl VirtioMmio {
@@ -138,8 +143,24 @@ impl VirtioMmio {
         ram_base: u64,
         ram_size: u64,
     ) -> Self {
+        Self::new_named("virtio-mmio", device, irq, ram_ptr, ram_base, ram_size)
+    }
+
+    pub fn new_named(
+        local_id: &str,
+        device: VirtioBlk,
+        irq: IrqLine,
+        ram_ptr: *mut u8,
+        ram_base: u64,
+        ram_size: u64,
+    ) -> Self {
+        let mut state = SysBusDeviceState::new(local_id);
+        state
+            .register_irq(irq.clone())
+            .expect("virtio-mmio IRQ registration must succeed at creation");
         Self {
-            state: Mutex::new(VirtioMmioState {
+            device: state,
+            state: Arc::new(Mutex::new(VirtioMmioState {
                 device,
                 irq,
                 status: 0,
@@ -147,211 +168,252 @@ impl VirtioMmio {
                 driver_features_sel: 0,
                 driver_features: 0,
                 queue_sel: 0,
-                queues: std::array::from_fn(|_| {
-                    VirtQueue::new()
-                }),
+                queues: std::array::from_fn(|_| VirtQueue::new()),
                 interrupt_status: 0,
                 guest_page_size: 0,
                 ram_ptr,
                 ram_base,
                 ram_size,
-            }),
+            })),
         }
     }
-}
 
-impl MmioOps for VirtioMmio {
-    fn read(&self, offset: u64, size: u32) -> u64 {
-        let s = self.state.lock().unwrap();
+    pub fn attach_to_bus(&mut self, bus: &SysBus) -> Result<(), SysBusError> {
+        self.device.attach_to_bus(bus)
+    }
+
+    pub fn register_mmio(
+        &mut self,
+        region: MemoryRegion,
+        base: GPA,
+    ) -> Result<(), SysBusError> {
+        self.device.register_mmio(region, base)
+    }
+
+    pub fn make_mmio_region(&self, name: &str, size: u64) -> MemoryRegion {
+        MemoryRegion::io(
+            name,
+            size,
+            Box::new(VirtioMmioRegion(Arc::clone(&self.state))),
+        )
+    }
+
+    pub fn realize_onto(
+        &mut self,
+        bus: &mut SysBus,
+        address_space: &mut AddressSpace,
+    ) -> Result<(), SysBusError> {
+        self.device.realize_onto(bus, address_space)
+    }
+
+    pub fn unrealize_from(
+        &mut self,
+        bus: &mut SysBus,
+        address_space: &mut AddressSpace,
+    ) -> Result<(), SysBusError> {
+        self.reset_runtime();
+        self.device.unrealize_from(bus, address_space)
+    }
+
+    pub fn realized(&self) -> bool {
+        self.device.device().is_realized()
+    }
+
+    pub fn reset_runtime(&mut self) {
+        self.state.lock().unwrap().reset();
+    }
+
+    fn read_locked(state: &VirtioMmioState, offset: u64, size: u32) -> u64 {
         match offset {
             MAGIC_VALUE => VIRTIO_MAGIC as u64,
             VERSION => VIRTIO_VERSION as u64,
             DEVICE_ID => VIRTIO_DEVICE_BLK as u64,
             VENDOR_ID => VIRTIO_VENDOR as u64,
             DEVICE_FEATURES => {
-                let feat = s.device.features();
-                let sel = s.device_features_sel;
+                let feat = state.device.features();
+                let sel = state.device_features_sel;
                 if sel == 0 {
-                    (feat & 0xFFFF_FFFF) as u64
+                    feat & 0xFFFF_FFFF
                 } else {
-                    ((feat >> 32) & 0xFFFF_FFFF) as u64
+                    (feat >> 32) & 0xFFFF_FFFF
                 }
             }
-            QUEUE_NUM_MAX => {
-                MAX_QUEUE_SIZE as u64
-            }
+            QUEUE_NUM_MAX => MAX_QUEUE_SIZE as u64,
             QUEUE_READY => {
-                let sel = s.queue_sel as usize;
-                s.queues
+                let sel = state.queue_sel as usize;
+                state
+                    .queues
                     .get(sel)
-                    .map(|q| q.ready as u64)
+                    .map(|queue| queue.ready as u64)
                     .unwrap_or(0)
             }
-            INTERRUPT_STATUS => {
-                s.interrupt_status as u64
-            }
-            STATUS => s.status as u64,
+            INTERRUPT_STATUS => state.interrupt_status as u64,
+            STATUS => state.status as u64,
             CONFIG_GENERATION => 0,
-            // Legacy: queue PFN.
             LEGACY_QUEUE_PFN => {
-                let sel = s.queue_sel as usize;
-                s.queues
+                let sel = state.queue_sel as usize;
+                state
+                    .queues
                     .get(sel)
-                    .map(|q| {
-                        if s.guest_page_size > 0 {
-                            (q.desc_addr
-                                / s.guest_page_size
-                                    as u64)
-                                as u64
+                    .map(|queue| {
+                        if state.guest_page_size > 0 {
+                            queue.desc_addr / state.guest_page_size as u64
                         } else {
                             0
                         }
                     })
                     .unwrap_or(0)
             }
-            o if o >= CONFIG_BASE => {
-                s.device
-                    .config_read(o - CONFIG_BASE, size)
+            value if value >= CONFIG_BASE => {
+                state.device.config_read(value - CONFIG_BASE, size)
             }
             _ => 0,
         }
     }
 
-    fn write(&self, offset: u64, _size: u32, val: u64) {
-        let mut s = self.state.lock().unwrap();
+    fn write_locked(state: &mut VirtioMmioState, offset: u64, val: u64) {
         let v32 = val as u32;
         match offset {
             DEVICE_FEATURES_SEL => {
-                s.device_features_sel = v32;
+                state.device_features_sel = v32;
             }
             DRIVER_FEATURES => {
-                let sel = s.driver_features_sel;
+                let sel = state.driver_features_sel;
                 if sel == 0 {
-                    s.driver_features = (s.driver_features
+                    state.driver_features = (state.driver_features
                         & 0xFFFF_FFFF_0000_0000)
                         | (v32 as u64);
                 } else {
-                    s.driver_features = (s.driver_features
+                    state.driver_features = (state.driver_features
                         & 0x0000_0000_FFFF_FFFF)
                         | ((v32 as u64) << 32);
                 }
             }
             DRIVER_FEATURES_SEL => {
-                s.driver_features_sel = v32;
+                state.driver_features_sel = v32;
             }
             QUEUE_SEL => {
-                s.queue_sel = v32;
+                state.queue_sel = v32;
             }
             QUEUE_NUM => {
-                if let Some(q) = s.current_queue() {
-                    q.num = v32.min(MAX_QUEUE_SIZE);
+                if let Some(queue) = state.current_queue() {
+                    queue.num = v32.min(MAX_QUEUE_SIZE);
                 }
             }
             QUEUE_READY => {
-                if let Some(q) = s.current_queue() {
-                    q.ready = v32 != 0;
+                if let Some(queue) = state.current_queue() {
+                    queue.ready = v32 != 0;
                 }
             }
             QUEUE_NOTIFY => {
-                // val is the queue index to notify.
-                let saved_sel = s.queue_sel;
-                s.queue_sel = v32;
-                s.process_notify();
-                s.queue_sel = saved_sel;
+                let saved_sel = state.queue_sel;
+                state.queue_sel = v32;
+                state.process_notify();
+                state.queue_sel = saved_sel;
             }
             INTERRUPT_ACK => {
-                s.interrupt_status &= !v32;
-                if s.interrupt_status == 0 {
-                    s.irq.set(false);
+                state.interrupt_status &= !v32;
+                if state.interrupt_status == 0 {
+                    state.irq.set(false);
                 }
             }
             STATUS => {
                 if v32 == 0 {
-                    s.reset();
+                    state.reset();
                 } else {
-                    // Cumulative bit semantics.
-                    s.status = v32;
+                    state.status = v32;
                 }
             }
             QUEUE_DESC_LOW => {
-                if let Some(q) = s.current_queue() {
-                    q.desc_addr = (q.desc_addr
-                        & 0xFFFF_FFFF_0000_0000)
+                if let Some(queue) = state.current_queue() {
+                    queue.desc_addr = (queue.desc_addr & 0xFFFF_FFFF_0000_0000)
                         | (v32 as u64);
                 }
             }
             QUEUE_DESC_HIGH => {
-                if let Some(q) = s.current_queue() {
-                    q.desc_addr = (q.desc_addr
-                        & 0x0000_0000_FFFF_FFFF)
+                if let Some(queue) = state.current_queue() {
+                    queue.desc_addr = (queue.desc_addr & 0x0000_0000_FFFF_FFFF)
                         | ((v32 as u64) << 32);
                 }
             }
             QUEUE_AVAIL_LOW => {
-                if let Some(q) = s.current_queue() {
-                    q.avail_addr = (q.avail_addr
+                if let Some(queue) = state.current_queue() {
+                    queue.avail_addr = (queue.avail_addr
                         & 0xFFFF_FFFF_0000_0000)
                         | (v32 as u64);
                 }
             }
             QUEUE_AVAIL_HIGH => {
-                if let Some(q) = s.current_queue() {
-                    q.avail_addr = (q.avail_addr
+                if let Some(queue) = state.current_queue() {
+                    queue.avail_addr = (queue.avail_addr
                         & 0x0000_0000_FFFF_FFFF)
                         | ((v32 as u64) << 32);
                 }
             }
             QUEUE_USED_LOW => {
-                if let Some(q) = s.current_queue() {
-                    q.used_addr = (q.used_addr
-                        & 0xFFFF_FFFF_0000_0000)
+                if let Some(queue) = state.current_queue() {
+                    queue.used_addr = (queue.used_addr & 0xFFFF_FFFF_0000_0000)
                         | (v32 as u64);
                 }
             }
             QUEUE_USED_HIGH => {
-                if let Some(q) = s.current_queue() {
-                    q.used_addr = (q.used_addr
-                        & 0x0000_0000_FFFF_FFFF)
+                if let Some(queue) = state.current_queue() {
+                    queue.used_addr = (queue.used_addr & 0x0000_0000_FFFF_FFFF)
                         | ((v32 as u64) << 32);
                 }
             }
-            // Legacy compat.
             LEGACY_GUEST_PAGE_SIZE => {
-                s.guest_page_size = v32;
+                state.guest_page_size = v32;
             }
             LEGACY_QUEUE_PFN => {
-                let gps = s.guest_page_size;
-                let sel = s.queue_sel as usize;
-                if let Some(q) = s.queues.get_mut(sel) {
+                let gps = state.guest_page_size;
+                let sel = state.queue_sel as usize;
+                if let Some(queue) = state.queues.get_mut(sel) {
                     if v32 == 0 {
-                        q.reset();
+                        queue.reset();
                     } else if gps > 0 {
-                        let base =
-                            (v32 as u64) * (gps as u64);
-                        q.desc_addr = base;
+                        let base = (v32 as u64) * (gps as u64);
+                        queue.desc_addr = base;
                         let align = gps as u64;
-                        let avail_off =
-                            (q.num as u64) * 16;
-                        q.avail_addr = base + avail_off;
-                        let used_off = ((base
-                            + avail_off
-                            + 6
-                            + (q.num as u64) * 2
-                            + align
-                            - 1)
-                            / align)
-                            * align;
-                        q.used_addr = used_off;
-                        q.ready = true;
+                        let avail_off = (queue.num as u64) * 16;
+                        queue.avail_addr = base + avail_off;
+                        let used_off =
+                            (base + avail_off + 6 + (queue.num as u64) * 2)
+                                .div_ceil(align)
+                                * align;
+                        queue.used_addr = used_off;
+                        queue.ready = true;
                     }
                 }
             }
-            LEGACY_QUEUE_ALIGN => {
-                // Accept but ignore (alignment is
-                // implicit from guest_page_size).
-            }
+            LEGACY_QUEUE_ALIGN => {}
             _ => {}
         }
     }
 }
 
+impl MmioOps for VirtioMmio {
+    fn read(&self, offset: u64, size: u32) -> u64 {
+        let state = self.state.lock().unwrap();
+        Self::read_locked(&state, offset, size)
+    }
+
+    fn write(&self, offset: u64, _size: u32, val: u64) {
+        let mut state = self.state.lock().unwrap();
+        Self::write_locked(&mut state, offset, val);
+    }
+}
+
+struct VirtioMmioRegion(Arc<Mutex<VirtioMmioState>>);
+
+impl MmioOps for VirtioMmioRegion {
+    fn read(&self, offset: u64, size: u32) -> u64 {
+        let state = self.0.lock().unwrap();
+        VirtioMmio::read_locked(&state, offset, size)
+    }
+
+    fn write(&self, offset: u64, _size: u32, val: u64) {
+        let mut state = self.0.lock().unwrap();
+        VirtioMmio::write_locked(&mut state, offset, val);
+    }
+}

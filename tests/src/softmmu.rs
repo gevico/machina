@@ -509,7 +509,7 @@ fn test_mmio_sentinel_forces_slow_path() {
     assert!(mmu.tlb_lookup_code(mmio).is_none());
 }
 
-/// Sv39 write without D bit → TLB miss on write.
+/// Sv39 write without D bit sets D in hardware on TLB refill.
 #[test]
 fn test_sv39_write_without_dirty_bit() {
     let va = 0xC000_0000u64;
@@ -538,8 +538,7 @@ fn test_sv39_write_without_dirty_bit() {
         &mut mem_write,
     );
     assert!(r.is_ok());
-    // Write should still succeed because translate_miss
-    // handles A/D bit setting.
+    // Write should succeed because translate_miss updates D.
     let w = mmu.translate(
         va,
         AccessType::Write,
@@ -552,9 +551,8 @@ fn test_sv39_write_without_dirty_bit() {
     );
     assert!(
         w.is_ok(),
-        "write with A/D hardware update should \
-         succeed, got {:?}",
-        w,
+        "write with hardware A/D update should succeed, got {:?}",
+        w
     );
 }
 
@@ -709,7 +707,7 @@ fn test_fence_i_invalidates_dirty_page_tbs() {
     use std::sync::atomic::Ordering;
 
     let store = TbStore::new();
-    let idx = unsafe { store.alloc(0x8000_1000, 0, 0) };
+    let idx = unsafe { store.alloc(0x8000_1000, 0, 0).unwrap() };
     unsafe {
         store.get_mut(idx).phys_pc = 0x8000_1000;
     }

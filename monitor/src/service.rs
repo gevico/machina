@@ -2,9 +2,7 @@
 
 use std::sync::Arc;
 
-use machina_core::monitor::{
-    CpuSnapshot, MonitorState, VmState,
-};
+use machina_core::monitor::{CpuSnapshot, MonitorState, VmState};
 use machina_core::trace::EventFilter;
 
 use crate::symbol_table::SymbolTable;
@@ -34,8 +32,7 @@ impl MonitorService {
     pub fn query_status(&self) -> bool {
         // Only report paused when actually parked.
         let s = self.state.vm_state();
-        s == VmState::Running
-            || s == VmState::PauseRequested
+        s == VmState::Running || s == VmState::PauseRequested
     }
 
     pub fn stop(&self) {
@@ -59,24 +56,18 @@ impl MonitorService {
             pc: if running {
                 0
             } else {
-                snap.as_ref()
-                    .map(|s| s.pc)
-                    .unwrap_or(0)
+                snap.as_ref().map(|s| s.pc).unwrap_or(0)
             },
             halted: if running {
                 false
             } else {
-                snap.as_ref()
-                    .map(|s| s.halted)
-                    .unwrap_or(false)
+                snap.as_ref().map(|s| s.halted).unwrap_or(false)
             },
             arch: "riscv64".to_string(),
         }]
     }
 
-    pub fn take_snapshot(
-        &self,
-    ) -> Option<CpuSnapshot> {
+    pub fn take_snapshot(&self) -> Option<CpuSnapshot> {
         self.state.read_snapshot()
     }
 
@@ -91,19 +82,13 @@ impl MonitorService {
     }
 
     /// Attach symbol table (parsed from kernel ELF).
-    pub fn set_symbol_table(
-        &mut self,
-        st: Arc<SymbolTable>,
-    ) {
+    pub fn set_symbol_table(&mut self, st: Arc<SymbolTable>) {
         self.symbol_table = Some(st);
     }
 
     /// Start tracing with an optional filter string.
-    pub fn trace_start(
-        &mut self,
-        filter_str: &str,
-    ) -> Result<(), String> {
-        let filter = EventFilter::from_str(filter_str)?;
+    pub fn trace_start(&mut self, filter_str: &str) -> Result<(), String> {
+        let filter: EventFilter = filter_str.parse()?;
         for tc in &self.trace_collectors {
             tc.set_filter(filter);
             tc.enable();
@@ -146,11 +131,7 @@ impl MonitorService {
 
     /// Query trace status.
     pub fn trace_status(&self) -> (bool, u64) {
-        let total: u64 = self
-            .trace_collectors
-            .iter()
-            .map(|tc| tc.seq())
-            .sum();
+        let total: u64 = self.trace_collectors.iter().map(|tc| tc.seq()).sum();
         (self.trace_enabled, total)
     }
 

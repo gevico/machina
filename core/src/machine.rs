@@ -1,6 +1,8 @@
 /// Machine model trait and configuration.
 use std::path::PathBuf;
 
+use crate::mobject::MObjectState;
+
 // TODO: use GPA in Machine trait methods (e.g. ram_base)
 // use crate::address::GPA;
 
@@ -14,8 +16,31 @@ pub struct MachineOpts {
     pub drive: Option<PathBuf>,
 }
 
+pub struct MachineState {
+    object: MObjectState,
+}
+
+impl MachineState {
+    pub fn new_root(local_id: &str) -> Self {
+        Self {
+            object: MObjectState::new_root(local_id)
+                .expect("machine local_id must be valid"),
+        }
+    }
+
+    pub fn object(&self) -> &MObjectState {
+        &self.object
+    }
+
+    pub fn object_mut(&mut self) -> &mut MObjectState {
+        &mut self.object
+    }
+}
+
 pub trait Machine: Send + Sync {
     fn name(&self) -> &str;
+    fn machine_state(&self) -> &MachineState;
+    fn machine_state_mut(&mut self) -> &mut MachineState;
     fn init(
         &mut self,
         opts: &MachineOpts,

@@ -1,0 +1,8 @@
+[package]
+name = "machina-softfloat"
+version.workspace = true
+edition.workspace = true
+description = "Pure software IEEE 754 floating-point library"
+license.workspace = true
+
+[dependencies]

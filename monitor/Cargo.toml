@@ -1,9 +1,15 @@
 [package]
 name = "machina-monitor"
-version = "0.1.0"
-edition = "2021"
+version.workspace = true
+edition.workspace = true
+description = "Debug monitor interface with HMP and MMP protocol support"
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+keywords = ["riscv", "emulator", "monitor", "debug"]
+categories = ["emulators", "development-tools::debugging"]
 
 [dependencies]
-machina-core = { path = "../core" }
+machina-core = { workspace = true }
 object = "0.36"
-serde_json = "1"
+serde_json = { workspace = true }

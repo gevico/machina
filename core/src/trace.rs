@@ -1,5 +1,7 @@
 //! Kernel execution trace event types and abstractions.
 
+use core::str::FromStr;
+
 // ---------------------------------------------------------------------------
 // Event filter
 // ---------------------------------------------------------------------------
@@ -24,8 +26,17 @@ impl EventFilter {
         Self(0)
     }
 
-    /// Parse a comma-separated category string such as `"trap,sched"`.
-    pub fn from_str(s: &str) -> Result<Self, String> {
+    /// Whether this filter accepts the given category bit.
+    pub fn matches(&self, category: TraceCategory) -> bool {
+        self.0 & (1 << category as u8) != 0
+    }
+}
+
+/// Parse a comma-separated category string such as `"trap,sched"`.
+impl FromStr for EventFilter {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
         if s.trim().is_empty() {
             return Ok(Self::all());
         }
@@ -36,15 +47,12 @@ impl EventFilter {
                 "sched" => bits |= Self::SCHED,
                 "vm" => bits |= Self::VM,
                 "syscall" => bits |= Self::SYSCALL,
-                other => return Err(format!("unknown trace category: '{}'", other)),
+                other => {
+                    return Err(format!("unknown trace category: '{}'", other));
+                }
             }
         }
         Ok(Self(bits))
-    }
-
-    /// Whether this filter accepts the given category bit.
-    pub fn matches(&self, category: TraceCategory) -> bool {
-        self.0 & (1 << category as u8) != 0
     }
 }
 

@@ -225,8 +225,7 @@ fn test_fullsys_mmio_write_no_crash() {
     ]);
 
     let ram_sz = 1024 * 1024;
-    let (mut env, mut cpu, _as, ram) =
-        setup_fullsys(ram_sz, &main_code);
+    let (mut env, mut cpu, _as, ram) = setup_fullsys(ram_sz, &main_code);
 
     // Place handler at offset 0x800 within RAM.
     unsafe {

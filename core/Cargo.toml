@@ -1,4 +1,10 @@
 [package]
 name = "machina-core"
-version = "0.1.0"
-edition = "2021"
+version.workspace = true
+edition.workspace = true
+description = "Core IR definitions, CPU traits, and address types for the Machina RISC-V emulator"
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+keywords = ["riscv", "emulator", "jit", "ir"]
+categories = ["emulators"]

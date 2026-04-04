@@ -52,6 +52,7 @@ pub struct Context {
     /// encode the source TB in exit_tb return values for direct
     /// chaining.
     pub tb_idx: u32,
+    pub contains_atomic: bool,
 }
 
 impl Context {
@@ -69,6 +70,7 @@ impl Context {
             const_table: Default::default(),
             gen_insn_end_off: Vec::with_capacity(MAX_INSNS),
             tb_idx: 0,
+            contains_atomic: false,
         }
     }
 
@@ -99,6 +101,7 @@ impl Context {
         }
         self.gen_insn_end_off.clear();
         self.frame_alloc_end = self.frame_start;
+        self.contains_atomic = false;
     }
 
     // -- Temp allocation --
@@ -295,6 +298,7 @@ impl Context {
             const_table: Default::default(),
             gen_insn_end_off: Vec::new(),
             tb_idx: 0,
+            contains_atomic: false,
         }
     }
 }

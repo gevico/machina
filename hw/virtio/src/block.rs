@@ -34,12 +34,9 @@ unsafe impl Send for VirtioBlk {}
 impl VirtioBlk {
     /// Open a raw disk image and mmap it.
     pub fn open(path: &Path) -> io::Result<Self> {
-        let file = OpenOptions::new()
-            .read(true)
-            .write(true)
-            .open(path)?;
+        let file = OpenOptions::new().read(true).write(true).open(path)?;
         let len = file.metadata()?.len() as usize;
-        if len == 0 || len % SECTOR_SIZE as usize != 0 {
+        if len == 0 || !len.is_multiple_of(SECTOR_SIZE as usize) {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 format!(
@@ -55,9 +52,7 @@ impl VirtioBlk {
                 len,
                 libc::PROT_READ | libc::PROT_WRITE,
                 libc::MAP_SHARED,
-                std::os::unix::io::AsRawFd::as_raw_fd(
-                    &file,
-                ),
+                std::os::unix::io::AsRawFd::as_raw_fd(&file),
                 0,
             )
         };
@@ -83,11 +78,7 @@ impl VirtioBlk {
     }
 
     /// Read config space at `offset` with given `size`.
-    pub fn config_read(
-        &self,
-        offset: u64,
-        size: u32,
-    ) -> u64 {
+    pub fn config_read(&self, offset: u64, size: u32) -> u64 {
         match offset {
             // capacity (u64 at offset 0)
             0..=7 => {
@@ -97,39 +88,33 @@ impl VirtioBlk {
             // blk_size (u32 at offset 20)
             20..=23 => {
                 let bytes = 512u32.to_le_bytes();
-                read_sub(
-                    &bytes,
-                    (offset - 20) as usize,
-                    size,
-                )
+                read_sub(&bytes, (offset - 20) as usize, size)
             }
             _ => 0,
         }
     }
 
     /// Process all pending requests in the queue.
-    pub fn handle_queue(
+    ///
+    /// # Safety
+    /// Caller must ensure `ram` is valid for the range
+    /// [`ram_base`, `ram_base + ram_size`).
+    pub unsafe fn handle_queue(
         &self,
         queue: &mut VirtQueue,
         ram: *mut u8,
         ram_base: u64,
         ram_size: u64,
     ) -> u32 {
-        let avail_idx = queue.read_avail_idx(
-            ram, ram_base, ram_size,
-        );
+        let avail_idx = queue.read_avail_idx(ram, ram_base, ram_size);
         let mut processed = 0u32;
         let mut used_idx = {
             // Read current used.idx.
-            let off =
-                queue.used_addr + 2 - ram_base;
+            let off = queue.used_addr + 2 - ram_base;
             if off + 2 > ram_size {
                 return 0;
             }
-            unsafe {
-                (ram.add(off as usize) as *const u16)
-                    .read_unaligned()
-            }
+            unsafe { (ram.add(off as usize) as *const u16).read_unaligned() }
         };
 
         while queue.last_avail_idx != avail_idx {
@@ -139,12 +124,8 @@ impl VirtioBlk {
                 ram_base,
                 ram_size,
             );
-            let chain = queue.walk_chain(
-                desc_head, ram, ram_base, ram_size,
-            );
-            let written = self.process_request(
-                &chain, ram, ram_base, ram_size,
-            );
+            let chain = queue.walk_chain(desc_head, ram, ram_base, ram_size);
+            let written = self.process_request(&chain, ram, ram_base, ram_size);
             queue.write_used(
                 used_idx,
                 desc_head as u32,
@@ -154,15 +135,12 @@ impl VirtioBlk {
                 ram_size,
             );
             used_idx = used_idx.wrapping_add(1);
-            queue.last_avail_idx =
-                queue.last_avail_idx.wrapping_add(1);
+            queue.last_avail_idx = queue.last_avail_idx.wrapping_add(1);
             processed += 1;
         }
 
         // Update used.idx.
-        queue.write_used_idx(
-            used_idx, ram, ram_base, ram_size,
-        );
+        queue.write_used_idx(used_idx, ram, ram_base, ram_size);
         processed
     }
 
@@ -183,8 +161,7 @@ impl VirtioBlk {
         // First descriptor: header (16 bytes,
         // device-readable).
         let hdr = &chain[0];
-        let hdr_off = match hdr.addr.checked_sub(ram_base)
-        {
+        let hdr_off = match hdr.addr.checked_sub(ram_base) {
             Some(o) if o + 16 <= ram_size => o,
             _ => return 0,
         };
@@ -194,42 +171,35 @@ impl VirtioBlk {
         let (req_type, sector) = unsafe {
             let p = ram.add(hdr_off as usize);
             let t = (p as *const u32).read_unaligned();
-            let s = (p.add(8) as *const u64)
-                .read_unaligned();
+            let s = (p.add(8) as *const u64).read_unaligned();
             (t, s)
         };
 
         // Last descriptor: status (1 byte,
         // device-writable).
         let status_desc = &chain[chain.len() - 1];
-        let status_off = status_desc
-            .addr
-            .checked_sub(ram_base)
-            .unwrap_or(u64::MAX);
+        let status_off =
+            status_desc.addr.checked_sub(ram_base).unwrap_or(u64::MAX);
         let status_valid = status_off < ram_size
             && status_desc.flags & VRING_DESC_F_WRITE != 0;
 
         let mut total_written = 0u32;
         let status = match req_type {
-            VIRTIO_BLK_T_IN => {
-                self.do_read(
-                    sector,
-                    &chain[1..chain.len() - 1],
-                    ram,
-                    ram_base,
-                    ram_size,
-                    &mut total_written,
-                )
-            }
-            VIRTIO_BLK_T_OUT => {
-                self.do_write(
-                    sector,
-                    &chain[1..chain.len() - 1],
-                    ram,
-                    ram_base,
-                    ram_size,
-                )
-            }
+            VIRTIO_BLK_T_IN => self.do_read(
+                sector,
+                &chain[1..chain.len() - 1],
+                ram,
+                ram_base,
+                ram_size,
+                &mut total_written,
+            ),
+            VIRTIO_BLK_T_OUT => self.do_write(
+                sector,
+                &chain[1..chain.len() - 1],
+                ram,
+                ram_base,
+                ram_size,
+            ),
             _ => VIRTIO_BLK_S_UNSUPP,
         };
 
@@ -252,19 +222,15 @@ impl VirtioBlk {
         ram_size: u64,
         total_written: &mut u32,
     ) -> u8 {
-        let mut disk_off =
-            match sector.checked_mul(SECTOR_SIZE) {
-                Some(o) => o,
-                None => return VIRTIO_BLK_S_IOERR,
-            };
+        let mut disk_off = match sector.checked_mul(SECTOR_SIZE) {
+            Some(o) => o,
+            None => return VIRTIO_BLK_S_IOERR,
+        };
         for desc in data_descs {
             if desc.flags & VRING_DESC_F_WRITE == 0 {
                 continue;
             }
-            let guest_off = match desc
-                .addr
-                .checked_sub(ram_base)
-            {
+            let guest_off = match desc.addr.checked_sub(ram_base) {
                 Some(o) => o,
                 None => return VIRTIO_BLK_S_IOERR,
             };
@@ -272,9 +238,7 @@ impl VirtioBlk {
             if guest_off + len > ram_size {
                 return VIRTIO_BLK_S_IOERR;
             }
-            if disk_off + len
-                > self.capacity * SECTOR_SIZE
-            {
+            if disk_off + len > self.capacity * SECTOR_SIZE {
                 return VIRTIO_BLK_S_IOERR;
             }
             unsafe {
@@ -298,19 +262,15 @@ impl VirtioBlk {
         ram_base: u64,
         ram_size: u64,
     ) -> u8 {
-        let mut disk_off =
-            match sector.checked_mul(SECTOR_SIZE) {
-                Some(o) => o,
-                None => return VIRTIO_BLK_S_IOERR,
-            };
+        let mut disk_off = match sector.checked_mul(SECTOR_SIZE) {
+            Some(o) => o,
+            None => return VIRTIO_BLK_S_IOERR,
+        };
         for desc in data_descs {
             if desc.flags & VRING_DESC_F_WRITE != 0 {
                 continue;
             }
-            let guest_off = match desc
-                .addr
-                .checked_sub(ram_base)
-            {
+            let guest_off = match desc.addr.checked_sub(ram_base) {
                 Some(o) => o,
                 None => return VIRTIO_BLK_S_IOERR,
             };
@@ -318,9 +278,7 @@ impl VirtioBlk {
             if guest_off + len > ram_size {
                 return VIRTIO_BLK_S_IOERR;
             }
-            if disk_off + len
-                > self.capacity * SECTOR_SIZE
-            {
+            if disk_off + len > self.capacity * SECTOR_SIZE {
                 return VIRTIO_BLK_S_IOERR;
             }
             unsafe {
@@ -340,10 +298,7 @@ impl Drop for VirtioBlk {
     fn drop(&mut self) {
         if !self.data.is_null() {
             unsafe {
-                libc::munmap(
-                    self.data as *mut libc::c_void,
-                    self._mmap_len,
-                );
+                libc::munmap(self.data as *mut libc::c_void, self._mmap_len);
             }
         }
     }
@@ -361,21 +316,15 @@ fn read_sub(bytes: &[u8], off: usize, size: u32) -> u64 {
         }
         4 => {
             let mut b = [0u8; 4];
-            for i in 0..4 {
-                b[i] = bytes
-                    .get(off + i)
-                    .copied()
-                    .unwrap_or(0);
+            for (i, item) in b.iter_mut().enumerate() {
+                *item = bytes.get(off + i).copied().unwrap_or(0);
             }
             u32::from_le_bytes(b) as u64
         }
         8 => {
             let mut b = [0u8; 8];
-            for i in 0..8 {
-                b[i] = bytes
-                    .get(off + i)
-                    .copied()
-                    .unwrap_or(0);
+            for (i, item) in b.iter_mut().enumerate() {
+                *item = bytes.get(off + i).copied().unwrap_or(0);
             }
             u64::from_le_bytes(b)
         }

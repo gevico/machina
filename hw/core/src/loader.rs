@@ -49,9 +49,12 @@ const EI_MAG: [u8; 4] = [0x7f, b'E', b'L', b'F'];
 const ELFCLASS64: u8 = 2;
 const ET_EXEC: u16 = 2;
 const PT_LOAD: u32 = 1;
+const SHT_SYMTAB: u32 = 2;
 
 const ELF64_EHDR_SIZE: usize = 64;
 const ELF64_PHDR_SIZE: usize = 56;
+const ELF64_SHDR_SIZE: usize = 64;
+const ELF64_SYM_SIZE: usize = 24;
 
 /// Load an ELF-64 binary into the address space and return
 /// the entry point.
@@ -144,4 +147,109 @@ pub fn load_elf(data: &[u8], as_: &AddressSpace) -> Result<LoadInfo, String> {
         entry: GPA::new(e_entry),
         size: total_loaded,
     })
+}
+
+/// Find a named symbol in an ELF-64 binary and return its
+/// value (address).  Returns `None` if the symbol is not
+/// found or the ELF lacks a symbol table.
+pub fn elf_find_symbol(data: &[u8], name: &str) -> Option<u64> {
+    if data.len() < ELF64_EHDR_SIZE
+        || data[0..4] != EI_MAG
+        || data[4] != ELFCLASS64
+    {
+        return None;
+    }
+
+    let e_shoff = u64::from_le_bytes(data[40..48].try_into().unwrap()) as usize;
+    let e_shentsize =
+        u16::from_le_bytes(data[58..60].try_into().unwrap()) as usize;
+    let e_shnum = u16::from_le_bytes(data[60..62].try_into().unwrap()) as usize;
+
+    if e_shentsize < ELF64_SHDR_SIZE {
+        return None;
+    }
+
+    // Walk section headers to find SHT_SYMTAB.
+    for i in 0..e_shnum {
+        let sh = e_shoff + i * e_shentsize;
+        if sh + ELF64_SHDR_SIZE > data.len() {
+            break;
+        }
+
+        let sh_type =
+            u32::from_le_bytes(data[sh + 4..sh + 8].try_into().unwrap());
+        if sh_type != SHT_SYMTAB {
+            continue;
+        }
+
+        // ELF64_Shdr layout:
+        //   0: sh_name(4), 4: sh_type(4),
+        //   8: sh_flags(8), 16: sh_addr(8),
+        //  24: sh_offset(8), 32: sh_size(8),
+        //  40: sh_link(4), 44: sh_info(4),
+        //  48: sh_addralign(8), 56: sh_entsize(8)
+        let sym_offset =
+            u64::from_le_bytes(data[sh + 24..sh + 32].try_into().unwrap())
+                as usize;
+        let sym_size =
+            u64::from_le_bytes(data[sh + 32..sh + 40].try_into().unwrap())
+                as usize;
+        let strtab_idx =
+            u32::from_le_bytes(data[sh + 40..sh + 44].try_into().unwrap())
+                as usize;
+        let sym_entsize =
+            u64::from_le_bytes(data[sh + 56..sh + 64].try_into().unwrap())
+                as usize;
+        let ent = if sym_entsize >= ELF64_SYM_SIZE {
+            sym_entsize
+        } else {
+            ELF64_SYM_SIZE
+        };
+
+        // Locate the string table section.
+        let str_sh = e_shoff + strtab_idx * e_shentsize;
+        if str_sh + ELF64_SHDR_SIZE > data.len() {
+            return None;
+        }
+        let str_off = u64::from_le_bytes(
+            data[str_sh + 24..str_sh + 32].try_into().unwrap(),
+        ) as usize;
+        let str_size = u64::from_le_bytes(
+            data[str_sh + 32..str_sh + 40].try_into().unwrap(),
+        ) as usize;
+
+        // Iterate symbols.
+        let nsym = sym_size / ent;
+        for j in 0..nsym {
+            let s = sym_offset + j * ent;
+            if s + ELF64_SYM_SIZE > data.len() {
+                break;
+            }
+            // Elf64_Sym: st_name(4), st_info(1),
+            //   st_other(1), st_shndx(2), st_value(8),
+            //   st_size(8)
+            let st_name =
+                u32::from_le_bytes(data[s..s + 4].try_into().unwrap()) as usize;
+            let st_value =
+                u64::from_le_bytes(data[s + 8..s + 16].try_into().unwrap());
+
+            // Resolve name from strtab.
+            let name_start = str_off + st_name;
+            if name_start >= str_off + str_size {
+                continue;
+            }
+            let name_end = data[name_start..]
+                .iter()
+                .position(|&b| b == 0)
+                .map(|p| name_start + p)
+                .unwrap_or(data.len());
+            let sym_name =
+                std::str::from_utf8(&data[name_start..name_end]).unwrap_or("");
+            if sym_name == name {
+                return Some(st_value);
+            }
+        }
+    }
+
+    None
 }

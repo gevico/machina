@@ -1,3 +1,10 @@
+[workspace.package]
+version = "0.1.2"
+edition = "2021"
+license = "MIT"
+repository = "https://github.com/gevico/machina"
+authors = ["Chao Liu <chao.liu.zevorn@gmail.com>"]
+
 [workspace]
 members = [
     "core",
@@ -19,13 +26,46 @@ members = [
     "hw/virtio",
     "tests/mtest",
     "tools/difftest",
+    "softfloat",
 ]
 resolver = "2"
 
+[workspace.dependencies]
+# Internal crates — version required for crates.io publish
+machina-softfloat   = { version = "0.1.2", path = "softfloat" }
+machina-core        = { version = "0.1.2", path = "core" }
+machina-decode      = { version = "0.1.2", path = "decode" }
+machina-disas       = { version = "0.1.2", path = "disas" }
+machina-util        = { version = "0.1.2", path = "util" }
+machina-difftest    = { version = "0.1.2", path = "tools/difftest" }
+machina-memory      = { version = "0.1.2", path = "memory" }
+machina-hw-core     = { version = "0.1.2", path = "hw/core" }
+machina-monitor     = { version = "0.1.2", path = "monitor" }
+machina-accel       = { version = "0.1.2", path = "accel" }
+machina-guest-riscv = { version = "0.1.2", path = "guest/riscv" }
+machina-hw-char     = { version = "0.1.2", path = "hw/char" }
+machina-hw-intc     = { version = "0.1.2", path = "hw/intc" }
+machina-hw-virtio   = { version = "0.1.2", path = "hw/virtio" }
+machina-system      = { version = "0.1.2", path = "system" }
+machina-hw-riscv    = { version = "0.1.2", path = "hw/riscv" }
+machina-tests       = { version = "0.1.2", path = "tests" }
+machina-mtest       = { version = "0.1.2", path = "tests/mtest" }
+machina-irdump      = { version = "0.1.2", path = "tools/irdump" }
+machina-irbackend   = { version = "0.1.2", path = "tools/irbackend" }
+
+# External dependencies
+libc        = "0.2"
+serde_json  = "1"
+tempfile    = "3"
+
 [package]
-name = "machina"
-version = "0.1.0"
-edition = "2021"
+name = "machina-emu"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "CLI entry point for the Machina RISC-V full-system emulator"
 
 [[bin]]
 name = "machina"
@@ -36,12 +76,12 @@ default = ["embed-firmware"]
 embed-firmware = ["machina-hw-riscv/embed-firmware"]
 
 [dependencies]
-machina-core = { path = "core" }
-machina-accel = { path = "accel" }
-machina-memory = { path = "memory" }
-machina-hw-riscv = { path = "hw/riscv" }
-machina-system = { path = "system" }
-machina-difftest = { path = "tools/difftest" }
-machina-monitor = { path = "monitor" }
-machina-hw-core = { path = "hw/core" }
-libc = "0.2"
+machina-core     = { workspace = true }
+machina-accel    = { workspace = true }
+machina-memory   = { workspace = true }
+machina-hw-riscv = { workspace = true }
+machina-system   = { workspace = true }
+machina-difftest = { workspace = true }
+machina-monitor  = { workspace = true }
+machina-hw-core  = { workspace = true }
+libc             = { workspace = true }

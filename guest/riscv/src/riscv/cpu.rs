@@ -1,5 +1,6 @@
 //! RISC-V CPU state.
 
+use std::mem::offset_of;
 use std::sync::atomic::{AtomicBool, AtomicU32};
 
 use super::csr::{CsrFile, PrivLevel};
@@ -83,6 +84,13 @@ pub struct RiscvCpu {
     /// End of the RAM window (ram_base + ram_size).
     /// JIT helpers use this to decide RAM vs MMIO.
     pub ram_end: u64,
+    /// Pointer to TbStore's code-page bitmap (AtomicU8
+    /// array). Store helpers check this to detect writes
+    /// to pages containing translated code.  Zero means
+    /// not initialized (no code-page tracking).
+    pub code_pages_ptr: u64,
+    /// Length of the code-page bitmap in bytes.
+    pub code_pages_len: u64,
 
     /// Set by handle_priv_csr when satp is written.
     /// The exec loop checks this flag and performs
@@ -157,6 +165,10 @@ pub const UTVAL_OFFSET: i64 = UCAUSE_OFFSET + 8; // 608
 /// Byte offset of `uip`.
 pub const UIP_OFFSET: i64 = UTVAL_OFFSET + 8; // 616
 
+/// Byte offset of `csr.mstatus`.
+pub const MSTATUS_OFFSET: i64 =
+    (offset_of!(RiscvCpu, csr) + offset_of!(CsrFile, mstatus)) as i64;
+
 /// USTATUS FS bits mask.
 pub const USTATUS_FS_MASK: u64 = 0x0000_6000;
 /// USTATUS FS = Dirty.
@@ -191,6 +203,8 @@ impl RiscvCpu {
             mem_fault_tval: 0,
             as_ptr: 0,
             ram_end: 0,
+            code_pages_ptr: 0,
+            code_pages_len: 0,
             tb_flush_pending: false,
             last_phys_pc: 0,
             fault_pc: 0,

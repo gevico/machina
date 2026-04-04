@@ -48,6 +48,7 @@ pub struct TranslationBlock {
 
     // -- Per-TB lock for chaining state --
     pub jmp: Mutex<TbJmpState>,
+    pub contains_atomic: bool,
 
     // -- Atomic --
     pub invalid: AtomicBool,
@@ -97,6 +98,7 @@ impl TranslationBlock {
             phys_pc: 0,
             hash_next: None,
             jmp: Mutex::new(TbJmpState::new()),
+            contains_atomic: false,
             invalid: AtomicBool::new(false),
             exit_target: AtomicUsize::new(EXIT_TARGET_NONE),
         }

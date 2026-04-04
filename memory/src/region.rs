@@ -153,4 +153,17 @@ impl MemoryRegion {
         region.priority = priority;
         self.subregions.push(SubRegion { region, offset });
     }
+
+    /// Remove the first child region matching both `offset`
+    /// and `name`, returning the detached region when found.
+    pub fn remove_subregion(
+        &mut self,
+        offset: GPA,
+        name: &str,
+    ) -> Option<MemoryRegion> {
+        let index = self.subregions.iter().position(|subregion| {
+            subregion.offset == offset && subregion.region.name == name
+        })?;
+        Some(self.subregions.remove(index).region)
+    }
 }

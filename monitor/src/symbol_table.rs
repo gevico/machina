@@ -32,8 +32,9 @@ pub struct SymbolTable {
 impl SymbolTable {
     /// Parse all `STT_FUNC` symbols from raw ELF bytes.
     pub fn from_elf(data: &[u8]) -> Result<Self, String> {
-        let obj = object::read::elf::ElfFile64::<object::Endianness>::parse(data)
-            .map_err(|e| format!("ELF parse error: {}", e))?;
+        let obj =
+            object::read::elf::ElfFile64::<object::Endianness>::parse(data)
+                .map_err(|e| format!("ELF parse error: {}", e))?;
 
         let mut intervals: Vec<SymbolInterval> = Vec::new();
 
@@ -98,7 +99,7 @@ impl SymbolTable {
     /// Whether `pc` falls inside the `__switch` function range.
     pub fn in_switch_range(&self, pc: u64) -> bool {
         self.switch_range
-            .map_or(false, |(start, end)| pc >= start && pc < end)
+            .is_some_and(|(start, end)| pc >= start && pc < end)
     }
 }
 

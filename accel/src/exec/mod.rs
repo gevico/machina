@@ -104,6 +104,7 @@ pub struct SharedState<B: HostCodeGen> {
     pub code_gen_start: usize,
     /// Serializes code generation (IR + emit).
     pub translate_lock: Mutex<TranslateGuard>,
+    pub atomic_lock: Mutex<()>,
 }
 
 // SAFETY: code_buf emit is serialized by translate_lock;
@@ -177,6 +178,7 @@ impl<B: HostCodeGen> ExecEnv<B> {
             backend,
             code_gen_start,
             translate_lock: Mutex::new(TranslateGuard { ir_ctx }),
+            atomic_lock: Mutex::new(()),
         });
 
         Self {

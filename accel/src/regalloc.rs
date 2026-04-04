@@ -2,7 +2,7 @@ use crate::code_buffer::CodeBuffer;
 use crate::constraint::OpConstraint;
 use crate::ir::label::RelocKind;
 use crate::ir::temp::TempKind;
-use crate::ir::types::{RegSet, TempVal};
+use crate::ir::types::{RegSet, TempVal, Type};
 use crate::ir::{Context, OpFlags, Opcode, TempIdx, OPCODE_DEFS};
 use crate::HostCodeGen;
 
@@ -302,9 +302,24 @@ fn regalloc_call(
     }
 
     // 3. Load each input into its fixed register.
-    //    Emit MOV/LOAD/MOVI directly without changing
-    //    the source temp's state.
+    //    Two-pass approach to avoid source-target
+    //    overlap: resolve reg-to-reg moves first, then
+    //    load const/mem args so they cannot clobber a
+    //    live source register needed by a later move.
     let mut i_regs = [0u8; 10];
+    let mut pending_nonreg: Vec<(TempIdx, u8)> = Vec::new();
+
+    // Collect (src_reg, target_reg, type) for reg-
+    // sourced inputs. Load const/mem inputs first
+    // since they don't risk overwriting source regs.
+    struct RegMove {
+        _idx: usize,
+        src: u8,
+        dst: u8,
+        ty: Type,
+    }
+    let mut moves: Vec<RegMove> = Vec::new();
+
     for i in 0..nb_iargs {
         let tidx = op.args[nb_oargs + i];
         let target = ct.args[nb_oargs + i].regs.first().unwrap();
@@ -313,9 +328,80 @@ fn regalloc_call(
             TempVal::Reg => {
                 let src = temp.reg.unwrap();
                 if src != target {
-                    backend.tcg_out_mov(buf, temp.ty, target, src);
+                    moves.push(RegMove {
+                        _idx: i,
+                        src,
+                        dst: target,
+                        ty: temp.ty,
+                    });
                 }
+                // Already in target — nothing to do.
             }
+            TempVal::Const | TempVal::Mem | TempVal::Dead => {
+                pending_nonreg.push((tidx, target));
+            }
+        }
+        i_regs[i] = target;
+    }
+
+    // Resolve reg-to-reg moves with overlap detection.
+    // Use a topological-sort approach: emit moves
+    // whose dst is not any remaining src, then repeat.
+    // For cycles, break with R11 as temp register.
+    let mut done = vec![false; moves.len()];
+    let mut progress = true;
+    while progress {
+        progress = false;
+        for mi in 0..moves.len() {
+            if done[mi] {
+                continue;
+            }
+            let m = &moves[mi];
+            // Check if m.dst is a source of any
+            // remaining undone move.
+            let blocked = moves
+                .iter()
+                .enumerate()
+                .any(|(j, other)| !done[j] && j != mi && other.src == m.dst);
+            if !blocked {
+                backend.tcg_out_mov(buf, m.ty, m.dst, m.src);
+                done[mi] = true;
+                progress = true;
+            }
+        }
+    }
+    // Any remaining undone moves form a cycle.
+    // Break cycles using R11 as temporary.
+    for mi in 0..moves.len() {
+        if done[mi] {
+            continue;
+        }
+        let m = &moves[mi];
+        backend.tcg_out_mov(buf, m.ty, 11, m.src);
+        // Follow the cycle from m.dst.
+        let mut cur_dst = m.dst;
+        loop {
+            let next = moves
+                .iter()
+                .enumerate()
+                .find(|(j, other)| !done[*j] && other.src == cur_dst);
+            match next {
+                Some((j, _)) => {
+                    let n = &moves[j];
+                    backend.tcg_out_mov(buf, n.ty, n.dst, n.src);
+                    done[j] = true;
+                    cur_dst = n.dst;
+                }
+                None => break,
+            }
+        }
+        backend.tcg_out_mov(buf, m.ty, m.dst, 11);
+        done[mi] = true;
+    }
+
+    for (tidx, target) in pending_nonreg {
+        let temp = ctx.temp(tidx);
+        match temp.val_type {
             TempVal::Const => {
                 backend.tcg_out_movi(buf, temp.ty, target, temp.val);
             }
@@ -341,11 +427,10 @@ fn regalloc_call(
                 }
             }
             TempVal::Dead => {
-                // Dead input — load zero.
                 backend.tcg_out_movi(buf, temp.ty, target, 0);
             }
+            TempVal::Reg => unreachable!(),
         }
-        i_regs[i] = target;
     }
 
     // 4. Free dead inputs.
@@ -715,6 +800,11 @@ pub fn regalloc_and_codegen(
                 // Pass through to backend for fault_pc.
                 let ca: Vec<u32> = op.cargs().iter().map(|t| t.0).collect();
                 backend.tcg_out_op(buf, ctx, &op, &[], &[], &ca);
+                // Highwater check: if code buffer is
+                // nearly full, longjmp back to tb_gen_code
+                // which retries with fewer instructions
+                // (QEMU tcg_raise_tb_overflow equiv).
+                buf.check_highwater();
                 continue;
             }
 

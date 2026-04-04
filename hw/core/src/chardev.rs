@@ -4,6 +4,9 @@ use std::io::Write as _;
 use std::os::unix::net::UnixStream;
 use std::sync::{Arc, Mutex};
 
+/// Shared mutable byte callback.
+pub type ByteCb = Arc<Mutex<dyn FnMut(u8) + Send>>;
+
 /// Trait for character device backends.
 ///
 /// A chardev provides byte-level I/O used by serial ports,
@@ -21,7 +24,7 @@ pub trait Chardev: Send {
     /// Start delivering input bytes via the callback.
     /// The backend is responsible for how (thread, poll,
     /// etc.). The callback is invoked with each byte.
-    fn start_input(&mut self, _cb: Arc<Mutex<dyn FnMut(u8) + Send>>) {}
+    fn start_input(&mut self, _cb: ByteCb) {}
 }
 
 // -- CharFrontend ------------------------------------------------
@@ -45,7 +48,7 @@ impl CharFrontend {
 
     /// Start receiving input from the backend. The
     /// callback is invoked for each byte received.
-    pub fn start_input(&mut self, cb: Arc<Mutex<dyn FnMut(u8) + Send>>) {
+    pub fn start_input(&mut self, cb: ByteCb) {
         self.backend.start_input(cb);
     }
 }
@@ -79,9 +82,7 @@ pub struct StdioChardev {
     _thread: Option<std::thread::JoinHandle<()>>,
     saved_termios: Option<libc::termios>,
     /// Monitor line callback for Ctrl+A C toggle.
-    monitor_cb: Option<
-        Arc<Mutex<dyn FnMut(u8) + Send>>,
-    >,
+    monitor_cb: Option<ByteCb>,
     /// Quit callback for Ctrl+A X.
     quit_cb: Option<Arc<dyn Fn() + Send + Sync>>,
 }
@@ -92,9 +93,7 @@ impl StdioChardev {
     pub fn new() -> Self {
         let saved = enable_raw_mode();
         if saved.is_some() {
-            eprintln!(
-                "machina: Ctrl+A H for help"
-            );
+            eprintln!("machina: Ctrl+A H for help");
         }
         Self {
             _thread: None,
@@ -106,18 +105,12 @@ impl StdioChardev {
 
     /// Set a callback invoked when Ctrl+A X is pressed
     /// instead of calling process::exit().
-    pub fn set_quit_cb(
-        &mut self,
-        cb: Arc<dyn Fn() + Send + Sync>,
-    ) {
+    pub fn set_quit_cb(&mut self, cb: Arc<dyn Fn() + Send + Sync>) {
         self.quit_cb = Some(cb);
     }
 
     /// Set a monitor line callback for Ctrl+A C toggle.
-    pub fn set_monitor_cb(
-        &mut self,
-        cb: Arc<Mutex<dyn FnMut(u8) + Send>>,
-    ) {
+    pub fn set_monitor_cb(&mut self, cb: ByteCb) {
         self.monitor_cb = Some(cb);
     }
 }
@@ -151,10 +144,7 @@ impl Chardev for StdioChardev {
         false
     }
 
-    fn start_input(
-        &mut self,
-        cb: Arc<Mutex<dyn FnMut(u8) + Send>>,
-    ) {
+    fn start_input(&mut self, cb: ByteCb) {
         let quit_cb = self.quit_cb.clone();
         let mon_cb = self.monitor_cb.clone();
         let handle = std::thread::spawn(move || {
@@ -172,20 +162,15 @@ impl Chardev for StdioChardev {
                             escape = false;
                             match ch {
                                 b'x' | b'X' => {
-                                    if let Some(ref q)
-                                        = quit_cb
-                                    {
+                                    if let Some(ref q) = quit_cb {
                                         q();
                                     } else {
-                                        std::process::exit(
-                                            0,
-                                        );
+                                        std::process::exit(0);
                                     }
                                     break;
                                 }
                                 b'c' | b'C' => {
-                                    in_monitor =
-                                        !in_monitor;
+                                    in_monitor = !in_monitor;
                                     if in_monitor {
                                         eprint!(
                                             "\r\n\
@@ -217,23 +202,13 @@ impl Chardev for StdioChardev {
                                     );
                                 }
                                 _ => {
-                                    send_to(
-                                        &cb,
-                                        &mon_cb,
-                                        in_monitor,
-                                        ch,
-                                    );
+                                    send_to(&cb, &mon_cb, in_monitor, ch);
                                 }
                             }
                         } else if ch == ESCAPE_CHAR {
                             escape = true;
                         } else {
-                            send_to(
-                                &cb,
-                                &mon_cb,
-                                in_monitor,
-                                ch,
-                            );
+                            send_to(&cb, &mon_cb, in_monitor, ch);
                         }
                     }
                     Err(_) => break,
@@ -245,10 +220,8 @@ impl Chardev for StdioChardev {
 }
 
 fn send_to(
-    serial_cb: &Arc<Mutex<dyn FnMut(u8) + Send>>,
-    monitor_cb: &Option<
-        Arc<Mutex<dyn FnMut(u8) + Send>>,
-    >,
+    serial_cb: &ByteCb,
+    monitor_cb: &Option<ByteCb>,
     in_monitor: bool,
     ch: u8,
 ) {
@@ -266,9 +239,8 @@ fn send_to(
 }
 
 /// Global saved termios for atexit restore.
-static SAVED_TERMIOS: std::sync::Mutex<
-    Option<libc::termios>,
-> = std::sync::Mutex::new(None);
+static SAVED_TERMIOS: std::sync::Mutex<Option<libc::termios>> =
+    std::sync::Mutex::new(None);
 
 /// Restore terminal from raw mode. Safe to call
 /// multiple times or from signal handlers.
@@ -293,16 +265,11 @@ fn enable_raw_mode() -> Option<libc::termios> {
             *g = Some(orig);
         }
         let mut raw = orig;
-        raw.c_lflag &=
-            !(libc::ICANON | libc::ECHO | libc::ISIG);
-        raw.c_iflag &= !(libc::IXON
-            | libc::ICRNL
-            | libc::INLCR
-            | libc::IGNCR);
+        raw.c_lflag &= !(libc::ICANON | libc::ECHO | libc::ISIG);
+        raw.c_iflag &= !(libc::IXON | libc::ICRNL | libc::INLCR | libc::IGNCR);
         raw.c_cc[libc::VMIN] = 1;
         raw.c_cc[libc::VTIME] = 0;
-        if libc::tcsetattr(0, libc::TCSANOW, &raw) != 0
-        {
+        if libc::tcsetattr(0, libc::TCSANOW, &raw) != 0 {
             return None;
         }
         Some(orig)

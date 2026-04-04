@@ -11,11 +11,15 @@
 // and then asserts MTI via the IRQ line.
 
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+use machina_core::address::GPA;
 use machina_core::wfi::WfiWaker;
+use machina_hw_core::bus::{SysBus, SysBusDeviceState, SysBusError};
 use machina_hw_core::irq::IrqLine;
+use machina_memory::address_space::AddressSpace;
+use machina_memory::region::{MemoryRegion, MmioOps};
 
 const MSIP_BASE: u64 = 0x0000;
 const MTIMECMP_BASE: u64 = 0x4000;
@@ -29,6 +33,7 @@ struct TimerState {
 }
 
 pub struct Aclint {
+    state: SysBusDeviceState,
     num_harts: u32,
     epoch: Instant,
     mtime_base: u64,
@@ -42,6 +47,10 @@ pub struct Aclint {
 
 impl Aclint {
     pub fn new(num_harts: u32) -> Self {
+        Self::new_named("aclint", num_harts)
+    }
+
+    pub fn new_named(local_id: &str, num_harts: u32) -> Self {
         let n = num_harts as usize;
         let mut mti = Vec::with_capacity(n);
         let mut msi = Vec::with_capacity(n);
@@ -52,6 +61,7 @@ impl Aclint {
             gens.push(AtomicU64::new(0));
         }
         Self {
+            state: SysBusDeviceState::new(local_id),
             num_harts,
             epoch: Instant::now(),
             mtime_base: 0,
@@ -62,6 +72,43 @@ impl Aclint {
             wfi_waker: None,
             timer_state: Arc::new(TimerState { cancel_gen: gens }),
         }
+    }
+
+    pub fn attach_to_bus(&mut self, bus: &SysBus) -> Result<(), SysBusError> {
+        self.state.attach_to_bus(bus)
+    }
+
+    pub fn register_mmio(
+        &mut self,
+        region: MemoryRegion,
+        base: GPA,
+    ) -> Result<(), SysBusError> {
+        self.state.register_mmio(region, base)
+    }
+
+    pub fn realize_onto(
+        &mut self,
+        bus: &mut SysBus,
+        address_space: &mut AddressSpace,
+    ) -> Result<(), SysBusError> {
+        self.state.realize_onto(bus, address_space)
+    }
+
+    pub fn unrealize_from(
+        &mut self,
+        bus: &mut SysBus,
+        address_space: &mut AddressSpace,
+    ) -> Result<(), SysBusError> {
+        self.cancel_timers();
+        self.lower_outputs();
+        if let Some(ref wk) = self.wfi_waker {
+            wk.clear_deadline();
+        }
+        self.state.unrealize_from(bus, address_space)
+    }
+
+    pub fn realized(&self) -> bool {
+        self.state.device().is_realized()
     }
 
     pub fn connect_mti(&mut self, hart: u32, irq: IrqLine) {
@@ -78,6 +125,18 @@ impl Aclint {
 
     pub fn connect_wfi_waker(&mut self, wk: Arc<WfiWaker>) {
         self.wfi_waker = Some(wk);
+    }
+
+    pub fn reset_runtime(&mut self) {
+        self.cancel_timers();
+        self.epoch = Instant::now();
+        self.mtime_base = 0;
+        self.mtimecmp.fill(u64::MAX);
+        self.msip.fill(0);
+        self.lower_outputs();
+        if let Some(ref wk) = self.wfi_waker {
+            wk.clear_deadline();
+        }
     }
 
     /// Current mtime value derived from wall clock.
@@ -169,6 +228,21 @@ impl Aclint {
         }
     }
 
+    fn cancel_timers(&self) {
+        for gen in &self.timer_state.cancel_gen {
+            gen.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+
+    fn lower_outputs(&self) {
+        for line in self.mti_outputs.iter().flatten() {
+            line.lower();
+        }
+        for line in self.msi_outputs.iter().flatten() {
+            line.lower();
+        }
+    }
+
     pub fn read(&self, offset: u64, _size: u32) -> u64 {
         if offset == MTIME_OFFSET {
             return self.read_mtime();
@@ -191,9 +265,7 @@ impl Aclint {
     pub fn write(&mut self, offset: u64, _size: u32, val: u64) {
         if offset == MTIME_OFFSET {
             // Invalidate all pending timer threads.
-            for gen in &self.timer_state.cancel_gen {
-                gen.fetch_add(1, Ordering::SeqCst);
-            }
+            self.cancel_timers();
             self.mtime_base = val;
             self.epoch = Instant::now();
             self.update_mti();
@@ -227,5 +299,17 @@ impl Aclint {
                 line.set(v != 0);
             }
         }
+    }
+}
+
+pub struct AclintMmio(pub Arc<Mutex<Aclint>>);
+
+impl MmioOps for AclintMmio {
+    fn read(&self, offset: u64, size: u32) -> u64 {
+        self.0.lock().unwrap().read(offset, size)
+    }
+
+    fn write(&self, offset: u64, size: u32, val: u64) {
+        self.0.lock().unwrap().write(offset, size, val);
     }
 }

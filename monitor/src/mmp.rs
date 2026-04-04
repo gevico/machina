@@ -17,13 +17,8 @@ const GREETING: &str = r#"{"QMP":{"version":{"machina":{"major":0,"minor":1,"mic
 
 /// Run MMP server on a TCP listener. Blocks until
 /// quit is requested.
-pub fn run_tcp(
-    listener: TcpListener,
-    svc: Arc<Mutex<MonitorService>>,
-) {
-    listener
-        .set_nonblocking(false)
-        .expect("set_nonblocking");
+pub fn run_tcp(listener: TcpListener, svc: Arc<Mutex<MonitorService>>) {
+    listener.set_nonblocking(false).expect("set_nonblocking");
     for stream in listener.incoming() {
         match stream {
             Ok(s) => {
@@ -32,12 +27,7 @@ pub fn run_tcp(
                 }
             }
             Err(_) => {
-                if svc
-                    .lock()
-                    .unwrap()
-                    .state
-                    .is_quit_requested()
-                {
+                if svc.lock().unwrap().state.is_quit_requested() {
                     break;
                 }
             }
@@ -65,8 +55,7 @@ fn handle_connection(
             continue;
         }
 
-        let req: Value = match serde_json::from_str(&line)
-        {
+        let req: Value = match serde_json::from_str(&line) {
             Ok(v) => v,
             Err(e) => {
                 let err = json!({
@@ -84,10 +73,7 @@ fn handle_connection(
             }
         };
 
-        let cmd = req["execute"]
-            .as_str()
-            .unwrap_or("")
-            .to_string();
+        let cmd = req["execute"].as_str().unwrap_or("").to_string();
 
         if !caps_done && cmd != "qmp_capabilities" {
             let err = json!({

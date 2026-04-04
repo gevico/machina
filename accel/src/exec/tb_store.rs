@@ -1,5 +1,5 @@
 use std::cell::UnsafeCell;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
 use std::sync::Mutex;
 
 use crate::code_buffer::CodeBuffer;
@@ -7,15 +7,28 @@ use crate::ir::tb::{TranslationBlock, TB_HASH_SIZE};
 use crate::HostCodeGen;
 
 const MAX_TBS: usize = 65536;
+/// Max physical pages tracked (1M pages = 4 GB).
+const CODE_BITMAP_PAGES: usize = 1 << 20;
+const CODE_BITMAP_BYTES: usize = CODE_BITMAP_PAGES / 8;
 
 /// Thread-safe storage and hash-table lookup for TBs.
 ///
 /// Uses `UnsafeCell<Vec>` + `AtomicUsize` for lock-free reads
 /// and a `Mutex` for hash table mutations.
+///
+/// Also maintains a code-page bitmap: bit N is set when
+/// at least one valid TB has `phys_pc` on page N.  The
+/// store helper checks this bitmap (lock-free Relaxed
+/// load) to decide whether a write needs dirty tracking.
 pub struct TbStore {
     tbs: UnsafeCell<Vec<TranslationBlock>>,
     len: AtomicUsize,
     hash: Mutex<Vec<Option<usize>>>,
+    /// Per-page refcount (0 = no code, >0 = has code TBs).
+    /// Index = phys_page = phys_addr >> 12.  Stored as
+    /// AtomicU8 for lock-free read from store helpers.
+    /// Saturates at 255 (never decrements past that).
+    code_pages: Vec<AtomicU8>,
 }
 
 // SAFETY:
@@ -32,10 +45,15 @@ impl TbStore {
         // Ensure capacity is reserved upfront.
         assert!(v.capacity() >= MAX_TBS);
         v.clear();
+        let mut cp = Vec::with_capacity(CODE_BITMAP_BYTES);
+        for _ in 0..CODE_BITMAP_BYTES {
+            cp.push(AtomicU8::new(0));
+        }
         Self {
             tbs: UnsafeCell::new(v),
             len: AtomicUsize::new(0),
             hash: Mutex::new(vec![None; TB_HASH_SIZE]),
+            code_pages: cp,
         }
     }
 
@@ -44,23 +62,37 @@ impl TbStore {
     /// # Safety
     /// Caller must hold the translate_lock to ensure exclusive
     /// write access to the tbs Vec.
-    pub unsafe fn alloc(&self, pc: u64, flags: u32, cflags: u32) -> usize {
+    pub unsafe fn alloc(
+        &self,
+        pc: u64,
+        flags: u32,
+        cflags: u32,
+    ) -> Option<usize> {
         let tbs = &mut *self.tbs.get();
         let idx = tbs.len();
-        assert!(idx < MAX_TBS, "TB store full");
+        if idx >= MAX_TBS {
+            return None;
+        }
         tbs.push(TranslationBlock::new(pc, flags, cflags));
         // Publish the new length so readers can see it.
         self.len.store(tbs.len(), Ordering::Release);
-        idx
+        Some(idx)
     }
 
     /// Get a shared reference to a TB by index.
+    #[inline(always)]
     pub fn get(&self, idx: usize) -> &TranslationBlock {
-        let len = self.len.load(Ordering::Acquire);
-        assert!(idx < len, "TB index out of bounds");
-        // SAFETY: idx < len, and the entry at idx is fully
-        // initialized (written before len was published).
-        unsafe { &(&*self.tbs.get())[idx] }
+        debug_assert!(
+            idx < self.len.load(Ordering::Relaxed),
+            "TB index out of bounds"
+        );
+        // SAFETY: idx < len, and the entry at idx is
+        // fully initialized (written before len was
+        // published with Release ordering in alloc).
+        unsafe {
+            let tbs = &*self.tbs.get();
+            tbs.get_unchecked(idx)
+        }
     }
 
     /// Get a mutable reference to a TB by index.
@@ -211,6 +243,10 @@ impl TbStore {
                 self.invalidate(i, code_buf, backend);
             }
         }
+        // Clear code-page bitmap: no valid TBs remain.
+        for b in &self.code_pages {
+            b.store(0, Ordering::Relaxed);
+        }
     }
 
     /// Invalidate all TBs whose phys_pc falls within the
@@ -222,13 +258,20 @@ impl TbStore {
         backend: &B,
     ) {
         let len = self.len.load(Ordering::Acquire);
+        let mut any = false;
         for i in 0..len {
             let tb = self.get(i);
             if !tb.invalid.load(Ordering::Acquire)
                 && (tb.phys_pc >> 12) == phys_page
             {
                 self.invalidate(i, code_buf, backend);
+                any = true;
             }
+        }
+        // If we invalidated TBs, rebuild bitmap so the
+        // page is unmarked if no valid TBs remain on it.
+        if any {
+            self.rebuild_code_bitmap();
         }
     }
 
@@ -241,6 +284,61 @@ impl TbStore {
         tbs.clear();
         self.len.store(0, Ordering::Release);
         self.hash.lock().unwrap().fill(None);
+        for b in &self.code_pages {
+            b.store(0, Ordering::Relaxed);
+        }
+    }
+
+    // ── Code-page bitmap ──────────────────────────────
+
+    /// Mark a physical page as containing translated code.
+    /// Called after TB allocation with the TB's phys_pc.
+    pub fn mark_code_page(&self, phys_page: u64) {
+        let idx = (phys_page as usize) / 8;
+        let bit = (phys_page as usize) % 8;
+        if idx < self.code_pages.len() {
+            self.code_pages[idx].fetch_or(1u8 << bit, Ordering::Relaxed);
+        }
+    }
+
+    /// Check whether a physical page contains code TBs.
+    /// Lock-free; safe to call from store helpers.
+    pub fn is_code_page(&self, phys_page: u64) -> bool {
+        let idx = (phys_page as usize) / 8;
+        let bit = (phys_page as usize) % 8;
+        if idx < self.code_pages.len() {
+            self.code_pages[idx].load(Ordering::Relaxed) & (1u8 << bit) != 0
+        } else {
+            false
+        }
+    }
+
+    /// Rebuild the code-page bitmap from all valid TBs.
+    /// Called after invalidation to keep the bitmap
+    /// conservative (a page stays marked if any valid TB
+    /// remains on it).
+    fn rebuild_code_bitmap(&self) {
+        for b in &self.code_pages {
+            b.store(0, Ordering::Relaxed);
+        }
+        let len = self.len.load(Ordering::Acquire);
+        for i in 0..len {
+            let tb = self.get(i);
+            if !tb.invalid.load(Ordering::Acquire) {
+                self.mark_code_page(tb.phys_pc >> 12);
+            }
+        }
+    }
+
+    /// Return a raw pointer to the code_pages array for
+    /// embedding in the CPU struct (store helper lookup).
+    pub fn code_pages_ptr(&self) -> *const AtomicU8 {
+        self.code_pages.as_ptr()
+    }
+
+    /// Number of bytes in the code-page bitmap.
+    pub fn code_pages_len(&self) -> usize {
+        self.code_pages.len()
     }
 
     pub fn len(&self) -> usize {

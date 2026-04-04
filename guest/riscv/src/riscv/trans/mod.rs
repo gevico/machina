@@ -1,10 +1,23 @@
 //! RISC-V instruction translation — TCG IR generation.
 //!
-//! Follows QEMU's gen_xxx helper pattern: repetitive instruction
-//! translation logic is factored into gen_arith, gen_arith_imm,
-//! gen_shift_imm, gen_shiftw, etc., each parameterised by a
-//! `BinOp` function pointer.
+//! Follows QEMU's gen_xxx helper pattern: repetitive
+//! instruction translation logic is factored into
+//! gen_arith, gen_arith_imm, gen_shift_imm, gen_shiftw,
+//! etc., each parameterised by a `BinOp` function
+//! pointer.
+//!
+//! Gen helpers live in per-extension modules:
+//!   gen_common.rs  — GPR/FPR access, FP checks
+//!   gen_rvi.rs     — load/store, ALU, branch
+//!   gen_rvm.rs     — division / remainder
+//!   gen_rva.rs     — atomic (LR/SC/AMO)
+//!   gen_priv.rs    — CSR read/write
 
+mod gen_common;
+mod gen_priv;
+mod gen_rva;
+mod gen_rvi;
+mod gen_rvm;
 mod helpers;
 
 use super::ext::MisaExt;
@@ -39,10 +52,14 @@ macro_rules! require_cfg {
     };
 }
 
-// ── Decode trait implementation ────────────────────────────────
+// ── Decode trait implementation ──────────────────────
 
 impl Decode<Context> for RiscvDisasContext {
-    // ── RV32I: Upper immediate ─────────────────────────
+    // ============================================================
+    // RVI — Base Integer (RV32I + RV64I)
+    // ============================================================
+
+    // ── Upper immediate ──────────────────────────────
 
     fn trans_lui(&mut self, ir: &mut Context, a: &ArgsU) -> bool {
         let c = ir.new_const(Type::I64, a.imm as u64);
@@ -57,7 +74,7 @@ impl Decode<Context> for RiscvDisasContext {
         true
     }
 
-    // ── RV32I: Jumps ───────────────────────────────────
+    // ── Jumps ────────────────────────────────────────
 
     fn trans_jal(&mut self, ir: &mut Context, a: &ArgsJ) -> bool {
         let link = self.base.pc_next + self.cur_insn_len as u64;
@@ -78,7 +95,6 @@ impl Decode<Context> for RiscvDisasContext {
         let imm = ir.new_const(Type::I64, a.imm as u64);
         let tmp = ir.new_temp(Type::I64);
         ir.gen_add(Type::I64, tmp, src, imm);
-        // Clear bit 0
         let mask = ir.new_const(Type::I64, !1u64);
         ir.gen_and(Type::I64, tmp, tmp, mask);
         let c = ir.new_const(Type::I64, link);
@@ -89,7 +105,7 @@ impl Decode<Context> for RiscvDisasContext {
         true
     }
 
-    // ── RV32I: Branches ────────────────────────────────
+    // ── Branches ─────────────────────────────────────
 
     fn trans_beq(&mut self, ir: &mut Context, a: &ArgsB) -> bool {
         self.gen_branch(ir, a, Cond::Eq);
@@ -116,7 +132,7 @@ impl Decode<Context> for RiscvDisasContext {
         true
     }
 
-    // ── RV32I: Loads ──────────────────────────────────
+    // ── Loads ────────────────────────────────────────
 
     fn trans_lb(&mut self, ir: &mut Context, a: &ArgsI) -> bool {
         self.gen_load(ir, a, MemOp::sb())
@@ -134,7 +150,7 @@ impl Decode<Context> for RiscvDisasContext {
         self.gen_load(ir, a, MemOp::uw())
     }
 
-    // ── RV32I: Stores ─────────────────────────────────
+    // ── Stores ───────────────────────────────────────
 
     fn trans_sb(&mut self, ir: &mut Context, a: &ArgsS) -> bool {
         self.gen_store(ir, a, MemOp::ub())
@@ -146,7 +162,7 @@ impl Decode<Context> for RiscvDisasContext {
         self.gen_store(ir, a, MemOp::ul())
     }
 
-    // ── RV32I: ALU immediate ───────────────────────────
+    // ── ALU immediate ────────────────────────────────
 
     fn trans_addi(&mut self, ir: &mut Context, a: &ArgsI) -> bool {
         self.gen_arith_imm(ir, a, Context::gen_add)
@@ -167,7 +183,7 @@ impl Decode<Context> for RiscvDisasContext {
         self.gen_arith_imm(ir, a, Context::gen_and)
     }
 
-    // ── RV32I: Shift immediate ─────────────────────────
+    // ── Shift immediate ──────────────────────────────
 
     fn trans_slli(&mut self, ir: &mut Context, a: &ArgsShift) -> bool {
         self.gen_shift_imm(ir, a, Context::gen_shl)
@@ -179,7 +195,7 @@ impl Decode<Context> for RiscvDisasContext {
         self.gen_shift_imm(ir, a, Context::gen_sar)
     }
 
-    // ── RV32I: R-type ALU ──────────────────────────────
+    // ── R-type ALU ───────────────────────────────────
 
     fn trans_add(&mut self, ir: &mut Context, a: &ArgsR) -> bool {
         self.gen_arith(ir, a, Context::gen_add)
@@ -212,15 +228,14 @@ impl Decode<Context> for RiscvDisasContext {
         self.gen_arith(ir, a, Context::gen_and)
     }
 
-    // ── RV32I: Fence / System ──────────────────────────
+    // ── Fence / System ───────────────────────────────
 
-    fn trans_fence(&mut self, _ir: &mut Context, _a: &ArgsAutoFence) -> bool {
+    fn trans_fence(&mut self, _ir: &mut Context, a: &ArgsAutoFence) -> bool {
+        let _ = (a.pred, a.succ);
         true // NOP
     }
 
     fn trans_fence_i(&mut self, ir: &mut Context, _a: &ArgsEmpty) -> bool {
-        // Exit TB so the exec loop can invalidate TBs
-        // by physical page (fence.i semantics).
         let next = self.base.pc_next + self.cur_insn_len as u64;
         let pc = ir.new_const(Type::I64, next);
         ir.gen_mov(Type::I64, self.pc, pc);
@@ -229,78 +244,7 @@ impl Decode<Context> for RiscvDisasContext {
         true
     }
 
-    fn trans_ecall(&mut self, ir: &mut Context, _a: &ArgsEmpty) -> bool {
-        let pc = ir.new_const(Type::I64, self.base.pc_next);
-        ir.gen_mov(Type::I64, self.pc, pc);
-        ir.gen_exit_tb(EXCP_ECALL);
-        self.base.is_jmp = DisasJumpType::NoReturn;
-        true
-    }
-
-    fn trans_ebreak(&mut self, ir: &mut Context, _a: &ArgsEmpty) -> bool {
-        let pc = ir.new_const(Type::I64, self.base.pc_next);
-        ir.gen_mov(Type::I64, self.pc, pc);
-        ir.gen_exit_tb(EXCP_EBREAK);
-        self.base.is_jmp = DisasJumpType::NoReturn;
-        true
-    }
-
-    // ── Privileged: trap return / system ──────────────────
-
-    fn trans_mret(&mut self, ir: &mut Context, _a: &ArgsEmpty) -> bool {
-        // Write next-insn PC so exec loop doesn't re-execute
-        // this instruction after mret changes privilege.
-        let next = self.base.pc_next + self.cur_insn_len as u64;
-        let pc = ir.new_const(Type::I64, next);
-        ir.gen_mov(Type::I64, self.pc, pc);
-        ir.gen_exit_tb(EXCP_MRET);
-        self.base.is_jmp = DisasJumpType::NoReturn;
-        true
-    }
-
-    fn trans_sret(&mut self, ir: &mut Context, _a: &ArgsEmpty) -> bool {
-        let next = self.base.pc_next + self.cur_insn_len as u64;
-        let pc = ir.new_const(Type::I64, next);
-        ir.gen_mov(Type::I64, self.pc, pc);
-        ir.gen_exit_tb(EXCP_SRET);
-        self.base.is_jmp = DisasJumpType::NoReturn;
-        true
-    }
-
-    fn trans_wfi(&mut self, ir: &mut Context, _a: &ArgsEmpty) -> bool {
-        // Write next-insn PC so resume after WFI starts at
-        // the following instruction.
-        let next = self.base.pc_next + self.cur_insn_len as u64;
-        let pc = ir.new_const(Type::I64, next);
-        ir.gen_mov(Type::I64, self.pc, pc);
-        ir.gen_exit_tb(EXCP_WFI);
-        self.base.is_jmp = DisasJumpType::NoReturn;
-        true
-    }
-
-    fn trans_sfence_vma(&mut self, ir: &mut Context, _a: &ArgsR) -> bool {
-        // Always perform a full TLB flush (correct but
-        // conservative).  Exit TB with EXCP_SFENCE_VMA so the
-        // execution loop calls cpu.tlb_flush().
-        // No chaining: address translation may change.
-        //
-        // TODO: page-specific flush optimisation is deferred.
-        // When rs1 != x0 the spec allows flushing only the
-        // single page identified by rs1, which requires
-        // either (a) storing the rs1 value in a CPU-state
-        // scratch field before the exit and reading it in the
-        // exec loop, or (b) introducing a distinct exit code
-        // per flush granularity.  Until then the full-flush
-        // fallback is architecturally correct.
-        let next = self.base.pc_next + self.cur_insn_len as u64;
-        let pc = ir.new_const(Type::I64, next);
-        ir.gen_mov(Type::I64, self.pc, pc);
-        ir.gen_exit_tb(EXCP_SFENCE_VMA);
-        self.base.is_jmp = DisasJumpType::NoReturn;
-        true
-    }
-
-    // ── RV64I: Loads / Stores (need guest memory) ──────
+    // ── RV64I: Loads / Stores ────────────────────────
 
     fn trans_lwu(&mut self, ir: &mut Context, a: &ArgsI) -> bool {
         self.gen_load(ir, a, MemOp::ul())
@@ -312,7 +256,7 @@ impl Decode<Context> for RiscvDisasContext {
         self.gen_store(ir, a, MemOp::uq())
     }
 
-    // ── RV64I: W-suffix ALU ────────────────────────────
+    // ── RV64I: W-suffix ALU ──────────────────────────
 
     fn trans_addiw(&mut self, ir: &mut Context, a: &ArgsI) -> bool {
         self.gen_arith_imm_w(ir, a, Context::gen_add)
@@ -342,7 +286,251 @@ impl Decode<Context> for RiscvDisasContext {
         self.gen_shiftw(ir, a, Context::gen_sar)
     }
 
-    // ── RV32M: Multiply / Divide ────────────────────────
+    // ============================================================
+    // Privileged — ecall, ebreak, trap return, CSR
+    // ============================================================
+
+    fn trans_ecall(&mut self, ir: &mut Context, _a: &ArgsEmpty) -> bool {
+        let pc = ir.new_const(Type::I64, self.base.pc_next);
+        ir.gen_mov(Type::I64, self.pc, pc);
+        ir.gen_exit_tb(EXCP_ECALL);
+        self.base.is_jmp = DisasJumpType::NoReturn;
+        true
+    }
+
+    fn trans_ebreak(&mut self, ir: &mut Context, _a: &ArgsEmpty) -> bool {
+        let pc = ir.new_const(Type::I64, self.base.pc_next);
+        ir.gen_mov(Type::I64, self.pc, pc);
+        ir.gen_exit_tb(EXCP_EBREAK);
+        self.base.is_jmp = DisasJumpType::NoReturn;
+        true
+    }
+
+    fn trans_mret(&mut self, ir: &mut Context, _a: &ArgsEmpty) -> bool {
+        let next = self.base.pc_next + self.cur_insn_len as u64;
+        let pc = ir.new_const(Type::I64, next);
+        ir.gen_mov(Type::I64, self.pc, pc);
+        ir.gen_exit_tb(EXCP_MRET);
+        self.base.is_jmp = DisasJumpType::NoReturn;
+        true
+    }
+
+    fn trans_sret(&mut self, ir: &mut Context, _a: &ArgsEmpty) -> bool {
+        let next = self.base.pc_next + self.cur_insn_len as u64;
+        let pc = ir.new_const(Type::I64, next);
+        ir.gen_mov(Type::I64, self.pc, pc);
+        ir.gen_exit_tb(EXCP_SRET);
+        self.base.is_jmp = DisasJumpType::NoReturn;
+        true
+    }
+
+    fn trans_wfi(&mut self, ir: &mut Context, _a: &ArgsEmpty) -> bool {
+        let next = self.base.pc_next + self.cur_insn_len as u64;
+        let pc = ir.new_const(Type::I64, next);
+        ir.gen_mov(Type::I64, self.pc, pc);
+        ir.gen_exit_tb(EXCP_WFI);
+        self.base.is_jmp = DisasJumpType::NoReturn;
+        true
+    }
+
+    fn trans_sfence_vma(&mut self, ir: &mut Context, _a: &ArgsR) -> bool {
+        // Full TLB flush (conservative but correct).
+        // TODO: page-specific flush optimisation.
+        let next = self.base.pc_next + self.cur_insn_len as u64;
+        let pc = ir.new_const(Type::I64, next);
+        ir.gen_mov(Type::I64, self.pc, pc);
+        ir.gen_exit_tb(EXCP_SFENCE_VMA);
+        self.base.is_jmp = DisasJumpType::NoReturn;
+        true
+    }
+
+    // ── Zicsr: CSR access ────────────────────────────
+
+    fn trans_csrrw(&mut self, ir: &mut Context, a: &ArgsCsr) -> bool {
+        require_cfg!(self, ext_zicsr);
+        let old = match self.gen_csr_read(ir, a.csr) {
+            Some(v) => v,
+            None => {
+                if self.csr_helper != 0 {
+                    let rs1 = self.gpr_or_zero(ir, a.rs1);
+                    self.gen_csr_helper(ir, a.csr, rs1, 1, a.rd);
+                    return true;
+                }
+                self.gen_priv_csr_exit(ir);
+                return true;
+            }
+        };
+        let rs1 = self.gpr_or_zero(ir, a.rs1);
+        if !self.gen_csr_write(ir, a.csr, rs1) {
+            if self.csr_helper != 0 {
+                self.gen_csr_helper(ir, a.csr, rs1, 1, a.rd);
+                return true;
+            }
+            self.gen_priv_csr_exit(ir);
+            return true;
+        }
+        self.gen_set_gpr(ir, a.rd, old);
+        true
+    }
+
+    fn trans_csrrs(&mut self, ir: &mut Context, a: &ArgsCsr) -> bool {
+        require_cfg!(self, ext_zicsr);
+        let old = match self.gen_csr_read(ir, a.csr) {
+            Some(v) => v,
+            None => {
+                if self.csr_helper != 0 {
+                    let rs1 = self.gpr_or_zero(ir, a.rs1);
+                    self.gen_csr_helper(ir, a.csr, rs1, 2, a.rd);
+                    return true;
+                }
+                self.gen_priv_csr_exit(ir);
+                return true;
+            }
+        };
+        if a.rs1 != 0 {
+            let rs1 = self.gpr_or_zero(ir, a.rs1);
+            let new = ir.new_temp(Type::I64);
+            ir.gen_or(Type::I64, new, old, rs1);
+            if !self.gen_csr_write(ir, a.csr, new) {
+                if self.csr_helper != 0 {
+                    self.gen_csr_helper(ir, a.csr, rs1, 2, a.rd);
+                    return true;
+                }
+                self.gen_priv_csr_exit(ir);
+                return true;
+            }
+        }
+        self.gen_set_gpr(ir, a.rd, old);
+        true
+    }
+
+    fn trans_csrrc(&mut self, ir: &mut Context, a: &ArgsCsr) -> bool {
+        require_cfg!(self, ext_zicsr);
+        let old = match self.gen_csr_read(ir, a.csr) {
+            Some(v) => v,
+            None => {
+                if self.csr_helper != 0 {
+                    let rs1 = self.gpr_or_zero(ir, a.rs1);
+                    self.gen_csr_helper(ir, a.csr, rs1, 3, a.rd);
+                    return true;
+                }
+                self.gen_priv_csr_exit(ir);
+                return true;
+            }
+        };
+        if a.rs1 != 0 {
+            let rs1 = self.gpr_or_zero(ir, a.rs1);
+            let inv = ir.new_temp(Type::I64);
+            ir.gen_not(Type::I64, inv, rs1);
+            let new = ir.new_temp(Type::I64);
+            ir.gen_and(Type::I64, new, old, inv);
+            if !self.gen_csr_write(ir, a.csr, new) {
+                if self.csr_helper != 0 {
+                    self.gen_csr_helper(ir, a.csr, rs1, 3, a.rd);
+                    return true;
+                }
+                self.gen_priv_csr_exit(ir);
+                return true;
+            }
+        }
+        self.gen_set_gpr(ir, a.rd, old);
+        true
+    }
+
+    fn trans_csrrwi(&mut self, ir: &mut Context, a: &ArgsCsr) -> bool {
+        require_cfg!(self, ext_zicsr);
+        let old = match self.gen_csr_read(ir, a.csr) {
+            Some(v) => v,
+            None => {
+                if self.csr_helper != 0 {
+                    let z = ir.new_const(Type::I64, a.rs1 as u64);
+                    self.gen_csr_helper(ir, a.csr, z, 5, a.rd);
+                    return true;
+                }
+                self.gen_priv_csr_exit(ir);
+                return true;
+            }
+        };
+        let zimm = ir.new_const(Type::I64, a.rs1 as u64);
+        if !self.gen_csr_write(ir, a.csr, zimm) {
+            if self.csr_helper != 0 {
+                self.gen_csr_helper(ir, a.csr, zimm, 5, a.rd);
+                return true;
+            }
+            self.gen_priv_csr_exit(ir);
+            return true;
+        }
+        self.gen_set_gpr(ir, a.rd, old);
+        true
+    }
+
+    fn trans_csrrsi(&mut self, ir: &mut Context, a: &ArgsCsr) -> bool {
+        require_cfg!(self, ext_zicsr);
+        let old = match self.gen_csr_read(ir, a.csr) {
+            Some(v) => v,
+            None => {
+                if self.csr_helper != 0 {
+                    let z = ir.new_const(Type::I64, a.rs1 as u64);
+                    self.gen_csr_helper(ir, a.csr, z, 6, a.rd);
+                    return true;
+                }
+                self.gen_priv_csr_exit(ir);
+                return true;
+            }
+        };
+        if a.rs1 != 0 {
+            let zimm = ir.new_const(Type::I64, a.rs1 as u64);
+            let new = ir.new_temp(Type::I64);
+            ir.gen_or(Type::I64, new, old, zimm);
+            if !self.gen_csr_write(ir, a.csr, new) {
+                if self.csr_helper != 0 {
+                    self.gen_csr_helper(ir, a.csr, zimm, 6, a.rd);
+                    return true;
+                }
+                self.gen_priv_csr_exit(ir);
+                return true;
+            }
+        }
+        self.gen_set_gpr(ir, a.rd, old);
+        true
+    }
+
+    fn trans_csrrci(&mut self, ir: &mut Context, a: &ArgsCsr) -> bool {
+        require_cfg!(self, ext_zicsr);
+        let old = match self.gen_csr_read(ir, a.csr) {
+            Some(v) => v,
+            None => {
+                if self.csr_helper != 0 {
+                    let z = ir.new_const(Type::I64, a.rs1 as u64);
+                    self.gen_csr_helper(ir, a.csr, z, 7, a.rd);
+                    return true;
+                }
+                self.gen_priv_csr_exit(ir);
+                return true;
+            }
+        };
+        if a.rs1 != 0 {
+            let zimm = ir.new_const(Type::I64, a.rs1 as u64);
+            let inv = ir.new_temp(Type::I64);
+            ir.gen_not(Type::I64, inv, zimm);
+            let new = ir.new_temp(Type::I64);
+            ir.gen_and(Type::I64, new, old, inv);
+            if !self.gen_csr_write(ir, a.csr, new) {
+                if self.csr_helper != 0 {
+                    self.gen_csr_helper(ir, a.csr, zimm, 7, a.rd);
+                    return true;
+                }
+                self.gen_priv_csr_exit(ir);
+                return true;
+            }
+        }
+        self.gen_set_gpr(ir, a.rd, old);
+        true
+    }
+
+    // ============================================================
+    // RVM — Multiply / Divide
+    // ============================================================
 
     fn trans_mul(&mut self, ir: &mut Context, a: &ArgsR) -> bool {
         require_ext!(self, MisaExt::M);
@@ -367,7 +555,6 @@ impl Decode<Context> for RiscvDisasContext {
         let lo = ir.new_temp(Type::I64);
         let hi = ir.new_temp(Type::I64);
         ir.gen_mulu2(Type::I64, lo, hi, s1, s2);
-        // Correction: high -= (s1 >> 63) & s2
         let c63 = ir.new_const(Type::I64, 63);
         let sign = ir.new_temp(Type::I64);
         ir.gen_sar(Type::I64, sign, s1, c63);
@@ -409,8 +596,6 @@ impl Decode<Context> for RiscvDisasContext {
         self.gen_divu_remu(ir, a, true)
     }
 
-    // ── RV64M: W-suffix Mul / Div ─────────────────────
-
     fn trans_mulw(&mut self, ir: &mut Context, a: &ArgsR) -> bool {
         require_ext!(self, MisaExt::M);
         self.gen_arith_w(ir, a, Context::gen_mul)
@@ -436,7 +621,9 @@ impl Decode<Context> for RiscvDisasContext {
         self.gen_divu_remu_w(ir, a, true)
     }
 
-    // ── RV32A: Atomic ─────────────────────────────────────
+    // ============================================================
+    // RVA — Atomic (LR/SC/AMO)
+    // ============================================================
 
     fn trans_lr_w(&mut self, ir: &mut Context, a: &ArgsAtomic) -> bool {
         require_ext!(self, MisaExt::A);
@@ -483,8 +670,6 @@ impl Decode<Context> for RiscvDisasContext {
         self.gen_amo_minmax(ir, a, Cond::Gtu, MemOp::sl())
     }
 
-    // ── RV64A: Atomic ─────────────────────────────────────
-
     fn trans_lr_d(&mut self, ir: &mut Context, a: &ArgsAtomic) -> bool {
         require_ext!(self, MisaExt::A);
         self.gen_lr(ir, a, MemOp::uq())
@@ -530,227 +715,9 @@ impl Decode<Context> for RiscvDisasContext {
         self.gen_amo_minmax(ir, a, Cond::Gtu, MemOp::uq())
     }
 
-    // ── Zicsr: CSR access ─────────────────────────────
-
-    fn trans_csrrw(&mut self, ir: &mut Context, a: &ArgsCsr) -> bool {
-        require_cfg!(self, ext_zicsr);
-        let old = match self.gen_csr_read(ir, a.csr) {
-            Some(v) => v,
-            None => {
-                if self.csr_helper != 0 {
-                    let rs1 =
-                        self.gpr_or_zero(ir, a.rs1);
-                    self.gen_csr_helper(
-                        ir, a.csr, rs1, 1, a.rd,
-                    );
-                    return true;
-                }
-                self.gen_priv_csr_exit(ir);
-                return true;
-            }
-        };
-        let rs1 = self.gpr_or_zero(ir, a.rs1);
-        if !self.gen_csr_write(ir, a.csr, rs1) {
-            if self.csr_helper != 0 {
-                self.gen_csr_helper(
-                    ir, a.csr, rs1, 1, a.rd,
-                );
-                return true;
-            }
-            self.gen_priv_csr_exit(ir);
-            return true;
-        }
-        self.gen_set_gpr(ir, a.rd, old);
-        true
-    }
-
-    fn trans_csrrs(&mut self, ir: &mut Context, a: &ArgsCsr) -> bool {
-        require_cfg!(self, ext_zicsr);
-        let old = match self.gen_csr_read(ir, a.csr) {
-            Some(v) => v,
-            None => {
-                if self.csr_helper != 0 {
-                    let rs1 =
-                        self.gpr_or_zero(ir, a.rs1);
-                    self.gen_csr_helper(
-                        ir, a.csr, rs1, 2, a.rd,
-                    );
-                    return true;
-                }
-                self.gen_priv_csr_exit(ir);
-                return true;
-            }
-        };
-        if a.rs1 != 0 {
-            let rs1 = self.gpr_or_zero(ir, a.rs1);
-            let new = ir.new_temp(Type::I64);
-            ir.gen_or(Type::I64, new, old, rs1);
-            if !self.gen_csr_write(ir, a.csr, new) {
-                if self.csr_helper != 0 {
-                    self.gen_csr_helper(
-                        ir, a.csr, rs1, 2, a.rd,
-                    );
-                    return true;
-                }
-                self.gen_priv_csr_exit(ir);
-                return true;
-            }
-        }
-        self.gen_set_gpr(ir, a.rd, old);
-        true
-    }
-
-    fn trans_csrrc(&mut self, ir: &mut Context, a: &ArgsCsr) -> bool {
-        require_cfg!(self, ext_zicsr);
-        let old = match self.gen_csr_read(ir, a.csr) {
-            Some(v) => v,
-            None => {
-                if self.csr_helper != 0 {
-                    let rs1 =
-                        self.gpr_or_zero(ir, a.rs1);
-                    self.gen_csr_helper(
-                        ir, a.csr, rs1, 3, a.rd,
-                    );
-                    return true;
-                }
-                self.gen_priv_csr_exit(ir);
-                return true;
-            }
-        };
-        if a.rs1 != 0 {
-            let rs1 = self.gpr_or_zero(ir, a.rs1);
-            let inv = ir.new_temp(Type::I64);
-            ir.gen_not(Type::I64, inv, rs1);
-            let new = ir.new_temp(Type::I64);
-            ir.gen_and(Type::I64, new, old, inv);
-            if !self.gen_csr_write(ir, a.csr, new) {
-                if self.csr_helper != 0 {
-                    self.gen_csr_helper(
-                        ir, a.csr, rs1, 3, a.rd,
-                    );
-                    return true;
-                }
-                self.gen_priv_csr_exit(ir);
-                return true;
-            }
-        }
-        self.gen_set_gpr(ir, a.rd, old);
-        true
-    }
-
-    fn trans_csrrwi(&mut self, ir: &mut Context, a: &ArgsCsr) -> bool {
-        require_cfg!(self, ext_zicsr);
-        let old = match self.gen_csr_read(ir, a.csr) {
-            Some(v) => v,
-            None => {
-                if self.csr_helper != 0 {
-                    let z = ir.new_const(
-                        Type::I64,
-                        a.rs1 as u64,
-                    );
-                    self.gen_csr_helper(
-                        ir, a.csr, z, 5, a.rd,
-                    );
-                    return true;
-                }
-                self.gen_priv_csr_exit(ir);
-                return true;
-            }
-        };
-        let zimm = ir.new_const(Type::I64, a.rs1 as u64);
-        if !self.gen_csr_write(ir, a.csr, zimm) {
-            if self.csr_helper != 0 {
-                self.gen_csr_helper(
-                    ir, a.csr, zimm, 5, a.rd,
-                );
-                return true;
-            }
-            self.gen_priv_csr_exit(ir);
-            return true;
-        }
-        self.gen_set_gpr(ir, a.rd, old);
-        true
-    }
-
-    fn trans_csrrsi(&mut self, ir: &mut Context, a: &ArgsCsr) -> bool {
-        require_cfg!(self, ext_zicsr);
-        let old = match self.gen_csr_read(ir, a.csr) {
-            Some(v) => v,
-            None => {
-                if self.csr_helper != 0 {
-                    let z = ir.new_const(
-                        Type::I64,
-                        a.rs1 as u64,
-                    );
-                    self.gen_csr_helper(
-                        ir, a.csr, z, 6, a.rd,
-                    );
-                    return true;
-                }
-                self.gen_priv_csr_exit(ir);
-                return true;
-            }
-        };
-        if a.rs1 != 0 {
-            let zimm = ir.new_const(Type::I64, a.rs1 as u64);
-            let new = ir.new_temp(Type::I64);
-            ir.gen_or(Type::I64, new, old, zimm);
-            if !self.gen_csr_write(ir, a.csr, new) {
-                if self.csr_helper != 0 {
-                    self.gen_csr_helper(
-                        ir, a.csr, zimm, 6, a.rd,
-                    );
-                    return true;
-                }
-                self.gen_priv_csr_exit(ir);
-                return true;
-            }
-        }
-        self.gen_set_gpr(ir, a.rd, old);
-        true
-    }
-
-    fn trans_csrrci(&mut self, ir: &mut Context, a: &ArgsCsr) -> bool {
-        require_cfg!(self, ext_zicsr);
-        let old = match self.gen_csr_read(ir, a.csr) {
-            Some(v) => v,
-            None => {
-                if self.csr_helper != 0 {
-                    let z = ir.new_const(
-                        Type::I64,
-                        a.rs1 as u64,
-                    );
-                    self.gen_csr_helper(
-                        ir, a.csr, z, 7, a.rd,
-                    );
-                    return true;
-                }
-                self.gen_priv_csr_exit(ir);
-                return true;
-            }
-        };
-        if a.rs1 != 0 {
-            let zimm = ir.new_const(Type::I64, a.rs1 as u64);
-            let inv = ir.new_temp(Type::I64);
-            ir.gen_not(Type::I64, inv, zimm);
-            let new = ir.new_temp(Type::I64);
-            ir.gen_and(Type::I64, new, old, inv);
-            if !self.gen_csr_write(ir, a.csr, new) {
-                if self.csr_helper != 0 {
-                    self.gen_csr_helper(
-                        ir, a.csr, zimm, 7, a.rd,
-                    );
-                    return true;
-                }
-                self.gen_priv_csr_exit(ir);
-                return true;
-            }
-        }
-        self.gen_set_gpr(ir, a.rd, old);
-        true
-    }
-
-    // ── RV32F/RV64F: FP Loads/Stores ──────────────────
+    // ============================================================
+    // RVF — Single-Precision Floating-Point
+    // ============================================================
 
     fn trans_flw(&mut self, ir: &mut Context, a: &ArgsI) -> bool {
         require_ext!(self, MisaExt::F);
@@ -760,16 +727,6 @@ impl Decode<Context> for RiscvDisasContext {
         require_ext!(self, MisaExt::F);
         self.gen_fp_store(ir, a, MemOp::ul(), true)
     }
-    fn trans_fld(&mut self, ir: &mut Context, a: &ArgsI) -> bool {
-        require_ext!(self, MisaExt::D);
-        self.gen_fp_load(ir, a, MemOp::uq(), false)
-    }
-    fn trans_fsd(&mut self, ir: &mut Context, a: &ArgsS) -> bool {
-        require_ext!(self, MisaExt::D);
-        self.gen_fp_store(ir, a, MemOp::uq(), false)
-    }
-
-    // ── RV32F: FMA ────────────────────────────────────
 
     fn trans_fmadd_s(&mut self, ir: &mut Context, a: &ArgsR4Rm) -> bool {
         require_ext!(self, MisaExt::F);
@@ -835,8 +792,6 @@ impl Decode<Context> for RiscvDisasContext {
         self.fpr_store(ir, a.rd, res);
         true
     }
-
-    // ── RV32F: Arithmetic ─────────────────────────────
 
     fn trans_fadd_s(&mut self, ir: &mut Context, a: &ArgsRRm) -> bool {
         require_ext!(self, MisaExt::F);
@@ -1023,7 +978,6 @@ impl Decode<Context> for RiscvDisasContext {
         self.gen_set_gpr(ir, a.rd, res);
         true
     }
-
     fn trans_fclass_s(&mut self, ir: &mut Context, a: &ArgsR2) -> bool {
         require_ext!(self, MisaExt::F);
         self.gen_fp_check(ir);
@@ -1036,8 +990,6 @@ impl Decode<Context> for RiscvDisasContext {
         self.gen_set_gpr(ir, a.rd, res);
         true
     }
-
-    // ── RV32F: Conversions ─────────────────────────────
 
     fn trans_fcvt_w_s(&mut self, ir: &mut Context, a: &ArgsR2Rm) -> bool {
         require_ext!(self, MisaExt::F);
@@ -1119,8 +1071,6 @@ impl Decode<Context> for RiscvDisasContext {
         true
     }
 
-    // ── RV64F additions ───────────────────────────────
-
     fn trans_fcvt_l_s(&mut self, ir: &mut Context, a: &ArgsR2Rm) -> bool {
         require_ext!(self, MisaExt::F);
         self.gen_fp_check(ir);
@@ -1176,7 +1126,18 @@ impl Decode<Context> for RiscvDisasContext {
         true
     }
 
-    // ── RV32D/RV64D: FMA ──────────────────────────────
+    // ============================================================
+    // RVD — Double-Precision Floating-Point
+    // ============================================================
+
+    fn trans_fld(&mut self, ir: &mut Context, a: &ArgsI) -> bool {
+        require_ext!(self, MisaExt::D);
+        self.gen_fp_load(ir, a, MemOp::uq(), false)
+    }
+    fn trans_fsd(&mut self, ir: &mut Context, a: &ArgsS) -> bool {
+        require_ext!(self, MisaExt::D);
+        self.gen_fp_store(ir, a, MemOp::uq(), false)
+    }
 
     fn trans_fmadd_d(&mut self, ir: &mut Context, a: &ArgsR4Rm) -> bool {
         require_ext!(self, MisaExt::D);
@@ -1242,8 +1203,6 @@ impl Decode<Context> for RiscvDisasContext {
         self.fpr_store(ir, a.rd, res);
         true
     }
-
-    // ── RV32D: Arithmetic ─────────────────────────────
 
     fn trans_fadd_d(&mut self, ir: &mut Context, a: &ArgsRRm) -> bool {
         require_ext!(self, MisaExt::D);
@@ -1430,7 +1389,6 @@ impl Decode<Context> for RiscvDisasContext {
         self.gen_set_gpr(ir, a.rd, res);
         true
     }
-
     fn trans_fclass_d(&mut self, ir: &mut Context, a: &ArgsR2) -> bool {
         require_ext!(self, MisaExt::D);
         self.gen_fp_check(ir);
@@ -1443,8 +1401,6 @@ impl Decode<Context> for RiscvDisasContext {
         self.gen_set_gpr(ir, a.rd, res);
         true
     }
-
-    // ── RV32D: Conversions ─────────────────────────────
 
     fn trans_fcvt_s_d(&mut self, ir: &mut Context, a: &ArgsR2Rm) -> bool {
         require_ext!(self, MisaExt::D);
@@ -1529,8 +1485,6 @@ impl Decode<Context> for RiscvDisasContext {
         true
     }
 
-    // ── RV64D additions ───────────────────────────────
-
     fn trans_fcvt_l_d(&mut self, ir: &mut Context, a: &ArgsR2Rm) -> bool {
         require_ext!(self, MisaExt::D);
         self.gen_fp_check(ir);
@@ -1603,10 +1557,10 @@ impl Decode<Context> for RiscvDisasContext {
     }
 }
 
-// ── Decode16 trait implementation (RVC) ───────────────────────
+// ── Decode16 trait implementation (RVC) ─────────────
 //
-// Most compressed instructions map directly to their 32-bit
-// equivalents, so we delegate to the Decode impl.
+// Most compressed instructions map directly to their
+// 32-bit equivalents, so we delegate to the Decode impl.
 
 impl Decode16<Context> for RiscvDisasContext {
     fn trans_illegal(&mut self, _ir: &mut Context, _a: &ArgsEmpty) -> bool {

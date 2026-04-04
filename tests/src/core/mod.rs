@@ -1,7 +1,10 @@
 mod context;
 mod label;
+mod mdev;
+mod mom;
 mod op;
 mod opcode;
+mod property;
 mod regset;
 mod serialize;
 mod tb;

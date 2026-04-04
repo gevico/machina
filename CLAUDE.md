@@ -6,16 +6,22 @@
 
 Machina 是一个用 Rust 编写的模块化 RISC-V 模拟器，基于 JIT 动态二进制翻译引擎。JIT 核心源自对 QEMU TCG（Tiny Code Generator）的重新实现，参考实现位于 `~/qemu/tcg/`、`~/qemu/accel/tcg/`、`~/qemu/include/tcg/` 和 `~/qemu/hw/`。
 
-**当前状态快照（2026-03-30）**：
+**当前状态快照（2026-04-02）**：
 
 - **JIT 引擎**：完整翻译流水线可用——RISC-V 解码、IR 生成、优化、
   寄存器分配、x86-64 代码生成。多线程 vCPU 并发执行、直接 TB 链路、
   MMIO helper 分发均已就绪。
 - **Full-system 模式**：RISC-V 参考机器（riscv64-ref）可引导，
   集成 PLIC、ACLINT、UART、Sv39 MMU、SBI 固件接口。
+- **VirtIO 块设备**：VirtIO MMIO v2 transport + raw file mmap 后端，
+  支持 rCore ch6-ch8 文件系统启动。
+- **Monitor 控制台**：MMP（QMP 兼容 JSON over TCP）+ HMP 文本命令 +
+  Ctrl+A C 切换 + vCPU 暂停/恢复。
+- **Difftest**：通过 GDB RSP 协议与 QEMU 逐指令对比。
 - **RISC-V 前端**：188 条指令（RV64GC + 特权指令），含 Sv39 MMU、
   TLB、PMP、M/S/U 特权级。
-- **测试**：964 个测试覆盖全流水线。
+- **测试**：1039 个测试覆盖全流水线。
+- **rCore 支持**：ch1-ch8 全部通过。
 
 ## 构建与开发命令
 
@@ -107,9 +113,11 @@ Signed-off-by: Chao Liu <chao.liu.zevorn@gmail.com>
 | `machina-hw-char` | `hw/char/` | UART 16550A | `hw/char/` |
 | `machina-hw-riscv` | `hw/riscv/` | RISC-V 参考机器、boot、SBI | `hw/riscv/` |
 | `machina-disas` | `disas/` | RISC-V 反汇编器 | `disas/` |
-| `machina-monitor` | `monitor/` | 调试接口（WIP） | `monitor/` |
+| `machina-hw-virtio` | `hw/virtio/` | VirtIO MMIO + block device | `hw/virtio/` |
+| `machina-monitor` | `monitor/` | MMP/HMP monitor 控制台 | `monitor/` |
+| `machina-difftest` | `tools/difftest/` | GDB RSP difftest 客户端 | — |
 | `machina-util` | `util/` | 共享工具 | `util/` |
-| `machina-tests` | `tests/` | 964 个测试 | `tests/tcg/` |
+| `machina-tests` | `tests/` | 1039 个测试 | `tests/tcg/` |
 | `machina-mtest` | `tests/mtest/` | 机器级测试 | — |
 
 ### 核心数据结构（C → Rust 映射）
@@ -209,6 +217,7 @@ trait HostCodeGen {
 - 注释使用英文，仅在关键逻辑处添加
 - 常量命名：QEMU 风格的操作码常量允许 `non_upper_case_globals`
 - `unsafe` 仅限 JIT 执行和客户内存访问
+- **测试集中管理**：所有测试**必须**写在 `tests/` crate（`machina-tests`）中，**禁止**在各 crate 内部的 `tests/` 目录或 `#[cfg(test)] mod tests` 中编写测试。各 crate 仅提供 `pub` 接口供 tests crate 调用。
 
 ## ASCII 图表规范
 

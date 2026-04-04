@@ -5,22 +5,26 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use machina_core::address::GPA;
-use machina_core::machine::{Machine, MachineOpts};
+use machina_core::machine::{Machine, MachineOpts, MachineState};
 use machina_core::wfi::WfiWaker;
 use machina_guest_riscv::riscv::cpu::RiscvCpu;
-use machina_hw_char::uart::Uart16550;
+use machina_hw_char::uart::{Uart16550, Uart16550Mmio};
+use machina_hw_core::bus::{SysBus, SysBusMapping};
 use machina_hw_core::chardev::{
     CharFrontend, Chardev, NullChardev, StdioChardev,
 };
 use machina_hw_core::fdt::FdtBuilder;
 use machina_hw_core::irq::{IrqLine, IrqSink};
-use machina_hw_intc::aclint::Aclint;
-use machina_hw_intc::plic::Plic;
+use machina_hw_intc::aclint::{Aclint, AclintMmio};
+use machina_hw_intc::plic::{Plic, PlicIrqSink, PlicMmio};
+use machina_hw_virtio::mmio::VirtioMmio;
 use machina_memory::address_space::AddressSpace;
 use machina_memory::ram::RamBlock;
 use machina_memory::region::{MemoryRegion, MmioOps};
 
 use crate::sifive_test::SifiveTest;
+
+type MonitorCallback = Arc<Mutex<dyn FnMut(u8) + Send>>;
 
 // QEMU virt memory map base addresses.
 pub const MROM_BASE: u64 = 0x0000_1000;
@@ -107,71 +111,21 @@ impl MmioOps for SifiveTestMmio {
     }
 }
 
-// ---- MMIO adapter: PLIC ----
-
-struct PlicMmio(Arc<Mutex<Plic>>);
-
-impl MmioOps for PlicMmio {
-    fn read(&self, offset: u64, size: u32) -> u64 {
-        self.0.lock().unwrap().read(offset, size)
-    }
-
-    fn write(&self, offset: u64, size: u32, val: u64) {
-        self.0.lock().unwrap().write(offset, size, val);
-    }
-}
-
-// ---- IRQ adapter: PLIC as IrqSink ----
-
-/// Routes device IRQ level changes to PLIC pending bits.
-struct PlicIrqSink(Arc<Mutex<Plic>>);
-
-impl IrqSink for PlicIrqSink {
-    fn set_irq(&self, irq: u32, level: bool) {
-        self.0.lock().unwrap().set_irq(irq, level);
-    }
-}
-
-// ---- MMIO adapter: ACLINT (CLINT-compatible) ----
-
-struct AclintMmio(Arc<Mutex<Aclint>>);
-
-impl MmioOps for AclintMmio {
-    fn read(&self, offset: u64, size: u32) -> u64 {
-        self.0.lock().unwrap().read(offset, size)
-    }
-
-    fn write(&self, offset: u64, size: u32, val: u64) {
-        self.0.lock().unwrap().write(offset, size, val);
-    }
-}
-
-// ---- MMIO adapter: UART 16550 ----
-
-struct UartMmio(Arc<Mutex<Uart16550>>);
-
-impl MmioOps for UartMmio {
-    fn read(&self, offset: u64, _size: u32) -> u64 {
-        self.0.lock().unwrap().read(offset) as u64
-    }
-
-    fn write(&self, offset: u64, _size: u32, val: u64) {
-        self.0.lock().unwrap().write(offset, val as u8);
-    }
-}
-
 // ---- RefMachine ----
 
 pub struct RefMachine {
     name: String,
+    machine_state: MachineState,
     ram_size: u64,
     cpu_count: u32,
     address_space: Option<AddressSpace>,
+    sysbus: Option<SysBus>,
     ram_block: Option<Arc<RamBlock>>,
     mrom_block: Option<Arc<RamBlock>>,
     plic: Option<Arc<Mutex<Plic>>>,
     aclint: Option<Arc<Mutex<Aclint>>>,
     uart: Option<Arc<Mutex<Uart16550>>>,
+    virtio_mmio: Option<VirtioMmio>,
     sifive_test: Option<Arc<SifiveTest>>,
     fdt_blob: Option<Vec<u8>>,
     // Per-hart RiscvCpu instances. None after take_cpu().
@@ -185,28 +139,26 @@ pub struct RefMachine {
     pub(crate) kernel_path: Option<PathBuf>,
     // UART → PLIC IRQ line (source 10).
     uart_irq: Option<IrqLine>,
-    // Whether VirtIO block device is configured.
-    has_virtio: bool,
     // Monitor callbacks for StdioChardev.
-    quit_cb:
-        Option<Arc<dyn Fn() + Send + Sync>>,
-    monitor_cb: Option<
-        Arc<Mutex<dyn FnMut(u8) + Send>>,
-    >,
+    quit_cb: Option<Arc<dyn Fn() + Send + Sync>>,
+    monitor_cb: Option<MonitorCallback>,
 }
 
 impl RefMachine {
     pub fn new() -> Self {
         Self {
             name: "riscv64-ref".to_string(),
+            machine_state: MachineState::new_root("machine"),
             ram_size: 0,
             cpu_count: 0,
             address_space: None,
+            sysbus: None,
             ram_block: None,
             mrom_block: None,
             plic: None,
             aclint: None,
             uart: None,
+            virtio_mmio: None,
             sifive_test: None,
             fdt_blob: None,
             cpus: Arc::new(Mutex::new(Vec::new())),
@@ -215,7 +167,6 @@ impl RefMachine {
             bios_path: None,
             kernel_path: None,
             uart_irq: None,
-            has_virtio: false,
             quit_cb: None,
             monitor_cb: None,
         }
@@ -225,6 +176,28 @@ impl RefMachine {
         self.address_space
             .as_ref()
             .expect("machine not initialized")
+    }
+
+    pub fn sysbus(&self) -> &SysBus {
+        self.sysbus.as_ref().expect("machine not initialized")
+    }
+
+    fn realized_sysbus_mapping(&self, owner: &str) -> &SysBusMapping {
+        self.sysbus()
+            .mappings()
+            .iter()
+            .find(|mapping| mapping.owner == owner)
+            .unwrap_or_else(|| panic!("missing sysbus mapping for '{owner}'"))
+    }
+
+    fn sysbus_reg_cells(&self, owner: &str) -> [u32; 4] {
+        let mapping = self.realized_sysbus_mapping(owner);
+        [
+            (mapping.base.0 >> 32) as u32,
+            mapping.base.0 as u32,
+            (mapping.size >> 32) as u32,
+            mapping.size as u32,
+        ]
     }
 
     pub fn plic(&self) -> &Arc<Mutex<Plic>> {
@@ -244,18 +217,12 @@ impl RefMachine {
     }
 
     /// Set quit callback for StdioChardev (Ctrl+A X).
-    pub fn set_quit_cb(
-        &mut self,
-        cb: Arc<dyn Fn() + Send + Sync>,
-    ) {
+    pub fn set_quit_cb(&mut self, cb: Arc<dyn Fn() + Send + Sync>) {
         self.quit_cb = Some(cb);
     }
 
     /// Set monitor callback for StdioChardev (Ctrl+A C).
-    pub fn set_monitor_cb(
-        &mut self,
-        cb: Arc<Mutex<dyn FnMut(u8) + Send>>,
-    ) {
+    pub fn set_monitor_cb(&mut self, cb: Arc<Mutex<dyn FnMut(u8) + Send>>) {
         self.monitor_cb = Some(cb);
     }
 
@@ -264,9 +231,7 @@ impl RefMachine {
     }
 
     pub fn mrom_block(&self) -> &Arc<RamBlock> {
-        self.mrom_block
-            .as_ref()
-            .expect("machine not initialized")
+        self.mrom_block.as_ref().expect("machine not initialized")
     }
 
     pub fn fdt_blob(&self) -> &[u8] {
@@ -344,6 +309,14 @@ impl RefMachine {
 
     fn generate_fdt(&self) -> Vec<u8> {
         let mut fdt = FdtBuilder::new();
+        let plic_mapping = self.realized_sysbus_mapping("plic0");
+        let aclint_mapping = self.realized_sysbus_mapping("aclint0");
+        let uart_mapping = self.realized_sysbus_mapping("uart0");
+        let virtio_mapping = self
+            .sysbus()
+            .mappings()
+            .iter()
+            .find(|mapping| mapping.owner == "virtio-mmio0");
 
         // Phandle allocation: intc_phandle(hart) = hart + 1,
         // PLIC phandle = cpu_count + 1.
@@ -417,15 +390,12 @@ impl RefMachine {
             plic_ext.push(intc_ph);
             plic_ext.push(IRQ_SEI);
         }
-        fdt.begin_node("plic@c000000");
+        fdt.begin_node(&format!("plic@{:x}", plic_mapping.base.0));
         fdt.property_string("compatible", "sifive,plic-1.0.0");
         fdt.property_u32("#interrupt-cells", 1);
         fdt.property_bytes("interrupt-controller", &[]);
         fdt.property_u32("phandle", plic_phandle);
-        fdt.property_u32_list(
-            "reg",
-            &[0, PLIC_BASE as u32, 0, PLIC_SIZE as u32],
-        );
+        fdt.property_u32_list("reg", &self.sysbus_reg_cells("plic0"));
         fdt.property_u32("riscv,ndev", PLIC_NUM_SOURCES - 1);
         fdt.property_u32_list("interrupts-extended", &plic_ext);
         fdt.end_node();
@@ -441,12 +411,9 @@ impl RefMachine {
             clint_ext.push(intc_ph);
             clint_ext.push(IRQ_MSI);
         }
-        fdt.begin_node("clint@2000000");
+        fdt.begin_node(&format!("clint@{:x}", aclint_mapping.base.0));
         fdt.property_string("compatible", "riscv,clint0");
-        fdt.property_u32_list(
-            "reg",
-            &[0, ACLINT_BASE as u32, 0, ACLINT_SIZE as u32],
-        );
+        fdt.property_u32_list("reg", &self.sysbus_reg_cells("aclint0"));
         fdt.property_u32_list("interrupts-extended", &clint_ext);
         fdt.end_node();
 
@@ -460,37 +427,23 @@ impl RefMachine {
         fdt.end_node();
 
         // /soc/serial@10000000
-        fdt.begin_node("serial@10000000");
+        fdt.begin_node(&format!("serial@{:x}", uart_mapping.base.0));
         fdt.property_string("compatible", "ns16550a");
-        fdt.property_u32_list(
-            "reg",
-            &[0, UART0_BASE as u32, 0, UART0_SIZE as u32],
-        );
+        fdt.property_u32_list("reg", &self.sysbus_reg_cells("uart0"));
         fdt.property_u32("interrupts", UART_IRQ);
         fdt.property_u32("interrupt-parent", plic_phandle);
         fdt.end_node();
 
         // /soc/virtio_mmio@10001000 (if drive configured)
-        if self.has_virtio {
-            fdt.begin_node("virtio_mmio@10001000");
-            fdt.property_string(
-                "compatible",
-                "virtio,mmio",
-            );
+        if let Some(mapping) = virtio_mapping {
+            fdt.begin_node(&format!("virtio_mmio@{:x}", mapping.base.0));
+            fdt.property_string("compatible", "virtio,mmio");
             fdt.property_u32_list(
                 "reg",
-                &[
-                    0,
-                    VIRTIO0_BASE as u32,
-                    0,
-                    VIRTIO0_SIZE as u32,
-                ],
+                &self.sysbus_reg_cells("virtio-mmio0"),
             );
             fdt.property_u32("interrupts", VIRTIO_IRQ);
-            fdt.property_u32(
-                "interrupt-parent",
-                plic_phandle,
-            );
+            fdt.property_u32("interrupt-parent", plic_phandle);
             fdt.end_node();
         }
 
@@ -498,7 +451,10 @@ impl RefMachine {
 
         // /chosen
         fdt.begin_node("chosen");
-        fdt.property_string("stdout-path", "/soc/serial@10000000");
+        fdt.property_string(
+            "stdout-path",
+            &format!("/soc/serial@{:x}", uart_mapping.base.0),
+        );
         fdt.end_node();
 
         fdt.end_node(); // root
@@ -515,6 +471,14 @@ impl Default for RefMachine {
 impl Machine for RefMachine {
     fn name(&self) -> &str {
         &self.name
+    }
+
+    fn machine_state(&self) -> &MachineState {
+        &self.machine_state
+    }
+
+    fn machine_state_mut(&mut self) -> &mut MachineState {
+        &mut self.machine_state
     }
 
     fn init(
@@ -538,6 +502,8 @@ impl Machine for RefMachine {
             self.cpus = Arc::new(Mutex::new(cpus));
         }
 
+        let mut sysbus = SysBus::new("sysbus0");
+
         // Build the address space.
         let mut root = MemoryRegion::container("system", u64::MAX);
 
@@ -548,30 +514,51 @@ impl Machine for RefMachine {
 
         // PLIC: 2 contexts per hart (M-mode + S-mode).
         let plic_num_contexts = 2 * opts.cpu_count;
-        let plic = Arc::new(Mutex::new(Plic::new(
+        let plic = Arc::new(Mutex::new(Plic::new_named(
+            "plic0",
             PLIC_NUM_SOURCES,
             plic_num_contexts,
         )));
-        let plic_mmio = PlicMmio(Arc::clone(&plic));
-        let plic_region =
-            MemoryRegion::io("plic", PLIC_SIZE, Box::new(plic_mmio));
-        root.add_subregion(plic_region, GPA::new(PLIC_BASE));
-        self.plic = Some(plic);
+        {
+            let mut p = plic.lock().unwrap();
+            p.attach_to_bus(&sysbus)?;
+            let plic_region = MemoryRegion::io(
+                "plic",
+                PLIC_SIZE,
+                Box::new(PlicMmio(Arc::clone(&plic))),
+            );
+            p.register_mmio(plic_region, GPA::new(PLIC_BASE))?;
+        }
+        self.plic = Some(Arc::clone(&plic));
 
         // ACLINT (CLINT-compatible).
-        let aclint = Arc::new(Mutex::new(Aclint::new(opts.cpu_count)));
-        let aclint_mmio = AclintMmio(Arc::clone(&aclint));
-        let aclint_region =
-            MemoryRegion::io("clint", ACLINT_SIZE, Box::new(aclint_mmio));
-        root.add_subregion(aclint_region, GPA::new(ACLINT_BASE));
-        self.aclint = Some(aclint);
+        let aclint =
+            Arc::new(Mutex::new(Aclint::new_named("aclint0", opts.cpu_count)));
+        {
+            let mut a = aclint.lock().unwrap();
+            a.attach_to_bus(&sysbus)?;
+            let aclint_region = MemoryRegion::io(
+                "clint",
+                ACLINT_SIZE,
+                Box::new(AclintMmio(Arc::clone(&aclint))),
+            );
+            a.register_mmio(aclint_region, GPA::new(ACLINT_BASE))?;
+        }
+        self.aclint = Some(Arc::clone(&aclint));
 
-        // UART0.
-        let uart = Arc::new(Mutex::new(Uart16550::new()));
-        let uart_mmio = UartMmio(Arc::clone(&uart));
-        let uart_region =
-            MemoryRegion::io("uart0", UART0_SIZE, Box::new(uart_mmio));
-        root.add_subregion(uart_region, GPA::new(UART0_BASE));
+        // UART0 is migrated through the MOM sysbus path.
+        let uart = Arc::new(Mutex::new(Uart16550::new_named("uart0")));
+        {
+            let mut u = uart.lock().unwrap();
+            u.set_chardev_property("/machine/chardev/uart0")?;
+            u.attach_to_bus(&sysbus)?;
+            let uart_region = MemoryRegion::io(
+                "uart0",
+                UART0_SIZE,
+                Box::new(Uart16550Mmio(Arc::clone(&uart))),
+            );
+            u.register_mmio(uart_region, GPA::new(UART0_BASE))?;
+        }
         self.uart = Some(uart);
 
         // SiFive Test (system reset/shutdown).
@@ -585,58 +572,40 @@ impl Machine for RefMachine {
         self.sifive_test = Some(sifive_test);
 
         // MROM at 0x1000 (mask ROM for reset vector).
-        let (mrom_region, mrom_block) =
-            MemoryRegion::ram("mrom", MROM_SIZE);
+        let (mrom_region, mrom_block) = MemoryRegion::ram("mrom", MROM_SIZE);
         self.mrom_block = Some(mrom_block);
         root.add_subregion(mrom_region, GPA::new(MROM_BASE));
 
         // VirtIO block device (if -drive configured).
         if let Some(ref drive_path) = opts.drive {
             use machina_hw_virtio::block::VirtioBlk;
-            use machina_hw_virtio::mmio::VirtioMmio;
 
-            let blk = VirtioBlk::open(drive_path)
-                .unwrap_or_else(|e| {
-                    panic!(
-                        "virtio-blk: failed to open \
+            let blk = VirtioBlk::open(drive_path).unwrap_or_else(|e| {
+                panic!(
+                    "virtio-blk: failed to open \
                          {:?}: {}",
-                        drive_path, e
-                    );
-                });
-            let plic_sink = Arc::new(PlicIrqSink(
-                Arc::clone(
-                    self.plic.as_ref().unwrap(),
-                ),
-            ));
-            let virtio_irq = IrqLine::new(
-                plic_sink as Arc<dyn IrqSink>,
-                VIRTIO_IRQ,
-            );
-            let ram_ptr = self
-                .ram_block
-                .as_ref()
-                .unwrap()
-                .as_ptr() as *mut u8;
-            let virtio_mmio = VirtioMmio::new(
+                    drive_path, e
+                );
+            });
+            let plic_sink =
+                Arc::new(PlicIrqSink(Arc::clone(self.plic.as_ref().unwrap())));
+            let virtio_irq =
+                IrqLine::new(plic_sink as Arc<dyn IrqSink>, VIRTIO_IRQ);
+            let ram_ptr = self.ram_block.as_ref().unwrap().as_ptr();
+            let mut virtio_mmio = VirtioMmio::new_named(
+                "virtio-mmio0",
                 blk,
                 virtio_irq,
                 ram_ptr,
                 RAM_BASE,
                 opts.ram_size,
             );
-            let virtio_region = MemoryRegion::io(
-                "virtio-mmio0",
-                VIRTIO0_SIZE,
-                Box::new(virtio_mmio),
-            );
-            root.add_subregion(
-                virtio_region,
-                GPA::new(VIRTIO0_BASE),
-            );
-            self.has_virtio = true;
+            virtio_mmio.attach_to_bus(&sysbus)?;
+            let virtio_region =
+                virtio_mmio.make_mmio_region("virtio-mmio0", VIRTIO0_SIZE);
+            virtio_mmio.register_mmio(virtio_region, GPA::new(VIRTIO0_BASE))?;
+            self.virtio_mmio = Some(virtio_mmio);
         }
-
-        self.address_space = Some(AddressSpace::new(root));
 
         // ---- IRQ wiring ----
         // Per-hart CPU IRQ sinks update real csr.mip bits.
@@ -650,45 +619,6 @@ impl Machine for RefMachine {
         );
         self.uart_irq =
             Some(IrqLine::new(plic_as_sink as Arc<dyn IrqSink>, UART_IRQ));
-
-        // ---- Attach IRQ + chardev to UART ----
-        {
-            let backend: Box<dyn Chardev + Send> =
-                if opts.nographic {
-                    let mut sc = StdioChardev::new();
-                    // Install monitor callbacks if
-                    // monitor_cb/quit_cb were set
-                    // on self by the caller.
-                    if let Some(ref qcb) =
-                        self.quit_cb
-                    {
-                        sc.set_quit_cb(Arc::clone(qcb));
-                    }
-                    if let Some(ref mcb) =
-                        self.monitor_cb
-                    {
-                        sc.set_monitor_cb(
-                            Arc::clone(mcb),
-                        );
-                    }
-                    Box::new(sc)
-                } else {
-                    Box::new(NullChardev)
-                };
-            let mut fe = CharFrontend::new(backend);
-
-            // Wire backend input -> UART receive.
-            let uart_for_rx = Arc::clone(self.uart.as_ref().unwrap());
-            let rx_cb: Arc<Mutex<dyn FnMut(u8) + Send>> =
-                Arc::new(Mutex::new(move |byte: u8| {
-                    uart_for_rx.lock().unwrap().receive(byte);
-                }));
-            fe.start_input(rx_cb);
-
-            let mut u = self.uart.as_ref().unwrap().lock().unwrap();
-            u.attach_irq(uart_irq_line);
-            u.attach_chardev(fe);
-        }
 
         // ---- Connect PLIC context outputs ----
         // All IRQ sinks write to shared_mip which is
@@ -742,6 +672,65 @@ impl Machine for RefMachine {
             }
         }
 
+        self.address_space = Some(AddressSpace::new(root));
+
+        {
+            let address_space = self.address_space.as_mut().unwrap();
+            self.plic
+                .as_ref()
+                .unwrap()
+                .lock()
+                .unwrap()
+                .realize_onto(&mut sysbus, address_space)?;
+            self.aclint
+                .as_ref()
+                .unwrap()
+                .lock()
+                .unwrap()
+                .realize_onto(&mut sysbus, address_space)?;
+            if let Some(virtio_mmio) = self.virtio_mmio.as_mut() {
+                virtio_mmio.realize_onto(&mut sysbus, address_space)?;
+            }
+        }
+
+        // ---- Attach IRQ + chardev to UART ----
+        {
+            let backend: Box<dyn Chardev + Send> = if opts.nographic {
+                let mut sc = StdioChardev::new();
+                // Install monitor callbacks if
+                // monitor_cb/quit_cb were set
+                // on self by the caller.
+                if let Some(ref qcb) = self.quit_cb {
+                    sc.set_quit_cb(Arc::clone(qcb));
+                }
+                if let Some(ref mcb) = self.monitor_cb {
+                    sc.set_monitor_cb(Arc::clone(mcb));
+                }
+                Box::new(sc)
+            } else {
+                Box::new(NullChardev)
+            };
+            let fe = CharFrontend::new(backend);
+
+            // Wire backend input -> UART receive.
+            let uart_for_rx = Arc::clone(self.uart.as_ref().unwrap());
+            let rx_cb: Arc<Mutex<dyn FnMut(u8) + Send>> =
+                Arc::new(Mutex::new(move |byte: u8| {
+                    uart_for_rx.lock().unwrap().receive(byte);
+                }));
+
+            let mut u = self.uart.as_ref().unwrap().lock().unwrap();
+            u.attach_irq(uart_irq_line)?;
+            u.attach_chardev(fe)?;
+            u.realize_onto(
+                &mut sysbus,
+                self.address_space.as_mut().unwrap(),
+                rx_cb,
+            )?;
+        }
+
+        self.sysbus = Some(sysbus);
+
         // Generate FDT.
         self.fdt_blob = Some(self.generate_fdt());
 
@@ -749,16 +738,17 @@ impl Machine for RefMachine {
     }
 
     fn reset(&mut self) {
-        // Re-create devices with fresh state.
         if let Some(plic) = &self.plic {
-            *plic.lock().unwrap() =
-                Plic::new(PLIC_NUM_SOURCES, 2 * self.cpu_count);
+            plic.lock().unwrap().reset_runtime();
         }
         if let Some(aclint) = &self.aclint {
-            *aclint.lock().unwrap() = Aclint::new(self.cpu_count);
+            aclint.lock().unwrap().reset_runtime();
         }
         if let Some(uart) = &self.uart {
-            *uart.lock().unwrap() = Uart16550::new();
+            uart.lock().unwrap().reset_runtime();
+        }
+        if let Some(virtio_mmio) = &mut self.virtio_mmio {
+            virtio_mmio.reset_runtime();
         }
     }
 

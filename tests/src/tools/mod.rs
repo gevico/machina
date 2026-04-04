@@ -168,11 +168,11 @@ fn irbackend_multiple_tbs() {
 
 fn ensure_machina_built() {
     let status = Command::new("cargo")
-        .args(["build", "-p", "machina"])
+        .args(["build", "-p", "machina-emu"])
         .current_dir(project_root())
         .status()
-        .expect("cargo build machina failed");
-    assert!(status.success(), "cargo build machina failed");
+        .expect("cargo build machina-emu failed");
+    assert!(status.success(), "cargo build machina-emu failed");
 }
 
 fn sbi_smoke_bin() -> PathBuf {

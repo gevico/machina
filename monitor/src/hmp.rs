@@ -20,8 +20,7 @@ pub fn handle_line(
         return Some(String::new());
     }
 
-    let parts: Vec<&str> =
-        line.splitn(2, ' ').collect();
+    let parts: Vec<&str> = line.splitn(2, ' ').collect();
     let cmd = parts[0];
     let arg = parts.get(1).copied().unwrap_or("");
 
@@ -41,17 +40,11 @@ pub fn handle_line(
             None // signals exit
         }
         "help" | "?" => Some(help_text()),
-        _ => Some(format!(
-            "unknown command: '{}'\n",
-            cmd
-        )),
+        _ => Some(format!("unknown command: '{}'\n", cmd)),
     }
 }
 
-fn handle_info(
-    arg: &str,
-    svc: &Arc<Mutex<MonitorService>>,
-) -> Option<String> {
+fn handle_info(arg: &str, svc: &Arc<Mutex<MonitorService>>) -> Option<String> {
     let s = svc.lock().unwrap();
     match arg.trim() {
         "status" => {
@@ -82,66 +75,50 @@ fn handle_info(
                             out.push('\n');
                         }
                     }
-                    out.push_str(&format!(
-                        " pc  {:#018x}\n",
-                        snap.pc
-                    ));
+                    out.push_str(&format!(" pc  {:#018x}\n", snap.pc));
                     Some(out)
                 }
-                None => Some(
-                    "CPU snapshot not available\n"
-                        .into(),
-                ),
+                None => Some("CPU snapshot not available\n".into()),
             }
         }
         "cpus" => {
+            let running = s.query_status();
             let cpus = s.query_cpus();
             let mut out = String::new();
             for c in &cpus {
-                let state = if c.halted {
-                    "halted"
+                if running {
+                    out.push_str(&format!(
+                        "* CPU #{}: (running)\n",
+                        c.cpu_index
+                    ));
                 } else {
-                    "running"
-                };
-                out.push_str(&format!(
-                    "* CPU #{}: pc={:#x} ({})\n",
-                    c.cpu_index, c.pc, state
-                ));
+                    let state = if c.halted { "halted" } else { "stopped" };
+                    out.push_str(&format!(
+                        "* CPU #{}: pc={:#x} ({})\n",
+                        c.cpu_index, c.pc, state
+                    ));
+                }
             }
             Some(out)
         }
-        _ => Some(format!(
-            "info: unknown subcommand '{}'\n",
-            arg
-        )),
+        _ => Some(format!("info: unknown subcommand '{}'\n", arg)),
     }
 }
 
-fn handle_trace(
-    arg: &str,
-    svc: &Arc<Mutex<MonitorService>>,
-) -> Option<String> {
-    let parts: Vec<&str> =
-        arg.splitn(2, ' ').collect();
-    let subcmd = parts.get(0).copied().unwrap_or("");
+fn handle_trace(arg: &str, svc: &Arc<Mutex<MonitorService>>) -> Option<String> {
+    let parts: Vec<&str> = arg.splitn(2, ' ').collect();
+    let subcmd = parts.first().copied().unwrap_or("");
     let filter_arg = parts.get(1).copied().unwrap_or("");
 
     let mut s = svc.lock().unwrap();
     match subcmd {
-        "start" => {
-            match s.trace_start(filter_arg) {
-                Ok(()) => Some("tracing started\n".into()),
-                Err(e) => {
-                    Some(format!("trace start: {}\n", e))
-                }
-            }
-        }
+        "start" => match s.trace_start(filter_arg) {
+            Ok(()) => Some("tracing started\n".into()),
+            Err(e) => Some(format!("trace start: {}\n", e)),
+        },
         "stop" => {
             let n = s.trace_stop();
-            Some(format!(
-                "tracing stopped ({} events)\n",
-                n
-            ))
+            Some(format!("tracing stopped ({} events)\n", n))
         }
         "status" => {
             let (enabled, count) = s.trace_status();
@@ -151,10 +128,7 @@ fn handle_trace(
                 count,
             ))
         }
-        _ => Some(format!(
-            "trace: unknown subcommand '{}'\n",
-            subcmd
-        )),
+        _ => Some(format!("trace: unknown subcommand '{}'\n", subcmd)),
     }
 }
 

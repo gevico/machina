@@ -6,7 +6,13 @@
 //   0x002000 + 0x80*ctx   enable bitmap per context
 //   0x200000 + 0x1000*ctx threshold (off 0), claim/complete (off 4)
 
+use std::sync::{Arc, Mutex};
+
+use machina_core::address::GPA;
+use machina_hw_core::bus::{SysBus, SysBusDeviceState, SysBusError};
 use machina_hw_core::irq::IrqLine;
+use machina_memory::address_space::AddressSpace;
+use machina_memory::region::{MemoryRegion, MmioOps};
 
 const PRIORITY_BASE: u64 = 0x00_0000;
 const PENDING_BASE: u64 = 0x00_1000;
@@ -16,6 +22,7 @@ const CONTEXT_BASE: u64 = 0x20_0000;
 const CONTEXT_STRIDE: u64 = 0x1000;
 
 pub struct Plic {
+    state: SysBusDeviceState,
     num_sources: u32,
     num_contexts: u32,
     priority: Vec<u32>,
@@ -30,12 +37,21 @@ pub struct Plic {
 
 impl Plic {
     pub fn new(num_sources: u32, num_contexts: u32) -> Self {
+        Self::new_named("plic", num_sources, num_contexts)
+    }
+
+    pub fn new_named(
+        local_id: &str,
+        num_sources: u32,
+        num_contexts: u32,
+    ) -> Self {
         let words = num_sources.div_ceil(32) as usize;
         let mut outputs = Vec::with_capacity(num_contexts as usize);
         for _ in 0..num_contexts {
             outputs.push(None);
         }
         Self {
+            state: SysBusDeviceState::new(local_id),
             num_sources,
             num_contexts,
             priority: vec![0u32; num_sources as usize],
@@ -48,10 +64,61 @@ impl Plic {
         }
     }
 
+    pub fn attach_to_bus(&mut self, bus: &SysBus) -> Result<(), SysBusError> {
+        self.state.attach_to_bus(bus)
+    }
+
+    pub fn register_mmio(
+        &mut self,
+        region: MemoryRegion,
+        base: GPA,
+    ) -> Result<(), SysBusError> {
+        self.state.register_mmio(region, base)
+    }
+
+    pub fn realize_onto(
+        &mut self,
+        bus: &mut SysBus,
+        address_space: &mut AddressSpace,
+    ) -> Result<(), SysBusError> {
+        self.state.realize_onto(bus, address_space)
+    }
+
+    pub fn unrealize_from(
+        &mut self,
+        bus: &mut SysBus,
+        address_space: &mut AddressSpace,
+    ) -> Result<(), SysBusError> {
+        self.lower_outputs();
+        self.state.unrealize_from(bus, address_space)
+    }
+
+    pub fn realized(&self) -> bool {
+        self.state.device().is_realized()
+    }
+
     /// Connect an output IRQ line for `ctx`.
     pub fn connect_context_output(&mut self, ctx: u32, irq: IrqLine) {
         if (ctx as usize) < self.context_outputs.len() {
             self.context_outputs[ctx as usize] = Some(irq);
+        }
+    }
+
+    pub fn reset_runtime(&mut self) {
+        self.priority.fill(0);
+        self.pending.fill(0);
+        for words in &mut self.enable {
+            words.fill(0);
+        }
+        self.threshold.fill(0);
+        self.claim.fill(0);
+        self.source_level.fill(false);
+        self.lower_outputs();
+    }
+
+    fn lower_outputs(&self) {
+        for line in self.context_outputs.iter().flatten() {
+            line.lower();
         }
     }
 
@@ -263,5 +330,26 @@ impl Plic {
             4 => self.complete_irq(ctx as u32, v),
             _ => {}
         }
+    }
+}
+
+pub struct PlicMmio(pub Arc<Mutex<Plic>>);
+
+impl MmioOps for PlicMmio {
+    fn read(&self, offset: u64, size: u32) -> u64 {
+        self.0.lock().unwrap().read(offset, size)
+    }
+
+    fn write(&self, offset: u64, size: u32, val: u64) {
+        self.0.lock().unwrap().write(offset, size, val);
+    }
+}
+
+/// Routes device IRQ level changes to PLIC pending bits.
+pub struct PlicIrqSink(pub Arc<Mutex<Plic>>);
+
+impl machina_hw_core::irq::IrqSink for PlicIrqSink {
+    fn set_irq(&self, irq: u32, level: bool) {
+        self.0.lock().unwrap().set_irq(irq, level);
     }
 }

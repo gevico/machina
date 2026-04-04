@@ -64,12 +64,7 @@ impl TraceSink for TerminalSink {
                 format!(
                     "[#{:04}] {}[trap]     {}->{} \
                      sepc=0x{:x}{}",
-                    n,
-                    RED,
-                    from,
-                    to,
-                    sepc,
-                    fn_part,
+                    n, RED, from, to, sepc, fn_part,
                 )
             }
             TraceEvent::Syscall { id, args, pc } => {
@@ -99,11 +94,7 @@ impl TraceSink for TerminalSink {
                 format!(
                     "[#{:04}] {}[sched]    task switch \
                      0x{:x}->0x{:x}{}",
-                    n,
-                    GREEN,
-                    from_pc,
-                    to_pc,
-                    fn_part,
+                    n, GREEN, from_pc, to_pc, fn_part,
                 )
             }
             TraceEvent::TimerInterrupt { pc, priv_level } => {
@@ -111,10 +102,7 @@ impl TraceSink for TerminalSink {
                 format!(
                     "[#{:04}] {}[timer]    {}-mode timer \
                      interrupt pc=0x{:x}",
-                    n,
-                    GREEN,
-                    pl,
-                    pc,
+                    n, GREEN, pl, pc,
                 )
             }
             TraceEvent::AddressSpaceSwitch {
@@ -131,12 +119,7 @@ impl TraceSink for TerminalSink {
                 format!(
                     "[#{:04}] {}[vm]       satp asid \
                      {}->{} pc=0x{:x}{}",
-                    n,
-                    BLUE,
-                    old_asid,
-                    new_asid,
-                    pc,
-                    fn_part,
+                    n, BLUE, old_asid, new_asid, pc, fn_part,
                 )
             }
             TraceEvent::TlbFlush { pc, fn_name } => {
@@ -147,10 +130,7 @@ impl TraceSink for TerminalSink {
                 format!(
                     "[#{:04}] {}[vm]       tlb flush \
                      pc=0x{:x}{}",
-                    n,
-                    BLUE,
-                    pc,
-                    fn_part,
+                    n, BLUE, pc, fn_part,
                 )
             }
         };

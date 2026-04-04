@@ -1,13 +1,14 @@
 [package]
 name = "machina-irdump"
-version = "0.1.0"
-edition = "2021"
+version.workspace = true
+edition.workspace = true
+publish = false
 
 [[bin]]
 name = "machina-irdump"
 path = "src/main.rs"
 
 [dependencies]
-machina-accel = { path = "../../accel" }
-machina-disas = { path = "../../disas" }
-machina-guest-riscv = { path = "../../guest/riscv" }
+machina-accel = { workspace = true }
+machina-disas = { workspace = true }
+machina-guest-riscv = { workspace = true }

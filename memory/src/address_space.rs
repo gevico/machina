@@ -37,6 +37,20 @@ impl AddressSpace {
         &mut self.root
     }
 
+    /// Remove one direct child region from the root memory
+    /// container and rebuild the flat view if successful.
+    pub fn remove_subregion(
+        &mut self,
+        offset: GPA,
+        name: &str,
+    ) -> Option<MemoryRegion> {
+        let removed = self.root.remove_subregion(offset, name);
+        if removed.is_some() {
+            self.update_flat_view();
+        }
+        removed
+    }
+
     // ----- sized read / write -----
 
     /// Read 1/2/4/8 bytes from guest physical address `addr`.

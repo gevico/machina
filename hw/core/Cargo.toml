@@ -1,9 +1,15 @@
 [package]
 name = "machina-hw-core"
-version = "0.1.0"
-edition = "2021"
+version.workspace = true
+edition.workspace = true
+description = "Device infrastructure providing qdev framework, IRQ routing, chardev, and FDT generation"
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+keywords = ["riscv", "emulator", "device", "qdev"]
+categories = ["emulators", "hardware-support"]
 
 [dependencies]
-machina-core = { path = "../../core" }
-machina-memory = { path = "../../memory" }
-libc = "0.2"
+machina-core = { workspace = true }
+machina-memory = { workspace = true }
+libc = { workspace = true }

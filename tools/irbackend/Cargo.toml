@@ -1,11 +1,12 @@
 [package]
 name = "machina-irbackend"
-version = "0.1.0"
-edition = "2021"
+version.workspace = true
+edition.workspace = true
+publish = false
 
 [[bin]]
 name = "machina-irbackend"
 path = "src/main.rs"
 
 [dependencies]
-machina-accel = { path = "../../accel" }
+machina-accel = { workspace = true }

@@ -4,15 +4,28 @@ use std::ptr;
 /// Default code buffer size: 16 MiB.
 const DEFAULT_CODE_BUF_SIZE: usize = 16 * 1024 * 1024;
 
+/// Safety margin below the code buffer ceiling.  Any
+/// single guest instruction's host code must fit within
+/// this amount.  Matches QEMU's HIGHWATER concept.
+const HIGHWATER_MARGIN: usize = 1024;
+
 /// JIT code buffer backed by mmap'd memory.
 ///
-/// Manages a region of memory for writing and executing generated host code.
-/// Follows W^X discipline: the buffer is either writable
-/// or executable, never both.
+/// Manages a region of memory for writing and executing
+/// generated host code.  Includes a *highwater* check:
+/// when the write cursor passes `size - HIGHWATER_MARGIN`,
+/// the current translation is aborted via `siglongjmp` and
+/// retried with fewer guest instructions (QEMU's
+/// `tcg_raise_tb_overflow` equivalent).
 pub struct CodeBuffer {
     ptr: *mut u8,
     size: usize,
     offset: usize,
+    /// Pointer to a `sigjmp_buf` set by `tb_gen_code`.
+    /// Non-null only during active translation.  When
+    /// the highwater mark is exceeded, we `siglongjmp`
+    /// here with value -2.
+    pub(crate) jmp_trans: *mut u8,
 }
 
 // SAFETY: CodeBuffer owns its mmap'd memory exclusively.
@@ -56,6 +69,7 @@ impl CodeBuffer {
             ptr: ptr as *mut u8,
             size,
             offset: 0,
+            jmp_trans: ptr::null_mut(),
         })
     }
 
@@ -109,32 +123,52 @@ impl CodeBuffer {
         self.offset = offset;
     }
 
+    /// Check whether the write cursor has passed the
+    /// highwater mark.  Called after emitting each guest
+    /// instruction's host code.  If exceeded and
+    /// `jmp_trans` is set, longjmps back to tb_gen_code
+    /// which retries with fewer instructions.
+    #[inline]
+    pub fn check_highwater(&self) {
+        if self.offset + HIGHWATER_MARGIN > self.size
+            && !self.jmp_trans.is_null()
+        {
+            unsafe {
+                extern "C" {
+                    #[link_name = "siglongjmp"]
+                    fn siglongjmp(env: *mut u8, val: i32) -> !;
+                }
+                siglongjmp(self.jmp_trans, -2);
+            }
+        }
+    }
+
     // -- Emit methods --
 
     #[inline]
     pub fn emit_u8(&mut self, val: u8) {
-        assert!(self.offset < self.size, "code buffer overflow");
+        debug_assert!(self.offset < self.size, "code buffer overflow");
         unsafe { self.ptr.add(self.offset).write(val) };
         self.offset += 1;
     }
 
     #[inline]
     pub fn emit_u16(&mut self, val: u16) {
-        assert!(self.offset + 2 <= self.size, "code buffer overflow");
+        debug_assert!(self.offset + 2 <= self.size, "code buffer overflow");
         unsafe { (self.ptr.add(self.offset) as *mut u16).write_unaligned(val) };
         self.offset += 2;
     }
 
     #[inline]
     pub fn emit_u32(&mut self, val: u32) {
-        assert!(self.offset + 4 <= self.size, "code buffer overflow");
+        debug_assert!(self.offset + 4 <= self.size, "code buffer overflow");
         unsafe { (self.ptr.add(self.offset) as *mut u32).write_unaligned(val) };
         self.offset += 4;
     }
 
     #[inline]
     pub fn emit_u64(&mut self, val: u64) {
-        assert!(self.offset + 8 <= self.size, "code buffer overflow");
+        debug_assert!(self.offset + 8 <= self.size, "code buffer overflow");
         unsafe { (self.ptr.add(self.offset) as *mut u64).write_unaligned(val) };
         self.offset += 8;
     }

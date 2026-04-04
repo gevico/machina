@@ -2,6 +2,7 @@
 //! run them through the full frontend→backend pipeline, and verify
 //! the resulting CPU state.
 
+#[cfg(has_riscv_gcc)]
 mod difftest;
 
 use machina_accel::code_buffer::CodeBuffer;
@@ -255,6 +256,9 @@ fn run_rv_insns_with_cfg(
     insns: &[u32],
     cfg: RiscvCfg,
 ) -> usize {
+    if cfg.misa.contains(MisaExt::F) || cfg.misa.contains(MisaExt::D) {
+        cpu.csr.mstatus |= 0x3 << 13;
+    }
     let code: Vec<u8> = insns.iter().flat_map(|i| i.to_le_bytes()).collect();
     let guest_base = code.as_ptr();
 
@@ -1547,10 +1551,23 @@ fn cfg_rv64i_only() -> RiscvCfg {
         misa: MisaExt::I,
         ext_zicsr: false,
         ext_zifencei: false,
+        ext_zicntr: false,
+        ext_ziccid: false,
+        ext_ziccif: false,
+        ext_zicclsm: false,
+        ext_ziccamoa: false,
+        ext_zicbom: false,
+        ext_zicbop: false,
+        ext_zicboz: false,
         ext_zba: false,
         ext_zbb: false,
         ext_zbc: false,
         ext_zbs: false,
+        ext_zfh: false,
+        ext_zfhmin: false,
+        ext_ssvnapot: false,
+        ext_svadu: false,
+        ext_sstc: false,
     }
 }
 

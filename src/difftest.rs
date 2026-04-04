@@ -8,9 +8,8 @@ use std::sync::Arc;
 
 use machina_accel::exec::ExecEnv;
 use machina_accel::ir::tb::{
-    decode_tb_exit, EXCP_ECALL, EXCP_FENCE_I, EXCP_MRET,
-    EXCP_PRIV_CSR, EXCP_SFENCE_VMA, EXCP_SRET, EXCP_WFI,
-    TB_EXIT_NOCHAIN,
+    decode_tb_exit, EXCP_ECALL, EXCP_FENCE_I, EXCP_MRET, EXCP_PRIV_CSR,
+    EXCP_SFENCE_VMA, EXCP_SRET, EXCP_WFI, TB_EXIT_NOCHAIN,
 };
 use machina_accel::x86_64::emitter::SoftMmuConfig;
 use machina_accel::GuestCpu;
@@ -22,9 +21,8 @@ use machina_hw_riscv::ref_machine::RefMachine;
 use machina_hw_riscv::sifive_test::ShutdownReason;
 use machina_memory::address_space::AddressSpace;
 use machina_system::cpus::{
-    fault_cause_offset, fault_pc_offset, machina_mem_read,
-    machina_mem_write, tlb_offsets, tlb_ptr_offset,
-    FullSystemCpu, TLB_SIZE, RAM_BASE,
+    fault_cause_offset, fault_pc_offset, machina_mem_read, machina_mem_write,
+    tlb_offsets, tlb_ptr_offset, FullSystemCpu, RAM_BASE, TLB_SIZE,
 };
 
 const GDB_PORT: u16 = 1234;
@@ -55,8 +53,7 @@ pub fn run_difftest(opts: &MachineOpts, ram_mib: u64) {
         addend_off: tlb_offsets::ADDEND,
         index_mask: (TLB_SIZE - 1) as u64,
         load_helper: machina_mem_read as *const () as u64,
-        store_helper: machina_mem_write
-            as *const () as u64,
+        store_helper: machina_mem_write as *const () as u64,
         fault_cause_offset: fault_cause_offset(),
         fault_pc_offset: fault_pc_offset(),
         dirty_offset: tlb_offsets::DIRTY,
@@ -67,16 +64,12 @@ pub fn run_difftest(opts: &MachineOpts, ram_mib: u64) {
     let mut per_cpu = env.per_cpu;
 
     let shared_mip = machine.shared_mip();
-    let cpu0 = machine
-        .take_cpu(0)
-        .expect("cpu0 must exist");
+    let cpu0 = machine.take_cpu(0).expect("cpu0 must exist");
     let ram_ptr = machine.ram_ptr();
     let wfi_waker = machine.wfi_waker();
-    let as_ptr = machine.address_space()
-        as *const AddressSpace;
+    let as_ptr = machine.address_space() as *const AddressSpace;
 
-    let stop_flag =
-        Arc::new(std::sync::atomic::AtomicBool::new(true));
+    let stop_flag = Arc::new(std::sync::atomic::AtomicBool::new(true));
     let mut fs_cpu = unsafe {
         FullSystemCpu::new(
             cpu0,
@@ -89,11 +82,8 @@ pub fn run_difftest(opts: &MachineOpts, ram_mib: u64) {
         )
     };
     {
-        use machina_hw_riscv::ref_machine::{
-            MROM_BASE, MROM_SIZE,
-        };
-        let mrom_ptr =
-            machine.mrom_block().as_ptr() as *const u8;
+        use machina_hw_riscv::ref_machine::{MROM_BASE, MROM_SIZE};
+        let mrom_ptr = machine.mrom_block().as_ptr() as *const u8;
         fs_cpu.set_mrom(mrom_ptr, MROM_BASE, MROM_SIZE);
     }
 
@@ -110,10 +100,7 @@ pub fn run_difftest(opts: &MachineOpts, ram_mib: u64) {
     let mut gdb = match GdbClient::connect(&addr, 30) {
         Ok(c) => c,
         Err(e) => {
-            eprintln!(
-                "difftest: GDB connect failed: {}",
-                e
-            );
+            eprintln!("difftest: GDB connect failed: {}", e);
             let _ = qemu.kill();
             std::process::exit(1);
         }
@@ -124,16 +111,9 @@ pub fn run_difftest(opts: &MachineOpts, ram_mib: u64) {
     // their own MROM until PC reaches RAM (kernel entry).
     // Then sync REF to DUT state.
     eprintln!("difftest: running DUT through MROM...");
-    skip_mrom(
-        &shared,
-        &mut per_cpu,
-        &mut fs_cpu,
-    );
+    skip_mrom(&shared, &mut per_cpu, &mut fs_cpu);
     let kernel_pc = fs_cpu.get_pc();
-    eprintln!(
-        "difftest: DUT at kernel entry pc={:#x}",
-        kernel_pc
-    );
+    eprintln!("difftest: DUT at kernel entry pc={:#x}", kernel_pc);
 
     // Let QEMU also execute through its MROM to kernel.
     eprintln!("difftest: running QEMU through MROM...");
@@ -155,9 +135,8 @@ pub fn run_difftest(opts: &MachineOpts, ram_mib: u64) {
     eprintln!("difftest: synced at kernel entry");
 
     // Wire shutdown handler.
-    let shutdown_reason: Arc<
-        std::sync::Mutex<Option<ShutdownReason>>,
-    > = Arc::new(std::sync::Mutex::new(None));
+    let shutdown_reason: Arc<std::sync::Mutex<Option<ShutdownReason>>> =
+        Arc::new(std::sync::Mutex::new(None));
     {
         let reason_slot = Arc::clone(&shutdown_reason);
         let flag = Arc::clone(&stop_flag);
@@ -172,13 +151,8 @@ pub fn run_difftest(opts: &MachineOpts, ram_mib: u64) {
     }
 
     // Run difftest comparison loop.
-    let result = difftest_loop(
-        &shared,
-        &mut per_cpu,
-        &mut fs_cpu,
-        &mut gdb,
-        &stop_flag,
-    );
+    let result =
+        difftest_loop(&shared, &mut per_cpu, &mut fs_cpu, &mut gdb, &stop_flag);
 
     // Check QEMU exit status to distinguish clean
     // shutdown from crash.
@@ -189,9 +163,7 @@ pub fn run_difftest(opts: &MachineOpts, ram_mib: u64) {
             qemu.wait().ok()
         }
     };
-    let qemu_ok = qemu_status
-        .map(|s| s.success())
-        .unwrap_or(false);
+    let qemu_ok = qemu_status.map(|s| s.success()).unwrap_or(false);
 
     match result {
         DifftestResult::Pass(count) => {
@@ -214,10 +186,7 @@ pub fn run_difftest(opts: &MachineOpts, ram_mib: u64) {
             pc,
             detail,
         } => {
-            eprintln!(
-                "DIFFTEST FAIL at insn #{}, pc={:#x}",
-                insn_count, pc
-            );
+            eprintln!("DIFFTEST FAIL at insn #{}, pc={:#x}", insn_count, pc);
             eprintln!("{}", detail);
         }
         DifftestResult::Error(e) => {
@@ -253,30 +222,21 @@ fn launch_qemu(opts: &MachineOpts, ram_mib: u64) -> Child {
         cmd.arg("-kernel").arg(kernel);
     }
 
-    cmd.arg("-gdb")
-        .arg(format!("tcp::{}", GDB_PORT));
+    cmd.arg("-gdb").arg(format!("tcp::{}", GDB_PORT));
     cmd.arg("-S"); // Start stopped.
 
     cmd.stdout(Stdio::null());
     cmd.stderr(Stdio::inherit());
 
     cmd.spawn().unwrap_or_else(|e| {
-        eprintln!(
-            "difftest: failed to launch QEMU: {}",
-            e
-        );
+        eprintln!("difftest: failed to launch QEMU: {}", e);
         std::process::exit(1);
     })
 }
 
 /// Copy DUT gpr[0..31] + pc to REF via GDB G command.
-fn sync_regs_to_ref(
-    cpu: &FullSystemCpu,
-    gdb: &mut GdbClient,
-) {
-    let mut state = RegState {
-        regs: [0u64; 33],
-    };
+fn sync_regs_to_ref(cpu: &FullSystemCpu, gdb: &mut GdbClient) {
+    let mut state = RegState { regs: [0u64; 33] };
     for i in 0..32 {
         state.regs[i] = cpu.cpu.gpr[i];
     }
@@ -286,7 +246,6 @@ fn sync_regs_to_ref(
         std::process::exit(1);
     });
 }
-
 
 /// Execute DUT through MROM until PC reaches RAM.
 fn skip_mrom<B: HostCodeGen>(
@@ -299,13 +258,9 @@ fn skip_mrom<B: HostCodeGen>(
     struct SigJmpBuf([u8; 200]);
     unsafe extern "C" {
         #[link_name = "__sigsetjmp"]
-        fn sigsetjmp(
-            env: *mut SigJmpBuf,
-            savemask: i32,
-        ) -> i32;
+        fn sigsetjmp(env: *mut SigJmpBuf, savemask: i32) -> i32;
     }
-    let mut jmp_env: SigJmpBuf =
-        unsafe { std::mem::zeroed() };
+    let mut jmp_env: SigJmpBuf = unsafe { std::mem::zeroed() };
     let jmp_ptr = &mut jmp_env as *mut SigJmpBuf;
     cpu.set_jmp_env(jmp_ptr as u64);
 
@@ -320,10 +275,7 @@ fn skip_mrom<B: HostCodeGen>(
             continue;
         }
         if !exec_one_insn(shared, per_cpu, cpu) {
-            eprintln!(
-                "difftest: MROM exec failed at {:#x}",
-                cpu.get_pc()
-            );
+            eprintln!("difftest: MROM exec failed at {:#x}", cpu.get_pc());
             return;
         }
         cpu.check_mem_fault();
@@ -337,9 +289,7 @@ fn skip_mrom<B: HostCodeGen>(
 
 /// Read DUT register state for comparison.
 fn read_dut_regs(cpu: &FullSystemCpu) -> RegState {
-    let mut state = RegState {
-        regs: [0u64; 33],
-    };
+    let mut state = RegState { regs: [0u64; 33] };
     for i in 0..32 {
         state.regs[i] = cpu.cpu.gpr[i];
     }
@@ -349,9 +299,7 @@ fn read_dut_regs(cpu: &FullSystemCpu) -> RegState {
 
 /// Check if the instruction at the current PC is a CSR
 /// read of a non-deterministic counter (time/cycle/instret).
-fn is_nondeterministic_csr(
-    cpu: &mut FullSystemCpu,
-) -> bool {
+fn is_nondeterministic_csr(cpu: &mut FullSystemCpu) -> bool {
     let insn = cpu.fetch_insn_at_pc();
     if insn == 0 {
         return false;
@@ -366,7 +314,7 @@ fn is_nondeterministic_csr(
     }
     let csr_addr = (insn >> 20) & 0xFFF;
     // CSR_CYCLE=0xC00, CSR_TIME=0xC01, CSR_INSTRET=0xC02
-    matches!(csr_addr, 0xC00 | 0xC01 | 0xC02)
+    matches!(csr_addr, 0xC00..=0xC02)
 }
 
 /// Main difftest comparison loop.
@@ -392,13 +340,9 @@ fn difftest_loop<B: HostCodeGen>(
     struct SigJmpBuf([u8; 200]);
     unsafe extern "C" {
         #[link_name = "__sigsetjmp"]
-        fn sigsetjmp(
-            env: *mut SigJmpBuf,
-            savemask: i32,
-        ) -> i32;
+        fn sigsetjmp(env: *mut SigJmpBuf, savemask: i32) -> i32;
     }
-    let mut jmp_env: SigJmpBuf =
-        unsafe { std::mem::zeroed() };
+    let mut jmp_env: SigJmpBuf = unsafe { std::mem::zeroed() };
     let jmp_ptr = &mut jmp_env as *mut SigJmpBuf;
     cpu.set_jmp_env(jmp_ptr as u64);
 
@@ -450,27 +394,17 @@ fn difftest_loop<B: HostCodeGen>(
             // Step REF the same number, then resync.
             match gdb.step_n(actual_steps) {
                 Ok(()) => {}
-                Err(e) if is_conn_reset(&e)
-                    && insn_count > 100 =>
-                {
-                    return DifftestResult::Pass(
-                        insn_count,
-                    );
+                Err(e) if is_conn_reset(&e) && insn_count > 100 => {
+                    return DifftestResult::Pass(insn_count);
                 }
                 Err(e) => {
-                    return DifftestResult::Error(
-                        format!("GDB step_n: {}", e),
-                    );
+                    return DifftestResult::Error(format!("GDB step_n: {}", e));
                 }
             }
             let dut = read_dut_regs(cpu);
             if let Err(e) = gdb.write_regs(&dut) {
-                if is_conn_reset(&e)
-                    && insn_count > 100
-                {
-                    return DifftestResult::Pass(
-                        insn_count,
-                    );
+                if is_conn_reset(&e) && insn_count > 100 {
+                    return DifftestResult::Pass(insn_count);
                 }
                 return DifftestResult::Error(format!(
                     "GDB write_regs (resync): {}",
@@ -482,44 +416,30 @@ fn difftest_loop<B: HostCodeGen>(
             // Step REF the same number of instructions.
             match gdb.step_n(actual_steps) {
                 Ok(()) => {}
-                Err(e) if is_conn_reset(&e)
-                    && insn_count > 100 =>
-                {
-                    return DifftestResult::Pass(
-                        insn_count,
-                    );
+                Err(e) if is_conn_reset(&e) && insn_count > 100 => {
+                    return DifftestResult::Pass(insn_count);
                 }
                 Err(e) => {
-                    return DifftestResult::Error(
-                        format!("GDB step_n: {}", e),
-                    );
+                    return DifftestResult::Error(format!("GDB step_n: {}", e));
                 }
             }
 
             // Compare registers.
             let ref_regs = match gdb.read_regs() {
                 Ok(r) => r,
-                Err(e) if is_conn_reset(&e)
-                    && insn_count > 100 =>
-                {
-                    return DifftestResult::Pass(
-                        insn_count,
-                    );
+                Err(e) if is_conn_reset(&e) && insn_count > 100 => {
+                    return DifftestResult::Pass(insn_count);
                 }
                 Err(e) => {
-                    return DifftestResult::Error(
-                        format!(
-                            "GDB read_regs: {}",
-                            e
-                        ),
-                    );
+                    return DifftestResult::Error(format!(
+                        "GDB read_regs: {}",
+                        e
+                    ));
                 }
             };
             let dut_regs = read_dut_regs(cpu);
 
-            if let Some(detail) =
-                compare_regs(&dut_regs, &ref_regs)
-            {
+            if let Some(detail) = compare_regs(&dut_regs, &ref_regs) {
                 let pc = cpu.get_pc();
                 return DifftestResult::Divergence {
                     insn_count,
@@ -530,7 +450,7 @@ fn difftest_loop<B: HostCodeGen>(
         }
 
         // Print progress every 100K instructions.
-        if insn_count % 100_000 == 0 {
+        if insn_count.is_multiple_of(100_000) {
             eprintln!(
                 "difftest: {} insns, pc={:#x} \
                  (resyncs={})",
@@ -553,9 +473,7 @@ fn exec_one_insn<B: HostCodeGen>(
     let flags = cpu.get_flags();
 
     // Translate one instruction.
-    let tb_idx = match tb_find_single(
-        shared, per_cpu, cpu, pc, flags,
-    ) {
+    let tb_idx = match tb_find_single(shared, per_cpu, cpu, pc, flags) {
         Some(idx) => idx,
         None => {
             // Check for fetch fault.
@@ -569,16 +487,10 @@ fn exec_one_insn<B: HostCodeGen>(
     // Execute the single-instruction TB.
     let raw_exit = unsafe {
         let tb = shared.tb_store.get(tb_idx);
-        let tb_ptr =
-            shared.code_buf().ptr_at(tb.host_offset);
+        let tb_ptr = shared.code_buf().ptr_at(tb.host_offset);
         let env_ptr = cpu.env_ptr();
-        let prologue_fn: unsafe extern "C" fn(
-            *mut u8,
-            *const u8,
-        )
-            -> usize = core::mem::transmute(
-            shared.code_buf().base_ptr(),
-        );
+        let prologue_fn: unsafe extern "C" fn(*mut u8, *const u8) -> usize =
+            core::mem::transmute(shared.code_buf().base_ptr());
         prologue_fn(env_ptr, tb_ptr)
     };
 
@@ -602,19 +514,17 @@ fn exec_one_insn<B: HostCodeGen>(
         }
         v if v == EXCP_SFENCE_VMA as usize => {
             cpu.tlb_flush();
-            shared.tb_store.invalidate_all(
-                shared.code_buf(),
-                &shared.backend,
-            );
+            shared
+                .tb_store
+                .invalidate_all(shared.code_buf(), &shared.backend);
             per_cpu.jump_cache.invalidate();
         }
         v if v == EXCP_FENCE_I as usize => {
             let dirty = cpu.take_dirty_pages();
             if dirty.is_empty() {
-                shared.tb_store.invalidate_all(
-                    shared.code_buf(),
-                    &shared.backend,
-                );
+                shared
+                    .tb_store
+                    .invalidate_all(shared.code_buf(), &shared.backend);
             } else {
                 for page in &dirty {
                     shared.tb_store.invalidate_phys_page(
@@ -644,10 +554,9 @@ fn exec_one_insn<B: HostCodeGen>(
                 cpu.handle_exception(2, 0);
             }
             if cpu.take_tb_flush_pending() {
-                shared.tb_store.invalidate_all(
-                    shared.code_buf(),
-                    &shared.backend,
-                );
+                shared
+                    .tb_store
+                    .invalidate_all(shared.code_buf(), &shared.backend);
                 per_cpu.jump_cache.invalidate();
             }
         }
@@ -680,9 +589,7 @@ fn tb_find_single<B: HostCodeGen>(
     // Always generate fresh single-insn TBs (don't reuse
     // multi-insn TBs from cache).
     // But we can cache single-insn TBs by pc+flags.
-    if let Some(idx) =
-        per_cpu.jump_cache.lookup(pc)
-    {
+    if let Some(idx) = per_cpu.jump_cache.lookup(pc) {
         let tb = shared.tb_store.get(idx);
         if !tb.invalid.load(Ordering::Acquire)
             && tb.pc == pc
@@ -712,22 +619,18 @@ fn tb_gen_single<B: HostCodeGen>(
     use machina_accel::exec::MIN_CODE_BUF_REMAINING;
     use machina_accel::translate::translate;
 
-    if shared.code_buf().remaining()
-        < MIN_CODE_BUF_REMAINING
-    {
+    if shared.code_buf().remaining() < MIN_CODE_BUF_REMAINING {
         return None;
     }
 
-    let mut guard =
-        shared.translate_lock.lock().unwrap();
+    let mut guard = shared.translate_lock.lock().unwrap();
 
     if let Some(idx) = shared.tb_store.lookup(pc, flags) {
         per_cpu.jump_cache.insert(pc, idx);
         return Some(idx);
     }
 
-    let tb_idx =
-        unsafe { shared.tb_store.alloc(pc, flags, 0) };
+    let tb_idx = unsafe { shared.tb_store.alloc(pc, flags, 0) }?;
 
     guard.ir_ctx.reset();
     guard.ir_ctx.tb_idx = tb_idx as u32;
@@ -753,15 +656,10 @@ fn tb_gen_single<B: HostCodeGen>(
 
     shared.backend.clear_goto_tb_offsets();
 
-    let code_buf_mut =
-        unsafe { shared.code_buf_mut() };
-    let host_offset = translate(
-        &mut guard.ir_ctx,
-        &shared.backend,
-        code_buf_mut,
-    );
-    let host_size =
-        shared.code_buf().offset() - host_offset;
+    let code_buf_mut = unsafe { shared.code_buf_mut() };
+    let host_offset =
+        translate(&mut guard.ir_ctx, &shared.backend, code_buf_mut);
+    let host_size = shared.code_buf().offset() - host_offset;
 
     unsafe {
         let tb = shared.tb_store.get_mut(tb_idx);
@@ -772,9 +670,7 @@ fn tb_gen_single<B: HostCodeGen>(
     let offsets = shared.backend.goto_tb_offsets();
     unsafe {
         let tb = shared.tb_store.get_mut(tb_idx);
-        for (i, &(jmp, reset)) in
-            offsets.iter().enumerate().take(2)
-        {
+        for (i, &(jmp, reset)) in offsets.iter().enumerate().take(2) {
             tb.set_jmp_insn_offset(i, jmp as u32);
             tb.set_jmp_reset_offset(i, reset as u32);
         }
@@ -796,10 +692,7 @@ fn is_conn_reset(e: &io::Error) -> bool {
 
 /// Compare DUT and REF register states. Returns None if
 /// they match, or a detail string on divergence.
-fn compare_regs(
-    dut: &RegState,
-    ref_: &RegState,
-) -> Option<String> {
+fn compare_regs(dut: &RegState, ref_: &RegState) -> Option<String> {
     let mut diffs = Vec::new();
 
     // x0 is always zero; skip it.

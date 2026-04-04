@@ -1,4 +1,10 @@
 [package]
 name = "machina-decode"
-version = "0.1.0"
-edition = "2021"
+version.workspace = true
+edition.workspace = true
+description = "Decoder generator that parses .decode files and produces Rust instruction decoders"
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+keywords = ["riscv", "decoder", "code-generation"]
+categories = ["emulators", "development-tools"]

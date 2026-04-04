@@ -1,11 +1,18 @@
 [package]
 name = "machina-guest-riscv"
-version = "0.1.0"
-edition = "2021"
+version.workspace = true
+edition.workspace = true
+description = "RISC-V guest frontend: RV64GC instruction translation, privileged ISA, and Sv39 MMU"
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+keywords = ["riscv", "emulator", "frontend", "translation"]
+categories = ["emulators"]
 
 [dependencies]
-machina-accel = { path = "../../accel" }
-libc = "0.2"
+machina-accel = { workspace = true }
+machina-softfloat = { workspace = true }
+libc = { workspace = true }
 
 [build-dependencies]
-machina-decode = { path = "../../decode" }
+machina-decode = { workspace = true }

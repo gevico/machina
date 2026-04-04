@@ -2,9 +2,11 @@
 **/*.rs.bk
 Cargo.lock
 .*/
+!.github/
 *.pptx
 __pycache__/
 
 .humanize/
 .superpowers/
 docs/superpowers/
+.codex

@@ -1,4 +1,10 @@
 [package]
 name = "machina-util"
-version = "0.1.0"
-edition = "2021"
+version.workspace = true
+edition.workspace = true
+description = "Shared utility types and helpers for the Machina RISC-V emulator"
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+keywords = ["riscv", "emulator"]
+categories = ["emulators"]

@@ -9,17 +9,16 @@ struct SigJmpBuf([u8; 200]);
 
 unsafe extern "C" {
     #[link_name = "__sigsetjmp"]
-    fn sigsetjmp(env: *mut SigJmpBuf, savemask: i32)
-        -> i32;
+    fn sigsetjmp(env: *mut SigJmpBuf, savemask: i32) -> i32;
 }
 
 use super::{ExecEnv, PerCpuState, SharedState, MIN_CODE_BUF_REMAINING};
 use crate::cpu::GuestCpu;
 use crate::ir::context::Context;
 use crate::ir::tb::{
-    decode_tb_exit, TranslationBlock, EXCP_ECALL, EXCP_FENCE_I, EXCP_MRET,
-    EXCP_PRIV_CSR, EXCP_SFENCE_VMA, EXCP_SRET, EXCP_WFI, EXIT_TARGET_NONE,
-    TB_EXIT_NOCHAIN,
+    decode_tb_exit, TranslationBlock, EXCP_EBREAK, EXCP_ECALL, EXCP_FENCE_I,
+    EXCP_MRET, EXCP_PRIV_CSR, EXCP_SFENCE_VMA, EXCP_SRET, EXCP_WFI,
+    EXIT_TARGET_NONE, TB_EXIT_NOCHAIN,
 };
 use crate::translate::translate;
 use crate::HostCodeGen;
@@ -107,33 +106,6 @@ where
                 match tb_find(shared, per_cpu, cpu, pc, flags) {
                     Some(idx) => idx,
                     None => {
-                        // Temporary: log fetch failures
-                        // in M-mode handler range.
-                        if pc >= 0x80000060
-                            && pc < 0x80000100
-                        {
-                            use std::sync::atomic::{
-                                AtomicU64,
-                                Ordering as AO,
-                            };
-                            static FF: AtomicU64 =
-                                AtomicU64::new(0);
-                            let n = FF.fetch_add(
-                                1, AO::Relaxed,
-                            );
-                            if n < 10 {
-                                eprintln!(
-                                    "FETCH FAIL pc={:#x} \
-                                     flags={:#x} fault={}",
-                                    pc, flags,
-                                    cpu.check_mem_fault(),
-                                );
-                                // Already consumed
-                                // by check_mem_fault
-                                continue;
-                            }
-                        }
-                        // Might be a fetch fault.
                         if cpu.check_mem_fault() {
                             continue;
                         }
@@ -143,10 +115,42 @@ where
             }
         };
 
+        let _atomic_guard = if shared.tb_store.get(tb_idx).contains_atomic {
+            Some(shared.atomic_lock.lock().unwrap())
+        } else {
+            None
+        };
         let raw_exit = cpu_tb_exec(shared, cpu, tb_idx);
+        drop(_atomic_guard);
         let (last_tb, exit_code) = decode_tb_exit(raw_exit);
 
         let src_tb = last_tb.unwrap_or(tb_idx);
+
+        // Self-modifying code detection: if stores wrote
+        // to pages containing translated code, invalidate
+        // the affected TBs immediately.  Only code pages
+        // are tracked (store helper checks the code-page
+        // bitmap), so this is a no-op when the guest only
+        // writes to data pages.
+        //
+        // This is the machina equivalent of QEMU's
+        // PAGE_WRITE_INV / notdirty_write mechanism and
+        // provides the Ziccid guarantee (I-cache coherence
+        // for instruction data) unconditionally.
+        {
+            let dirty = cpu.take_dirty_pages();
+            if !dirty.is_empty() {
+                for page in &dirty {
+                    shared.tb_store.invalidate_phys_page(
+                        *page,
+                        shared.code_buf(),
+                        &shared.backend,
+                    );
+                }
+                per_cpu.jump_cache.invalidate();
+                next_tb_hint = None;
+            }
+        }
 
         match exit_code {
             v @ 0..=1 => {
@@ -238,20 +242,30 @@ where
             }
             v if v == EXCP_SFENCE_VMA as usize => {
                 per_cpu.stats.real_exit += 1;
+                // sfence.vma: flush TLB, jump cache, and
+                // invalidate all TBs. TB invalidation is
+                // needed because goto_tb chaining bypasses
+                // tb_find's phys_pc validation. Without
+                // it, a chained TB may execute stale code
+                // from a previous page-table mapping.
                 cpu.tlb_flush();
                 cpu.trace_on_sfence();
+                shared
+                    .tb_store
+                    .invalidate_all(shared.code_buf(), &shared.backend);
                 per_cpu.jump_cache.invalidate();
                 next_tb_hint = None;
             }
             v if v == EXCP_FENCE_I as usize => {
                 per_cpu.stats.real_exit += 1;
-                // fence.i: invalidate TBs by dirty
-                // physical page for instruction cache
-                // coherence.
+                // fence.i: invalidate TBs on pages that
+                // were written since the last fence.i.
+                // Only code pages are tracked (store
+                // helper checks the code-page bitmap).
                 let dirty = cpu.take_dirty_pages();
                 if dirty.is_empty() {
-                    // No stores tracked: conservative
-                    // full flush as fallback.
+                    // No code-page writes tracked:
+                    // conservative full flush.
                     shared
                         .tb_store
                         .invalidate_all(shared.code_buf(), &shared.backend);
@@ -270,22 +284,25 @@ where
             v if v == EXCP_WFI as usize => {
                 per_cpu.stats.real_exit += 1;
                 cpu.set_halted(true);
-                if cpu.pending_interrupt() {
+                if cpu.pending_wfi_wakeup() {
                     cpu.set_halted(false);
-                    cpu.handle_interrupt();
-                    cpu.trace_post_interrupt();
+                    if cpu.pending_interrupt() {
+                        cpu.handle_interrupt();
+                        cpu.trace_post_interrupt();
+                    }
                 } else {
                     let woken = cpu.wait_for_interrupt();
-                    cpu.set_halted(false);
                     if !woken {
+                        cpu.set_halted(false);
                         return ExitReason::Halted;
                     }
-                    // Check monitor pause after WFI
-                    // wake (may have been woken for
-                    // pause, not IRQ).
+                    // Check monitor pause BEFORE clearing
+                    // halted, so snapshot captures WFI state.
                     if cpu.check_monitor_pause() {
+                        cpu.set_halted(false);
                         return ExitReason::Halted;
                     }
+                    cpu.set_halted(false);
                     // Woken by IRQ or timer. Check for
                     // pending interrupt and handle if any;
                     // otherwise resume (timer expired,
@@ -308,6 +325,11 @@ where
                     per_cpu.jump_cache.invalidate();
                     next_tb_hint = None;
                 }
+            }
+            v if v == EXCP_EBREAK as usize => {
+                per_cpu.stats.real_exit += 1;
+                let pc = cpu.get_pc();
+                cpu.handle_exception(3, pc);
             }
             v if v == EXCP_ECALL as usize => {
                 // The translator emits a unified EXCP_ECALL;
@@ -364,23 +386,34 @@ where
     B: HostCodeGen,
     C: GuestCpu<IrContext = Context>,
 {
+    // Translate current virtual PC to physical for TB
+    // validation. After sfence.vma, the TLB is flushed
+    // so this triggers a page walk in gen_code.
+    // cur_phys == pc means bare/M-mode (no translation).
+    // cur_phys == u64::MAX means unknown (skip check).
+    let cur_phys = cpu.translate_pc(pc);
+
     // Fast path: jump cache (per-CPU, no lock needed)
     if let Some(idx) = per_cpu.jump_cache.lookup(pc) {
         let tb = shared.tb_store.get(idx);
         if !tb.invalid.load(Ordering::Acquire)
             && tb.pc == pc
             && tb.flags == flags
+            && (cur_phys == u64::MAX || tb.phys_pc == cur_phys)
         {
             per_cpu.stats.jc_hit += 1;
             return Some(idx);
         }
     }
 
-    // Slow path: hash table
+    // Slow path: hash table.
     if let Some(idx) = shared.tb_store.lookup(pc, flags) {
-        per_cpu.jump_cache.insert(pc, idx);
-        per_cpu.stats.ht_hit += 1;
-        return Some(idx);
+        let tb = shared.tb_store.get(idx);
+        if cur_phys == u64::MAX || tb.phys_pc == cur_phys {
+            per_cpu.jump_cache.insert(pc, idx);
+            per_cpu.stats.ht_hit += 1;
+            return Some(idx);
+        }
     }
 
     // Miss: translate a new TB
@@ -414,37 +447,73 @@ where
         return Some(idx);
     }
 
-    // SAFETY: we hold translate_lock, so exclusive access to
-    // tbs Vec and code_buf emit methods.
-    let tb_idx = unsafe { shared.tb_store.alloc(pc, flags, 0) };
+    // Translation with overflow retry (QEMU tcg_raise_tb_overflow
+    // equivalent).  If the backend emits more code than fits in
+    // the buffer, siglongjmp lands here with rc == -2 and we
+    // retry with halved max_insns.
+    let mut max_insns = TranslationBlock::max_insns(0);
+    let mut jmp_buf: SigJmpBuf = unsafe { std::mem::zeroed() };
+    let jmp_ptr = &mut jmp_buf as *mut SigJmpBuf;
+    let saved_offset = shared.code_buf().offset();
+
+    loop {
+        let rc = unsafe { sigsetjmp(jmp_ptr, 0) };
+        if rc == -2 {
+            // Overflow: reset code buffer cursor and
+            // retry with fewer instructions.
+            unsafe {
+                shared.code_buf_mut().jmp_trans = std::ptr::null_mut();
+                shared.code_buf_mut().set_offset(saved_offset);
+            }
+            max_insns = (max_insns / 2).max(1);
+            if max_insns == 1 {
+                // Single-instruction TB still overflows —
+                // treat as BufferFull.
+                return None;
+            }
+            continue;
+        }
+        break;
+    }
+
+    // SAFETY: we hold translate_lock.
+    let tb_idx = unsafe { shared.tb_store.alloc(pc, flags, 0) }?;
 
     guard.ir_ctx.reset();
     guard.ir_ctx.tb_idx = tb_idx as u32;
-    let guest_size =
-        cpu.gen_code(&mut guard.ir_ctx, pc, TranslationBlock::max_insns(0));
+    let guest_size = cpu.gen_code(&mut guard.ir_ctx, pc, max_insns);
     if guest_size == 0 {
-        // Fetch fault or PC outside RAM. The fault is
-        // latched in mem_fault_cause. Mark TB invalid
-        // so the exec loop re-checks.
         unsafe {
             let tb = shared.tb_store.get_mut(tb_idx);
             tb.invalid.store(true, Ordering::Release);
         }
         return None;
     }
+    let phys_pc = cpu.last_phys_pc();
     unsafe {
         let tb = shared.tb_store.get_mut(tb_idx);
         tb.size = guest_size;
-        tb.phys_pc = cpu.last_phys_pc();
+        tb.phys_pc = phys_pc;
     }
+    shared.tb_store.mark_code_page(phys_pc >> 12);
 
     shared.backend.clear_goto_tb_offsets();
 
-    // SAFETY: translate_lock guarantees exclusive access to
-    // code_buf's write cursor.
+    // Install jmp_trans on code buffer so highwater
+    // check can longjmp back here on overflow.
+    unsafe {
+        shared.code_buf_mut().jmp_trans = jmp_ptr as *mut u8;
+    }
+
     let code_buf_mut = unsafe { shared.code_buf_mut() };
     let host_offset =
         translate(&mut guard.ir_ctx, &shared.backend, code_buf_mut);
+
+    // Clear jmp_trans after translation completes.
+    unsafe {
+        shared.code_buf_mut().jmp_trans = std::ptr::null_mut();
+    }
+
     let host_size = shared.code_buf().offset() - host_offset;
 
     // SAFETY: under translate_lock.
@@ -452,6 +521,7 @@ where
         let tb = shared.tb_store.get_mut(tb_idx);
         tb.host_offset = host_offset;
         tb.host_size = host_size;
+        tb.contains_atomic = guard.ir_ctx.contains_atomic;
     }
 
     let offsets = shared.backend.goto_tb_offsets();
