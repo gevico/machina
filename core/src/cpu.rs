@@ -109,4 +109,35 @@ pub trait GuestCpu {
     fn gdb_write_register(&mut self, _reg: usize, _buf: &[u8]) -> usize {
         0
     }
+
+    // -- Trace notification hooks (default no-op) --
+
+    /// Read the current sepc value for sret tracing.
+    fn trace_read_sepc(&self) -> u64 {
+        0
+    }
+
+    /// Read the current mepc value for mret tracing.
+    fn trace_read_mepc(&self) -> u64 {
+        0
+    }
+
+    /// Emit trace event after sret completes.
+    fn trace_on_sret_exit(&mut self, _pre_priv: u8, _pre_sepc: u64) {}
+
+    /// Emit trace event after mret completes.
+    fn trace_on_mret_exit(&mut self, _pre_priv: u8, _pre_mepc: u64) {}
+
+    /// Emit trace event after sfence.vma TLB flush.
+    fn trace_on_sfence(&mut self) {}
+
+    /// Emit trace event after interrupt handling.
+    fn trace_post_interrupt(&mut self) {}
+
+    /// Emit per-TB trace events (satp diff, PC range match).
+    fn trace_post_tb(&mut self) {}
+
+    /// Emit trace event for ecall trap (called from CpuManager
+    /// after handle_exception).
+    fn trace_on_ecall_trap(&mut self, _from_priv: u8) {}
 }

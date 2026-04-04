@@ -80,21 +80,33 @@ fn test_monitor_state_quit() {
 #[test]
 fn test_mmp_qmp_capabilities() {
     let svc = make_svc();
-    let resp = mmp::dispatch("qmp_capabilities", &svc);
+    let resp = mmp::dispatch(
+        "qmp_capabilities",
+        &svc,
+        &serde_json::json!({}),
+    );
     assert_eq!(resp["return"], serde_json::json!({}));
 }
 
 #[test]
 fn test_mmp_query_status_running() {
     let svc = make_svc();
-    let resp = mmp::dispatch("query-status", &svc);
+    let resp = mmp::dispatch(
+        "query-status",
+        &svc,
+        &serde_json::json!({}),
+    );
     assert_eq!(resp["return"]["running"], true);
 }
 
 #[test]
 fn test_mmp_unknown_command() {
     let svc = make_svc();
-    let resp = mmp::dispatch("nonexistent", &svc);
+    let resp = mmp::dispatch(
+        "nonexistent",
+        &svc,
+        &serde_json::json!({}),
+    );
     assert_eq!(
         resp["error"]["class"],
         "CommandNotFound"
@@ -104,7 +116,11 @@ fn test_mmp_unknown_command() {
 #[test]
 fn test_mmp_query_cpus_fast() {
     let svc = make_svc();
-    let resp = mmp::dispatch("query-cpus-fast", &svc);
+    let resp = mmp::dispatch(
+        "query-cpus-fast",
+        &svc,
+        &serde_json::json!({}),
+    );
     let arr = resp["return"].as_array().unwrap();
     assert_eq!(arr.len(), 1);
     assert_eq!(arr[0]["cpu-index"], 0);
@@ -117,7 +133,11 @@ fn test_mmp_query_cpus_fast() {
 #[test]
 fn test_mmp_quit() {
     let svc = make_svc();
-    let resp = mmp::dispatch("quit", &svc);
+    let resp = mmp::dispatch(
+        "quit",
+        &svc,
+        &serde_json::json!({}),
+    );
     assert_eq!(resp["return"], serde_json::json!({}));
     assert!(
         svc.lock().unwrap().state.is_quit_requested()

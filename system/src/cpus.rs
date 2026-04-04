@@ -8,6 +8,7 @@
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 
+use machina_core::trace::TraceEvent;
 use machina_core::wfi::WfiWaker;
 
 use machina_accel::ir::context::Context;
@@ -19,6 +20,7 @@ use machina_guest_riscv::riscv::exception::Exception;
 use machina_guest_riscv::riscv::ext::RiscvCfg;
 use machina_guest_riscv::riscv::{RiscvDisasContext, RiscvTranslator};
 use machina_guest_riscv::{translator_loop, DisasJumpType, TranslatorOps};
+use machina_monitor::trace_collector::TraceCollector;
 
 const NUM_GPRS: usize = 32;
 pub const RAM_BASE: u64 = 0x8000_0000;
@@ -93,6 +95,9 @@ pub struct FullSystemCpu {
     monitor_state: Option<
         Arc<machina_core::monitor::MonitorState>,
     >,
+    trace_collector: Option<Arc<TraceCollector>>,
+    trace_prev_satp: u64,
+    trace_prev_pc: u64,
 }
 
 // SAFETY: ram_ptr points to mmap'd memory owned by
@@ -131,6 +136,9 @@ impl FullSystemCpu {
             wfi_waker,
             stop_flag,
             monitor_state: None,
+            trace_collector: None,
+            trace_prev_satp: 0,
+            trace_prev_pc: 0,
         }
     }
 
@@ -140,6 +148,21 @@ impl FullSystemCpu {
         ms: Arc<machina_core::monitor::MonitorState>,
     ) {
         self.monitor_state = Some(ms);
+    }
+
+    /// Attach trace collector for execution tracing.
+    pub fn set_trace_collector(
+        &mut self,
+        tc: Arc<TraceCollector>,
+    ) {
+        self.trace_collector = Some(tc);
+    }
+
+    /// Check whether tracing is enabled (fast path).
+    fn is_trace_enabled(&self) -> bool {
+        self.trace_collector
+            .as_ref()
+            .map_or(false, |tc| tc.enabled())
     }
 
     /// Read ACLINT mtime register via AddressSpace MMIO.
@@ -829,6 +852,240 @@ impl GuestCpu for FullSystemCpu {
 
         self.cpu.pc += 4;
         true
+    }
+
+    // -- Trace notification hooks --
+
+    fn trace_read_sepc(&self) -> u64 {
+        self.cpu.csr.sepc
+    }
+
+    fn trace_read_mepc(&self) -> u64 {
+        self.cpu.csr.mepc
+    }
+
+    fn trace_on_sret_exit(
+        &mut self,
+        pre_priv: u8,
+        pre_sepc: u64,
+    ) {
+        if !self.is_trace_enabled() {
+            return;
+        }
+        let to_priv = self.cpu.priv_level as u8;
+        let fn_name = self
+            .trace_collector
+            .as_ref()
+            .and_then(|tc| tc.lookup_symbol(pre_sepc));
+        let evt = TraceEvent::TrapExit {
+            from_priv: pre_priv,
+            to_priv,
+            sepc: pre_sepc,
+            fn_name,
+        };
+        if let Some(ref tc) = self.trace_collector {
+            if tc.should_collect(evt.category()) {
+                tc.push(evt);
+            }
+        }
+    }
+
+    fn trace_on_mret_exit(
+        &mut self,
+        pre_priv: u8,
+        pre_mepc: u64,
+    ) {
+        if !self.is_trace_enabled() {
+            return;
+        }
+        let to_priv = self.cpu.priv_level as u8;
+        let fn_name = self
+            .trace_collector
+            .as_ref()
+            .and_then(|tc| tc.lookup_symbol(pre_mepc));
+        let evt = TraceEvent::TrapExit {
+            from_priv: pre_priv,
+            to_priv,
+            sepc: pre_mepc,
+            fn_name,
+        };
+        if let Some(ref tc) = self.trace_collector {
+            if tc.should_collect(evt.category()) {
+                tc.push(evt);
+            }
+        }
+    }
+
+    fn trace_on_sfence(&mut self) {
+        if !self.is_trace_enabled() {
+            return;
+        }
+        let pc = self.cpu.pc;
+        let fn_name = self
+            .trace_collector
+            .as_ref()
+            .and_then(|tc| tc.lookup_symbol(pc));
+        let evt = TraceEvent::TlbFlush { pc, fn_name };
+        if let Some(ref tc) = self.trace_collector {
+            if tc.should_collect(evt.category()) {
+                tc.push(evt);
+            }
+        }
+    }
+
+    fn trace_post_interrupt(&mut self) {
+        if !self.is_trace_enabled() {
+            return;
+        }
+        let cause = if self.cpu.priv_level
+            == PrivLevel::Supervisor
+        {
+            self.cpu.csr.scause
+        } else {
+            self.cpu.csr.mcause
+        };
+        let is_interrupt = cause & (1u64 << 63) != 0;
+        let code = cause & !(1u64 << 63);
+        if is_interrupt && (code == 5 || code == 7) {
+            let evt = TraceEvent::TimerInterrupt {
+                pc: self.cpu.pc,
+                priv_level: self.cpu.priv_level as u8,
+            };
+            if let Some(ref tc) = self.trace_collector {
+                if tc.should_collect(evt.category()) {
+                    tc.push(evt);
+                }
+            }
+        }
+        // Also emit TrapEnter for the interrupt.
+        let from_priv = match self.cpu.priv_level {
+            PrivLevel::User => 0u8,
+            PrivLevel::Supervisor => 1,
+            PrivLevel::Machine => 3,
+        };
+        let to_priv = from_priv; // simplified: stays same or goes up
+        let fn_name = self
+            .trace_collector
+            .as_ref()
+            .and_then(|tc| tc.lookup_symbol(self.cpu.pc));
+        let evt = TraceEvent::TrapEnter {
+            from_priv,
+            to_priv,
+            cause,
+            pc: self.cpu.pc,
+            fn_name,
+        };
+        if let Some(ref tc) = self.trace_collector {
+            if tc.should_collect(evt.category()) {
+                tc.push(evt);
+            }
+        }
+    }
+
+    fn trace_post_tb(&mut self) {
+        if !self.is_trace_enabled() {
+            return;
+        }
+        let pc = self.cpu.pc;
+        // AddressSpaceSwitch: check satp change.
+        let new_satp = self.cpu.csr.satp;
+        if new_satp != self.trace_prev_satp {
+            let old_satp = self.trace_prev_satp;
+            let old_asid = ((old_satp >> 44) & 0xFFFF) as u16;
+            let new_asid = ((new_satp >> 44) & 0xFFFF) as u16;
+            let fn_name = self
+                .trace_collector
+                .as_ref()
+                .and_then(|tc| tc.lookup_symbol(pc));
+            let evt = TraceEvent::AddressSpaceSwitch {
+                old_satp,
+                new_satp,
+                old_asid,
+                new_asid,
+                pc,
+                fn_name,
+            };
+            if let Some(ref tc) = self.trace_collector {
+                if tc.should_collect(evt.category()) {
+                    tc.push(evt);
+                }
+            }
+            self.trace_prev_satp = new_satp;
+        }
+        // TaskSwitch: check if PC is in __switch range.
+        let in_switch = self
+            .trace_collector
+            .as_ref()
+            .map_or(false, |tc| tc.in_switch_range(pc));
+        if in_switch {
+            let fn_name = self
+                .trace_collector
+                .as_ref()
+                .and_then(|tc| tc.lookup_symbol(pc));
+            let evt = TraceEvent::TaskSwitch {
+                from_pc: self.trace_prev_pc,
+                to_pc: pc,
+                fn_name,
+            };
+            if let Some(ref tc) = self.trace_collector {
+                if tc.should_collect(evt.category()) {
+                    tc.push(evt);
+                }
+            }
+        }
+        self.trace_prev_pc = pc;
+    }
+
+    fn trace_on_ecall_trap(&mut self, from_priv: u8) {
+        if !self.is_trace_enabled() {
+            return;
+        }
+        let to_priv = self.cpu.priv_level as u8;
+        let cause = if to_priv == 1 {
+            self.cpu.csr.scause
+        } else {
+            self.cpu.csr.mcause
+        };
+        let pc = if to_priv == 1 {
+            self.cpu.csr.sepc
+        } else {
+            self.cpu.csr.mepc
+        };
+        let fn_name = self
+            .trace_collector
+            .as_ref()
+            .and_then(|tc| tc.lookup_symbol(pc));
+        let evt = TraceEvent::TrapEnter {
+            from_priv,
+            to_priv,
+            cause,
+            pc,
+            fn_name,
+        };
+        if let Some(ref tc) = self.trace_collector {
+            if tc.should_collect(evt.category()) {
+                tc.push(evt);
+            }
+        }
+        // Also emit Syscall if from U-mode and cause is
+        // UserEcall (8).
+        let code = cause & !(1u64 << 63);
+        if from_priv == 0 && code == 8 {
+            let syscall_evt = TraceEvent::Syscall {
+                id: self.cpu.gpr[17] as usize, // a7
+                args: [
+                    self.cpu.gpr[10], // a0
+                    self.cpu.gpr[11], // a1
+                    self.cpu.gpr[12], // a2
+                ],
+                pc,
+            };
+            if let Some(ref tc) = self.trace_collector {
+                if tc.should_collect(syscall_evt.category()) {
+                    tc.push(syscall_evt);
+                }
+            }
+        }
     }
 }
 

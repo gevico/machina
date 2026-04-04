@@ -102,7 +102,7 @@ fn handle_connection(
             continue;
         }
 
-        let resp = dispatch(&cmd, svc);
+        let resp = dispatch(&cmd, svc, &req);
         let _ = writeln!(stream, "{}", resp);
         let _ = stream.flush();
 
@@ -120,6 +120,7 @@ fn handle_connection(
 pub fn dispatch(
     cmd: &str,
     svc: &Arc<Mutex<MonitorService>>,
+    req: &Value,
 ) -> Value {
     let s = svc.lock().unwrap();
     match cmd {
@@ -170,6 +171,37 @@ pub fn dispatch(
                     "class": "GenericError",
                     "desc": "system_reset not \
                              implemented (deferred)"
+                }
+            })
+        }
+        "trace-start" => {
+            let filter = req
+                .get("arguments")
+                .and_then(|a| a.get("filter"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            drop(s);
+            match svc.lock().unwrap().trace_start(filter) {
+                Ok(()) => json!({"return": {}}),
+                Err(e) => json!({
+                    "error": {
+                        "class": "GenericError",
+                        "desc": e
+                    }
+                }),
+            }
+        }
+        "trace-stop" => {
+            drop(s);
+            let n = svc.lock().unwrap().trace_stop();
+            json!({"return": {"events_collected": n}})
+        }
+        "trace-status" => {
+            let (enabled, count) = s.trace_status();
+            json!({
+                "return": {
+                    "enabled": enabled,
+                    "events_collected": count
                 }
             })
         }

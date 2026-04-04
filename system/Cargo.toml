@@ -8,3 +8,4 @@ machina-core = { path = "../core" }
 machina-accel = { path = "../accel" }
 machina-guest-riscv = { path = "../guest/riscv" }
 machina-memory = { path = "../memory" }
+machina-monitor = { path = "../monitor" }

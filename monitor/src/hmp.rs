@@ -35,6 +35,7 @@ pub fn handle_line(
             svc.lock().unwrap().cont();
             Some(String::new())
         }
+        "trace" => handle_trace(arg, svc),
         "quit" | "q" => {
             svc.lock().unwrap().quit();
             None // signals exit
@@ -116,6 +117,47 @@ fn handle_info(
     }
 }
 
+fn handle_trace(
+    arg: &str,
+    svc: &Arc<Mutex<MonitorService>>,
+) -> Option<String> {
+    let parts: Vec<&str> =
+        arg.splitn(2, ' ').collect();
+    let subcmd = parts.get(0).copied().unwrap_or("");
+    let filter_arg = parts.get(1).copied().unwrap_or("");
+
+    let mut s = svc.lock().unwrap();
+    match subcmd {
+        "start" => {
+            match s.trace_start(filter_arg) {
+                Ok(()) => Some("tracing started\n".into()),
+                Err(e) => {
+                    Some(format!("trace start: {}\n", e))
+                }
+            }
+        }
+        "stop" => {
+            let n = s.trace_stop();
+            Some(format!(
+                "tracing stopped ({} events)\n",
+                n
+            ))
+        }
+        "status" => {
+            let (enabled, count) = s.trace_status();
+            Some(format!(
+                "trace: {} ({} events collected)\n",
+                if enabled { "enabled" } else { "disabled" },
+                count,
+            ))
+        }
+        _ => Some(format!(
+            "trace: unknown subcommand '{}'\n",
+            subcmd
+        )),
+    }
+}
+
 fn help_text() -> String {
     "\
 info status     -- VM run state\n\
@@ -123,6 +165,9 @@ info registers  -- dump GPRs (paused only)\n\
 info cpus       -- list vCPUs\n\
 stop            -- pause vCPU\n\
 cont (c)        -- resume vCPU\n\
+trace start [f] -- start tracing (filter: trap,sched,vm,syscall)\n\
+trace stop      -- stop tracing\n\
+trace status    -- trace state\n\
 quit (q)        -- exit emulator\n\
 help (?)        -- this message\n"
         .to_string()

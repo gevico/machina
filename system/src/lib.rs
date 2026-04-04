@@ -101,6 +101,7 @@ impl CpuManager {
                         _ => 11,
                     };
                     cpu.handle_exception(cause, 0);
+                    cpu.trace_on_ecall_trap(priv_level);
                 }
                 other => return other,
             }

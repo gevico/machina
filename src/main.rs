@@ -40,6 +40,9 @@ fn usage() {
     eprintln!(
         "  -monitor stdio|tcp:host:port  Monitor console"
     );
+    eprintln!(
+        "  -trace [filter]  Enable execution tracing"
+    );
     eprintln!("  -h, --help    Show this help");
 }
 
@@ -53,6 +56,7 @@ struct CliArgs {
     difftest: bool,
     drive: Option<PathBuf>,
     monitor: Option<String>,
+    trace: Option<String>,
 }
 
 impl Default for CliArgs {
@@ -66,6 +70,7 @@ impl Default for CliArgs {
             difftest: false,
             drive: None,
             monitor: None,
+            trace: None,
         }
     }
 }
@@ -156,6 +161,20 @@ fn parse_args() -> Result<CliArgs, String> {
                     ));
                 }
             }
+            "-trace" => {
+                // Accept optional filter argument.
+                let next = args.get(i + 1);
+                if let Some(nxt) = next {
+                    if !nxt.starts_with('-') {
+                        i += 1;
+                        cli.trace = Some(nxt.clone());
+                    } else {
+                        cli.trace = Some(String::new());
+                    }
+                } else {
+                    cli.trace = Some(String::new());
+                }
+            }
             "-h" | "--help" => {
                 usage();
                 machina_hw_core::chardev::restore_terminal(); process::exit(0);
@@ -224,6 +243,7 @@ fn run_machine_cycle(
             machina_monitor::service::MonitorService,
         >,
     >,
+    trace_opt: Option<String>,
 ) -> Option<ShutdownReason> {
     let mut machine = RefMachine::new();
 
@@ -355,6 +375,45 @@ fn run_machine_cycle(
         ms.set_stop_flag(Arc::clone(&stop_flag));
         fs_cpu.set_monitor_state(Arc::clone(ms));
     }
+
+    // -- Trace wiring --
+    if let Some(ref trace_filter) = trace_opt {
+        // Parse ELF symbols from the kernel binary.
+        let sym_tab = opts.kernel.as_ref().and_then(|p| {
+            let data = std::fs::read(p).ok()?;
+            let st = machina_monitor::symbol_table::SymbolTable::from_elf(&data).ok()?;
+            Some(Arc::new(st))
+        });
+        let sym_tab = sym_tab.unwrap_or_else(|| {
+            Arc::new(machina_monitor::symbol_table::SymbolTable::default())
+        });
+
+        let collector =
+            Arc::new(machina_monitor::trace_collector::TraceCollector::new(Arc::clone(&sym_tab)));
+
+        // Enable tracing immediately if -trace was given.
+        let filter_str = trace_filter.as_str();
+        match machina_core::trace::EventFilter::from_str(filter_str) {
+            Ok(filter) => {
+                collector.set_filter(filter);
+                collector.enable();
+            }
+            Err(e) => {
+                eprintln!("machina: -trace: {}", e);
+                machina_hw_core::chardev::restore_terminal();
+                process::exit(1);
+            }
+        }
+
+        fs_cpu.set_trace_collector(Arc::clone(&collector));
+
+        // Wire into monitor service for runtime control.
+        monitor_svc.lock().unwrap()
+            .set_trace_collectors(vec![collector]);
+        monitor_svc.lock().unwrap()
+            .set_symbol_table(sym_tab);
+    }
+
     cpu_mgr.add_cpu(fs_cpu);
 
     // Wire SiFive Test to execution control.
@@ -487,6 +546,7 @@ fn main() {
             ram_size,
             Some(Arc::clone(&monitor_state)),
             Arc::clone(&monitor_svc),
+            cli.trace.clone(),
         );
 
         match reason {

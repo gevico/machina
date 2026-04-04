@@ -2,6 +2,7 @@ pub mod address;
 pub mod cpu;
 pub mod machine;
 pub mod monitor;
+pub mod trace;
 pub mod wfi;
 
 pub use address::{GPA, GVA, HVA};

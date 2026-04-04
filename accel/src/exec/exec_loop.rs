@@ -92,6 +92,7 @@ where
         // (matching QEMU's cpu_handle_interrupt).
         if cpu.pending_interrupt() {
             cpu.handle_interrupt();
+            cpu.trace_post_interrupt();
             next_tb_hint = None;
         }
 
@@ -220,25 +221,25 @@ where
             }
             v if v == EXCP_MRET as usize => {
                 per_cpu.stats.real_exit += 1;
+                let pre_priv = cpu.privilege_level();
+                let pre_mepc = cpu.trace_read_mepc();
                 cpu.execute_mret();
-                // Continue at new PC (mepc).
+                cpu.trace_on_mret_exit(pre_priv, pre_mepc);
             }
             v if v == EXCP_SRET as usize => {
                 per_cpu.stats.real_exit += 1;
+                let pre_priv = cpu.privilege_level();
+                let pre_sepc = cpu.trace_read_sepc();
                 if !cpu.execute_sret() {
-                    // Illegal: sret in U-mode.
                     cpu.handle_exception(2, 0);
+                } else {
+                    cpu.trace_on_sret_exit(pre_priv, pre_sepc);
                 }
             }
             v if v == EXCP_SFENCE_VMA as usize => {
                 per_cpu.stats.real_exit += 1;
-                // sfence.vma: flush TLB and jump cache only.
-                // TBs are NOT invalidated (matches QEMU).
-                // The TLB flush ensures the next memory
-                // access goes through slow-path page walk.
-                // TB correctness is maintained by phys_pc
-                // validation in tb_find.
                 cpu.tlb_flush();
+                cpu.trace_on_sfence();
                 per_cpu.jump_cache.invalidate();
                 next_tb_hint = None;
             }
@@ -272,6 +273,7 @@ where
                 if cpu.pending_interrupt() {
                     cpu.set_halted(false);
                     cpu.handle_interrupt();
+                    cpu.trace_post_interrupt();
                 } else {
                     let woken = cpu.wait_for_interrupt();
                     cpu.set_halted(false);
@@ -290,6 +292,7 @@ where
                     // guest will re-read mtime).
                     if cpu.pending_interrupt() {
                         cpu.handle_interrupt();
+                        cpu.trace_post_interrupt();
                     }
                 }
             }
@@ -321,6 +324,9 @@ where
                 return ExitReason::Exit(exit_code);
             }
         }
+
+        // Per-TB trace: address space switch, task switch.
+        cpu.trace_post_tb();
 
         // Deliver latched memory faults from JIT helpers.
         // Must precede interrupt check: faults have higher
