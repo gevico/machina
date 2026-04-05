@@ -266,6 +266,18 @@ pub fn boot_ref_machine(
         }
     }
 
+    // Load initrd (if configured).
+    if let Some(ref initrd_path) = machine.initrd_path {
+        let start = machine
+            .initrd_start()
+            .expect("initrd_start must be set when initrd_path is set");
+        let data = std::fs::read(initrd_path)
+            .map_err(|e| format!("initrd: {}: {}", initrd_path.display(), e))?;
+        let as_ = machine.address_space();
+        loader::load_binary(&data, GPA::new(start), as_)
+            .map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
+    }
+
     // Place FDT at top of RAM, aligned to 8 bytes.
     let fdt = machine.fdt_blob().to_vec();
     let fdt_len = fdt.len() as u64;

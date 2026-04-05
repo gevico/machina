@@ -137,6 +137,10 @@ pub struct RefMachine {
     // Stored boot options (bios / kernel paths).
     pub(crate) bios_path: Option<PathBuf>,
     pub(crate) kernel_path: Option<PathBuf>,
+    pub(crate) initrd_path: Option<PathBuf>,
+    pub(crate) append: Option<String>,
+    pub(crate) initrd_start: Option<u64>,
+    pub(crate) initrd_end: Option<u64>,
     // UART → PLIC IRQ line (source 10).
     uart_irq: Option<IrqLine>,
     // Monitor callbacks for StdioChardev.
@@ -166,6 +170,10 @@ impl RefMachine {
             wfi_waker: Arc::new(WfiWaker::new()),
             bios_path: None,
             kernel_path: None,
+            initrd_path: None,
+            append: None,
+            initrd_start: None,
+            initrd_end: None,
             uart_irq: None,
             quit_cb: None,
             monitor_cb: None,
@@ -273,6 +281,18 @@ impl RefMachine {
     /// Host pointer to the start of guest RAM.
     pub fn ram_ptr(&self) -> *const u8 {
         self.ram_block().as_ptr() as *const u8
+    }
+
+    pub fn initrd_path(&self) -> &Option<PathBuf> {
+        &self.initrd_path
+    }
+
+    pub fn initrd_start(&self) -> Option<u64> {
+        self.initrd_start
+    }
+
+    pub fn initrd_end(&self) -> Option<u64> {
+        self.initrd_end
     }
 
     /// UART → PLIC IRQ line reference.
@@ -455,6 +475,13 @@ impl RefMachine {
             "stdout-path",
             &format!("/soc/serial@{:x}", uart_mapping.base.0),
         );
+        if let Some(ref cmdline) = self.append {
+            fdt.property_string("bootargs", cmdline);
+        }
+        if let Some(start) = self.initrd_start {
+            fdt.property_u64("linux,initrd-start", start);
+            fdt.property_u64("linux,initrd-end", self.initrd_end.unwrap());
+        }
         fdt.end_node();
 
         fdt.end_node(); // root
@@ -492,6 +519,25 @@ impl Machine for RefMachine {
         self.cpu_count = opts.cpu_count;
         self.bios_path = opts.bios.clone();
         self.kernel_path = opts.kernel.clone();
+        self.initrd_path = opts.initrd.clone();
+        self.append = opts.append.clone();
+        if let Some(ref path) = opts.initrd {
+            let initrd_size = std::fs::metadata(path)
+                .map_err(|e| format!("initrd: {}: {}", path.display(), e))?
+                .len();
+            let initrd_start =
+                RAM_BASE + ((self.ram_size - 32 * 1024 * 1024) & !0xFFF);
+            let initrd_end = initrd_start + initrd_size;
+            if initrd_end > RAM_BASE + self.ram_size - 0x1000 {
+                return Err(format!(
+                    "initrd ({} bytes) does not fit in RAM",
+                    initrd_size
+                )
+                .into());
+            }
+            self.initrd_start = Some(initrd_start);
+            self.initrd_end = Some(initrd_end);
+        }
 
         // Create per-hart CPUs.
         {

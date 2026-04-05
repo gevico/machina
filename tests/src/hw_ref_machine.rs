@@ -570,3 +570,70 @@ fn test_sifive_test_pass_triggers_shutdown() {
         "device must be triggered after PASS write"
     );
 }
+
+#[test]
+fn test_fdt_chosen_bootargs() {
+    let mut m = RefMachine::new();
+    let opts = MachineOpts {
+        append: Some("console=ttyS0 root=/dev/ram".to_string()),
+        ..default_opts()
+    };
+    m.init(&opts).expect("init failed");
+    let fdt = m.fdt_blob();
+
+    let needle = b"console=ttyS0 root=/dev/ram\0";
+    let found = fdt.windows(needle.len()).any(|w| w == needle);
+    assert!(found, "FDT /chosen should contain bootargs");
+}
+
+#[test]
+fn test_fdt_chosen_initrd() {
+    let mut m = RefMachine::new();
+    let initrd_file = tempfile::NamedTempFile::new().unwrap();
+    std::io::Write::write_all(&mut initrd_file.as_file(), &[0u8; 4096])
+        .unwrap();
+    let opts = MachineOpts {
+        initrd: Some(initrd_file.path().to_path_buf()),
+        ..default_opts()
+    };
+    m.init(&opts).expect("init failed");
+    let fdt = m.fdt_blob();
+
+    let needle = b"linux,initrd-start";
+    let found = fdt.windows(needle.len()).any(|w| w == needle);
+    assert!(found, "FDT should contain linux,initrd-start");
+
+    let needle2 = b"linux,initrd-end";
+    let found2 = fdt.windows(needle2.len()).any(|w| w == needle2);
+    assert!(found2, "FDT should contain linux,initrd-end");
+}
+
+#[test]
+fn test_boot_loads_initrd_into_ram() {
+    let mut m = RefMachine::new();
+    let initrd_file = tempfile::NamedTempFile::new().unwrap();
+    let pattern: Vec<u8> = (0..256).map(|i| (i * 7) as u8).collect();
+    std::io::Write::write_all(&mut initrd_file.as_file(), &pattern).unwrap();
+    let opts = MachineOpts {
+        bios: Some("none".into()),
+        initrd: Some(initrd_file.path().to_path_buf()),
+        ..default_opts()
+    };
+    m.init(&opts).expect("init failed");
+    let initrd_start = m.initrd_start().unwrap();
+    m.boot().expect("boot failed");
+
+    let as_ = m.address_space();
+    for (i, &expected) in pattern.iter().enumerate() {
+        let addr = GPA::new(initrd_start + i as u64);
+        let actual = as_.read(addr, 1) as u8;
+        assert_eq!(
+            actual,
+            expected,
+            "initrd mismatch at offset {} \
+             (addr {:#x})",
+            i,
+            initrd_start + i as u64
+        );
+    }
+}
