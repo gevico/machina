@@ -11,4 +11,5 @@ categories = ["emulators"]
 
 [dependencies]
 machina-core = { workspace = true }
+machina-util  = { workspace = true }
 libc = { workspace = true }

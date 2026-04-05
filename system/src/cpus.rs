@@ -652,6 +652,15 @@ impl GuestCpu for FullSystemCpu {
             15 => Exception::StorePageFault,
             _ => Exception::IllegalInstruction,
         };
+        if machina_util::trace::is_enabled() {
+            machina_util::trace::trace_exception(
+                self.cpu.pc,
+                excp,
+                self.cpu.pc,
+                self.cpu.priv_level as u8,
+                0,
+            );
+        }
         self.cpu.raise_exception(e, tval);
     }
 
@@ -859,6 +868,16 @@ impl GuestCpu for FullSystemCpu {
             && self.cpu.csr.write(csr_addr, new_val, priv_level).is_err()
         {
             return false;
+        }
+
+        if machina_util::trace::is_enabled() {
+            machina_util::trace::trace_csr(
+                pc,
+                csr_addr,
+                old,
+                new_val,
+                priv_level as u8,
+            );
         }
 
         // Sync runtime state after privileged CSR writes.

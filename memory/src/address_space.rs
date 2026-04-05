@@ -84,6 +84,11 @@ impl AddressSpace {
                 u64::from_le_bytes(buf)
             }
             FlatRangeKind::Io { ops } => {
+                if machina_util::trace::is_enabled() {
+                    machina_util::trace::trace_mmio(
+                        addr.0, size as u8, 0, false, "",
+                    );
+                }
                 let ops = ops.lock().unwrap();
                 ops.read(region_off, size)
             }
@@ -123,6 +128,11 @@ impl AddressSpace {
                 // Writes to ROM are silently dropped.
             }
             FlatRangeKind::Io { ops } => {
+                if machina_util::trace::is_enabled() {
+                    machina_util::trace::trace_mmio(
+                        addr.0, size as u8, val, true, "",
+                    );
+                }
                 let ops = ops.lock().unwrap();
                 ops.write(region_off, size, val);
             }
