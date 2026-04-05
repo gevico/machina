@@ -38,6 +38,7 @@ fn usage() {
     eprintln!("  -initrd path  Initial ramdisk image");
     eprintln!("  -append line  Kernel command line");
     eprintln!("  -monitor stdio|tcp:host:port  Monitor console");
+    eprintln!("  --trace file Event trace output (CSR/EXC/MMIO)");
     eprintln!("  -h, --help    Show this help");
 }
 
@@ -52,6 +53,7 @@ struct CliArgs {
     monitor: Option<String>,
     initrd: Option<PathBuf>,
     append: Option<String>,
+    trace: Option<PathBuf>,
 }
 
 impl Default for CliArgs {
@@ -67,6 +69,7 @@ impl Default for CliArgs {
             monitor: None,
             initrd: None,
             append: None,
+            trace: None,
         }
     }
 }
@@ -157,6 +160,15 @@ fn parse_args() -> Result<CliArgs, String> {
                 } else {
                     return Err(format!("-monitor: unsupported: {}", s));
                 }
+            }
+            "--trace" => {
+                i += 1;
+                cli.trace = Some(
+                    args.get(i)
+                        .ok_or("--trace requires argument")?
+                        .clone()
+                        .into(),
+                );
             }
             "-h" | "--help" => {
                 usage();
@@ -396,6 +408,16 @@ fn main() {
         eprintln!("machina: unknown machine: {}", cli.machine);
         machina_hw_core::chardev::restore_terminal();
         process::exit(1);
+    }
+
+    if let Some(ref trace_path) = cli.trace {
+        if let Err(e) = machina_util::trace::init_trace(
+            trace_path.to_str().expect("invalid trace path"),
+        ) {
+            eprintln!("machina: trace init failed: {}", e);
+            process::exit(1);
+        }
+        eprintln!("machina: trace output: {}", trace_path.display());
     }
 
     let ram_size = cli.ram_mib * 1024 * 1024;

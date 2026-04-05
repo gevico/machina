@@ -84,4 +84,5 @@ machina-system   = { workspace = true }
 machina-difftest = { workspace = true }
 machina-monitor  = { workspace = true }
 machina-hw-core  = { workspace = true }
+machina-util     = { workspace = true }
 libc             = { workspace = true }
