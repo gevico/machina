@@ -8,3 +8,6 @@ repository.workspace = true
 authors.workspace = true
 keywords = ["riscv", "emulator", "jit", "ir"]
 categories = ["emulators"]
+
+[dependencies]
+parking_lot = { workspace = true }

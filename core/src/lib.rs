@@ -1,5 +1,6 @@
 pub mod address;
 pub mod cpu;
+pub mod device_cell;
 pub mod machine;
 pub mod mobject;
 pub mod monitor;
