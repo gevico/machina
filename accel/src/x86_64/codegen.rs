@@ -320,8 +320,13 @@ impl HostCodeGen for X86_64CodeGen {
                 self.emit_exit_tb(buf, encoded);
             }
             Opcode::GotoTb => {
-                let (jmp, reset) = self.emit_goto_tb(buf);
-                self.goto_tb_info.lock().unwrap().push((jmp, reset));
+                let neg = self.neg_align_off;
+                let (jmp, reset) =
+                    self.emit_goto_tb(buf, neg);
+                self.goto_tb_info
+                    .lock()
+                    .unwrap()
+                    .push((jmp, reset));
             }
             // -- Rotates: same pattern as shifts --
             Opcode::RotL | Opcode::RotR => {
@@ -693,6 +698,10 @@ impl HostCodeGen for X86_64CodeGen {
 
     fn clear_goto_tb_offsets(&self) {
         self.goto_tb_info.lock().unwrap().clear();
+    }
+
+    fn neg_align_offset(&self) -> i32 {
+        self.neg_align_off
     }
 }
 

@@ -447,11 +447,21 @@ impl RefMachine {
         fdt.end_node();
 
         // /soc/serial@10000000
-        fdt.begin_node(&format!("serial@{:x}", uart_mapping.base.0));
+        fdt.begin_node(&format!(
+            "serial@{:x}",
+            uart_mapping.base.0
+        ));
         fdt.property_string("compatible", "ns16550a");
-        fdt.property_u32_list("reg", &self.sysbus_reg_cells("uart0"));
+        fdt.property_u32_list(
+            "reg",
+            &self.sysbus_reg_cells("uart0"),
+        );
         fdt.property_u32("interrupts", UART_IRQ);
-        fdt.property_u32("interrupt-parent", plic_phandle);
+        fdt.property_u32(
+            "interrupt-parent",
+            plic_phandle,
+        );
+        fdt.property_u32("clock-frequency", 3686400);
         fdt.end_node();
 
         // /soc/virtio_mmio@10001000 (if drive configured)

@@ -327,7 +327,6 @@ impl Uart16550 {
 
     fn write_thr(&mut self, val: u8) {
         self.thr = val;
-        // Forward to chardev frontend if attached.
         if let Some(ref mut fe) = self.chardev {
             fe.write(&[val]);
         }

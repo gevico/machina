@@ -161,7 +161,6 @@ const MEDELEG_MASK: u64 = (1 << 0)   // Insn addr misaligned
     | (1 << 6)   // Store addr misaligned
     | (1 << 7)   // Store access fault
     | (1 << 8)   // Ecall from U
-    | (1 << 9)   // Ecall from S
     | (1 << 12)  // Insn page fault
     | (1 << 13)  // Load page fault
     | (1 << 15); // Store page fault
@@ -502,7 +501,10 @@ impl CsrFile {
                 Ok(())
             }
             CSR_SATP => {
-                self.satp = val;
+                let mode = (val >> 60) & 0xF;
+                if mode == 0 || mode == 8 {
+                    self.satp = val;
+                }
                 Ok(())
             }
 

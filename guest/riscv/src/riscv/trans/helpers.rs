@@ -92,13 +92,13 @@ pub extern "C" fn helper_sc(
     } else if entry.addr_read == tag
         && entry.addend != super::super::mmu::TLB_MMIO_ADDEND
     {
-        // Write tag not set (e.g. clean page). Fall
-        // back to read addend — same host mapping.
         entry.addend
     } else {
-        // TLB miss: use guest_base as fallback
-        // (works for M-mode / bare translation).
-        cpu.guest_base as usize
+        // TLB miss — the LR's TLB entry was evicted.
+        // Fail the SC (spurious failure is allowed by
+        // the RISC-V spec).
+        cpu.load_res = u64::MAX;
+        return 1;
     };
     let host = (addr as usize).wrapping_add(addend) as *mut u8;
     let current = unsafe {

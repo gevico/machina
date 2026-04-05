@@ -259,6 +259,72 @@ fn sync_globals(
     }
 }
 
+/// Invalidate all register assignments at a basic-block
+/// boundary (label target).  Globals are already synced
+/// to memory by the preceding `sync_globals`; here we
+/// drop every register→temp mapping so that the
+/// successor block reloads from memory.
+///
+///  - Fixed  : untouched (always in its register)
+///  - Global : set to Mem (already synced)
+///  - Const  : reset to Const val (will rematerialise)
+///  - Ebb    : killed (cannot cross BB boundary)
+///  - Tb     : set to Mem if backed by stack slot
+///
+/// Mirrors QEMU `tcg_reg_alloc_bb_end`.
+fn bb_boundary(
+    ctx: &mut Context,
+    state: &mut RegAllocState,
+) {
+    let nb_temps = ctx.nb_temps() as usize;
+    for i in 0..nb_temps {
+        let tidx = TempIdx(i as u32);
+        let temp = ctx.temp(tidx);
+        match temp.kind {
+            TempKind::Fixed => {}
+            TempKind::Global => {
+                if let Some(reg) = temp.reg {
+                    state.free_reg(reg);
+                }
+                let t = ctx.temp_mut(tidx);
+                t.val_type = TempVal::Mem;
+                t.reg = None;
+                t.mem_coherent = true;
+            }
+            TempKind::Const => {
+                if let Some(reg) = temp.reg {
+                    state.free_reg(reg);
+                }
+                let t = ctx.temp_mut(tidx);
+                t.val_type = TempVal::Const;
+                t.reg = None;
+            }
+            TempKind::Ebb => {
+                if let Some(reg) = temp.reg {
+                    state.free_reg(reg);
+                }
+                let t = ctx.temp_mut(tidx);
+                t.val_type = TempVal::Dead;
+                t.reg = None;
+            }
+            TempKind::Tb => {
+                if let Some(reg) = temp.reg {
+                    state.free_reg(reg);
+                }
+                let t = ctx.temp_mut(tidx);
+                let backed = t.mem_allocated
+                    && t.mem_coherent;
+                t.val_type = if backed {
+                    TempVal::Mem
+                } else {
+                    TempVal::Dead
+                };
+                t.reg = None;
+            }
+        }
+    }
+}
+
 /// Dedicated register allocation for Call ops.
 ///
 /// Unlike `regalloc_op`, this function:
@@ -853,15 +919,27 @@ pub fn regalloc_and_codegen(
             Opcode::SetLabel => {
                 let label_id = op.args[0].0;
                 sync_globals(ctx, backend, buf);
+                // Basic-block boundary: invalidate all
+                // register-to-temp mappings. The label
+                // can be reached from a conditional
+                // branch with different register state
+                // than the sequential fall-through path,
+                // so no register value can be trusted.
+                bb_boundary(ctx, &mut state);
                 let offset = buf.offset();
                 let label = ctx.label_mut(label_id);
                 label.set_value(offset);
-                let uses: Vec<_> = label.uses.drain(..).collect();
+                let uses: Vec<_> =
+                    label.uses.drain(..).collect();
                 for u in uses {
                     match u.kind {
                         RelocKind::Rel32 => {
-                            let disp = (offset as i64) - (u.offset as i64 + 4);
-                            buf.patch_u32(u.offset, disp as u32);
+                            let disp = (offset as i64)
+                                - (u.offset as i64 + 4);
+                            buf.patch_u32(
+                                u.offset,
+                                disp as u32,
+                            );
                         }
                     }
                 }

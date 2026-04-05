@@ -79,7 +79,7 @@ pub const STACK_ALIGN: usize = 16;
 /// Space reserved for outgoing call arguments on the stack.
 pub const STATIC_CALL_ARGS_SIZE: usize = 128;
 /// Number of longs in the CPU temp buffer (for spilling).
-pub const CPU_TEMP_BUF_NLONGS: usize = 128;
+pub const CPU_TEMP_BUF_NLONGS: usize = 512;
 
 /// Total push size: return address (implicit) + callee-saved pushes.
 pub const PUSH_SIZE: usize = (1 + CALLEE_SAVED.len()) * 8;

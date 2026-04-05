@@ -93,7 +93,9 @@ impl RiscvDisasContext {
     /// `guest_base + pc_next` must be a valid, readable
     /// 2-byte host address.
     unsafe fn fetch_insn16(&self) -> u16 {
-        let ptr = self.guest_base.add(self.base.pc_next as usize) as *const u16;
+        let ptr = (self.guest_base as usize)
+            .wrapping_add(self.base.pc_next as usize)
+            as *const u16;
         ptr.read_unaligned()
     }
 
@@ -103,11 +105,14 @@ impl RiscvDisasContext {
     /// `guest_base + pc_next` must be a valid, readable
     /// 4-byte aligned host address.
     unsafe fn fetch_insn32(&self) -> u32 {
-        if self.cross_page_insn != 0 && self.base.pc_next == self.cross_page_pc
+        if self.cross_page_insn != 0
+            && self.base.pc_next == self.cross_page_pc
         {
             return self.cross_page_insn;
         }
-        let ptr = self.guest_base.add(self.base.pc_next as usize) as *const u32;
+        let ptr = (self.guest_base as usize)
+            .wrapping_add(self.base.pc_next as usize)
+            as *const u32;
         ptr.read_unaligned()
     }
 }

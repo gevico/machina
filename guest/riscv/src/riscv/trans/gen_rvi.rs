@@ -227,7 +227,8 @@ impl RiscvDisasContext {
 
         // Taken: PC = branch target, chain slot 1.
         ir.gen_set_label(taken);
-        let target = (self.base.pc_next as i64 + a.imm) as u64;
+        let target =
+            (self.base.pc_next as i64 + a.imm) as u64;
         let c = ir.new_const(Type::I64, target);
         ir.gen_mov(Type::I64, self.pc, c);
         ir.gen_goto_tb(1);

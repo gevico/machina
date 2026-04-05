@@ -187,7 +187,8 @@ fn exit_tb_nonzero() {
 fn goto_tb_alignment_padding() {
     let mut buf = CodeBuffer::new(4096).unwrap();
     let gen = X86_64CodeGen::new();
-    let (jmp_offset, reset_offset) = gen.emit_goto_tb(&mut buf);
+    let (jmp_offset, reset_offset) =
+        gen.emit_goto_tb(&mut buf, 0);
 
     // disp32 starts at jmp_offset + 1 (after E9 opcode)
     let disp_addr = jmp_offset + 1;

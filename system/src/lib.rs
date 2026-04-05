@@ -38,8 +38,14 @@ impl CpuManager {
     }
 
     /// Add a CPU to be managed. Ownership is transferred.
-    pub fn add_cpu(&mut self, cpu: FullSystemCpu) {
+    /// Returns a mutable reference to the added CPU so
+    /// callers can obtain stable pointers after placement.
+    pub fn add_cpu(
+        &mut self,
+        cpu: FullSystemCpu,
+    ) -> &mut FullSystemCpu {
         self.cpus.push(cpu);
+        self.cpus.last_mut().unwrap()
     }
 
     pub fn stop(&self) {

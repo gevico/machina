@@ -96,7 +96,6 @@ impl RiscvCpu {
         let code = cause & !INTERRUPT_BIT;
         let cur_priv = self.priv_level as u64;
 
-        // Determine delegation via medeleg / mideleg.
         let deleg = if is_interrupt {
             self.csr.mideleg
         } else {
@@ -104,6 +103,7 @@ impl RiscvCpu {
         };
         let delegated =
             (deleg >> code) & 1 != 0 && self.priv_level < PrivLevel::Machine;
+
 
         if delegated {
             // Trap to S-mode.

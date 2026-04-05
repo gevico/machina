@@ -43,6 +43,10 @@ pub struct Aclint {
     msi_outputs: Vec<Option<IrqLine>>,
     wfi_waker: Option<Arc<WfiWaker>>,
     timer_state: Arc<TimerState>,
+    /// Raw pointer to each hart's neg_align (AtomicI32).
+    /// Written to -1 by timer threads to break goto_tb
+    /// chains so the exec loop can deliver interrupts.
+    neg_ptrs: Vec<u64>,
 }
 
 impl Aclint {
@@ -71,6 +75,7 @@ impl Aclint {
             msi_outputs: msi,
             wfi_waker: None,
             timer_state: Arc::new(TimerState { cancel_gen: gens }),
+            neg_ptrs: vec![0u64; n],
         }
     }
 
@@ -125,6 +130,18 @@ impl Aclint {
 
     pub fn connect_wfi_waker(&mut self, wk: Arc<WfiWaker>) {
         self.wfi_waker = Some(wk);
+    }
+
+    /// Register the neg_align pointer for a hart so timer
+    /// threads can break goto_tb chains on interrupt.
+    pub fn connect_neg_align(
+        &mut self,
+        hart: u32,
+        ptr: u64,
+    ) {
+        if (hart as usize) < self.neg_ptrs.len() {
+            self.neg_ptrs[hart as usize] = ptr;
+        }
     }
 
     pub fn reset_runtime(&mut self) {
@@ -183,15 +200,26 @@ impl Aclint {
         };
         let waker = self.wfi_waker.clone();
         let state = Arc::clone(&self.timer_state);
+        let neg_ptr = self.neg_ptrs[hart];
 
         std::thread::spawn(move || {
             std::thread::sleep(delay);
-            // Check if this timer is still valid.
-            let cur = state.cancel_gen[hart].load(Ordering::SeqCst);
+            let cur =
+                state.cancel_gen[hart].load(Ordering::SeqCst);
             if cur != gen {
-                return; // Cancelled by newer mtimecmp.
+                return;
             }
             line.set(true);
+            if neg_ptr != 0 {
+                unsafe {
+                    let p = neg_ptr
+                        as *const std::sync::atomic::AtomicI32;
+                    (*p).store(
+                        -1,
+                        std::sync::atomic::Ordering::Relaxed,
+                    );
+                }
+            }
             if let Some(ref wk) = waker {
                 wk.wake();
             }
@@ -225,6 +253,16 @@ impl Aclint {
             if let Some(ref line) = self.mti_outputs[hart] {
                 line.set(pending);
             }
+            if pending && self.neg_ptrs[hart] != 0 {
+                unsafe {
+                    let p = self.neg_ptrs[hart]
+                        as *const std::sync::atomic::AtomicI32;
+                    (*p).store(
+                        -1,
+                        std::sync::atomic::Ordering::Relaxed,
+                    );
+                }
+            }
         }
     }
 
@@ -243,18 +281,40 @@ impl Aclint {
         }
     }
 
-    pub fn read(&self, offset: u64, _size: u32) -> u64 {
-        if offset == MTIME_OFFSET {
-            return self.read_mtime();
+    pub fn read(
+        &self,
+        offset: u64,
+        size: u32,
+    ) -> u64 {
+        if offset >= MTIME_OFFSET
+            && offset < MTIME_OFFSET + 8
+        {
+            let mtime = self.read_mtime();
+            let sub = (offset - MTIME_OFFSET) as u32;
+            if size == 4 && sub == 0 {
+                return mtime & 0xFFFF_FFFF;
+            } else if size == 4 && sub == 4 {
+                return mtime >> 32;
+            }
+            return mtime;
         }
         if offset >= MTIMECMP_BASE {
-            let hart = ((offset - MTIMECMP_BASE) / 8) as usize;
+            let reg_off = offset - MTIMECMP_BASE;
+            let hart = (reg_off / 8) as usize;
+            let sub = (reg_off % 8) as u32;
             if hart < self.num_harts as usize {
-                return self.mtimecmp[hart];
+                let v = self.mtimecmp[hart];
+                if size == 4 && sub == 0 {
+                    return v & 0xFFFF_FFFF;
+                } else if size == 4 && sub == 4 {
+                    return v >> 32;
+                }
+                return v;
             }
             return 0;
         }
-        let hart = ((offset - MSIP_BASE) / 4) as usize;
+        let hart =
+            ((offset - MSIP_BASE) / 4) as usize;
         if hart < self.num_harts as usize {
             self.msip[hart] as u64
         } else {
@@ -262,26 +322,57 @@ impl Aclint {
         }
     }
 
-    pub fn write(&mut self, offset: u64, _size: u32, val: u64) {
-        if offset == MTIME_OFFSET {
-            // Invalidate all pending timer threads.
+    pub fn write(
+        &mut self,
+        offset: u64,
+        size: u32,
+        val: u64,
+    ) {
+        if offset >= MTIME_OFFSET
+            && offset < MTIME_OFFSET + 8
+        {
             self.cancel_timers();
-            self.mtime_base = val;
+            let sub = (offset - MTIME_OFFSET) as u32;
+            if size == 4 && sub == 0 {
+                let hi = self.mtime_base & 0xFFFF_FFFF_0000_0000;
+                self.mtime_base = hi | (val & 0xFFFF_FFFF);
+            } else if size == 4 && sub == 4 {
+                let lo = self.mtime_base & 0xFFFF_FFFF;
+                self.mtime_base = ((val & 0xFFFF_FFFF) << 32) | lo;
+            } else {
+                self.mtime_base = val;
+            }
             self.epoch = Instant::now();
             self.update_mti();
             return;
         }
-        if offset >= MTIMECMP_BASE {
-            let hart = ((offset - MTIMECMP_BASE) / 8) as usize;
+        if offset >= MTIMECMP_BASE
+            && offset < MTIMECMP_BASE + 8 * self.num_harts as u64
+        {
+            let reg_off = offset - MTIMECMP_BASE;
+            let hart = (reg_off / 8) as usize;
+            let sub = (reg_off % 8) as u32;
             if hart < self.num_harts as usize {
-                // Invalidate any pending timer thread
-                // for this hart before updating state.
                 self.timer_state.cancel_gen[hart]
                     .fetch_add(1, Ordering::SeqCst);
 
-                self.mtimecmp[hart] = val;
-                let pending = self.read_mtime() >= self.mtimecmp[hart];
-                if let Some(ref line) = self.mti_outputs[hart] {
+                if size == 4 && sub == 0 {
+                    let hi =
+                        self.mtimecmp[hart] & 0xFFFF_FFFF_0000_0000;
+                    self.mtimecmp[hart] =
+                        hi | (val & 0xFFFF_FFFF);
+                } else if size == 4 && sub == 4 {
+                    let lo =
+                        self.mtimecmp[hart] & 0xFFFF_FFFF;
+                    self.mtimecmp[hart] =
+                        ((val & 0xFFFF_FFFF) << 32) | lo;
+                } else {
+                    self.mtimecmp[hart] = val;
+                }
+                let pending =
+                    self.read_mtime() >= self.mtimecmp[hart];
+                if let Some(ref line) = self.mti_outputs[hart]
+                {
                     line.set(pending);
                 }
                 if !pending {
@@ -291,12 +382,17 @@ impl Aclint {
             }
             return;
         }
-        let hart = ((offset - MSIP_BASE) / 4) as usize;
-        if hart < self.num_harts as usize {
-            let v = (val as u32) & 1;
-            self.msip[hart] = v;
-            if let Some(ref line) = self.msi_outputs[hart] {
-                line.set(v != 0);
+        if offset >= MSIP_BASE {
+            let hart =
+                ((offset - MSIP_BASE) / 4) as usize;
+            if hart < self.num_harts as usize {
+                let v = (val as u32) & 1;
+                self.msip[hart] = v;
+                if let Some(ref line) =
+                    self.msi_outputs[hart]
+                {
+                    line.set(v != 0);
+                }
             }
         }
     }

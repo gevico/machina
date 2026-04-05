@@ -216,6 +216,9 @@ impl Default for Pmp {
 ///   base = (pmpaddr & ~((1 << (G+1)) - 1)) << 2
 pub fn napot_range(pmpaddr: u64) -> (u64, u64) {
     let g = (!pmpaddr).trailing_zeros() as u64;
+    if g >= 61 {
+        return (0, u64::MAX);
+    }
     let size: u64 = 1u64 << (g + 3);
     let mask = size - 1;
     let base = (pmpaddr << 2) & !mask;

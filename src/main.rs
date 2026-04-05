@@ -201,8 +201,12 @@ extern "C" fn crash_handler(
     let pc = LAST_TB_PC.load(Ordering::Relaxed);
     let fault_addr = unsafe { (*info).si_addr() };
     let uctx = ctx as *const libc::ucontext_t;
-    let rbp = unsafe { (*uctx).uc_mcontext.gregs[libc::REG_RBP as usize] };
-    let rip = unsafe { (*uctx).uc_mcontext.gregs[libc::REG_RIP as usize] };
+    let rbp = unsafe {
+        (*uctx).uc_mcontext.gregs[libc::REG_RBP as usize]
+    };
+    let rip = unsafe {
+        (*uctx).uc_mcontext.gregs[libc::REG_RIP as usize]
+    };
     machina_hw_core::chardev::restore_terminal();
     eprintln!(
         "\nmachina: SIGSEGV at host {:#x}\n\
@@ -283,6 +287,8 @@ fn run_machine_cycle(
 
     // JIT backend with SoftMMU/TLB config.
     let mut backend = X86_64CodeGen::new();
+    backend.neg_align_off =
+        machina_system::cpus::NEG_ALIGN_OFFSET as i32;
     #[allow(unused_imports)]
     use machina_system::cpus::fault_pc_offset;
     use machina_system::cpus::{
@@ -349,7 +355,19 @@ fn run_machine_cycle(
         ms.set_stop_flag(Arc::clone(&stop_flag));
         fs_cpu.set_monitor_state(Arc::clone(ms));
     }
-    cpu_mgr.add_cpu(fs_cpu);
+    {
+        let placed = cpu_mgr.add_cpu(fs_cpu);
+        // Connect neg_align pointer to ACLINT so timer
+        // threads can break goto_tb chains on interrupt.
+        // Must happen after add_cpu so the CPU is in its
+        // final heap location.
+        let ptr = placed.neg_align_ptr();
+        machine
+            .aclint()
+            .lock()
+            .unwrap()
+            .connect_neg_align(0, ptr);
+    }
 
     // Wire SiFive Test to execution control.
     let shutdown_reason: Arc<std::sync::Mutex<Option<ShutdownReason>>> =

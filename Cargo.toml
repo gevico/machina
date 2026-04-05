@@ -86,3 +86,6 @@ machina-monitor  = { workspace = true }
 machina-hw-core  = { workspace = true }
 machina-util     = { workspace = true }
 libc             = { workspace = true }
+
+[profile.release]
+debug = 1

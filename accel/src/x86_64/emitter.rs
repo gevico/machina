@@ -1219,6 +1219,10 @@ pub struct X86_64CodeGen {
     /// SoftMMU config for full-system mode. When `None`,
     /// all guest memory accesses use direct [R14+addr].
     pub mmio: Option<SoftMmuConfig>,
+    /// Byte offset of the neg_align exit flag from env
+    /// (AREG0 / RBP). goto_tb checks this field; a
+    /// negative value breaks the chain.
+    pub neg_align_off: i32,
 }
 
 impl X86_64CodeGen {
@@ -1230,6 +1234,7 @@ impl X86_64CodeGen {
             code_gen_start: 0,
             goto_tb_info: Mutex::new(Vec::new()),
             mmio: None,
+            neg_align_off: 0,
         }
     }
 
@@ -1243,13 +1248,39 @@ impl X86_64CodeGen {
         }
     }
 
-    /// Emit `goto_tb(n)`: a patchable direct jump (5 bytes: E9 + disp32).
+    /// Emit `goto_tb(n)`: a patchable direct jump
+    /// with an exit-request check.
     ///
-    /// The disp32 field is aligned to 4 bytes so that concurrent
-    /// patching is atomic on x86-64 (safe for concurrent vCPUs).
-    pub fn emit_goto_tb(&self, buf: &mut CodeBuffer) -> (usize, usize) {
+    /// Generated code:
+    /// ```text
+    ///   cmp DWORD [rbp + neg_off], 0
+    ///   js  past_jmp       ; neg → exit TB
+    ///   <nop padding for alignment>
+    ///   JMP rel32           ; patched to next TB
+    /// past_jmp:
+    ///   <fall through to exit_tb>
+    /// ```
+    ///
+    /// The disp32 field is aligned to 4 bytes so that
+    /// concurrent patching is atomic on x86-64.
+    pub fn emit_goto_tb(
+        &self,
+        buf: &mut CodeBuffer,
+        neg_off: i32,
+    ) -> (usize, usize) {
+        // cmp DWORD [rbp + neg_off], 0
+        //   83 BD <disp32> 00
+        buf.emit_u8(0x83);
+        buf.emit_u8(0xBD);
+        buf.emit_u32(neg_off as u32);
+        buf.emit_u8(0x00);
+        // js rel8 (placeholder)
+        let js_pos = buf.offset();
+        buf.emit_u8(0x78);
+        buf.emit_u8(0x00);
+
         // Align disp32 to 4 bytes for atomic patching.
-        let disp_addr = buf.offset() + 1; // after E9 opcode
+        let disp_addr = buf.offset() + 1;
         let aligned = (disp_addr + 3) & !3;
         let pad = aligned - disp_addr;
         if pad > 0 {
@@ -1259,6 +1290,12 @@ impl X86_64CodeGen {
         buf.emit_u8(0xE9);
         buf.emit_u32(0);
         let reset_offset = buf.offset();
+
+        // Patch js rel8 → past_jmp (= reset_offset).
+        let js_rel =
+            (reset_offset - (js_pos + 2)) as u8;
+        buf.patch_u8(js_pos + 1, js_rel);
+
         (jmp_offset, reset_offset)
     }
 

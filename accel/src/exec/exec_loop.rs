@@ -87,6 +87,24 @@ where
         }
         per_cpu.stats.loop_iters += 1;
 
+        // Clear exit-request flag so goto_tb chains
+        // proceed normally until the next device kick.
+        {
+            let neg_off =
+                shared.backend.neg_align_offset();
+            if neg_off > 0 {
+                let env = cpu.env_ptr();
+                unsafe {
+                    let p = env.add(neg_off as usize)
+                        as *const std::sync::atomic::AtomicI32;
+                    (*p).store(
+                        0,
+                        std::sync::atomic::Ordering::Relaxed,
+                    );
+                }
+            }
+        }
+
         // Check interrupts BEFORE executing the next TB
         // (matching QEMU's cpu_handle_interrupt).
         if cpu.pending_interrupt() {
@@ -114,14 +132,16 @@ where
             }
         };
 
-        let _atomic_guard = if shared.tb_store.get(tb_idx).contains_atomic {
-            Some(shared.atomic_lock.lock().unwrap())
-        } else {
-            None
-        };
+        let _atomic_guard =
+            if shared.tb_store.get(tb_idx).contains_atomic {
+                Some(shared.atomic_lock.lock().unwrap())
+            } else {
+                None
+            };
         let raw_exit = cpu_tb_exec(shared, cpu, tb_idx);
         drop(_atomic_guard);
-        let (last_tb, exit_code) = decode_tb_exit(raw_exit);
+        let (last_tb, exit_code) =
+            decode_tb_exit(raw_exit);
 
         let src_tb = last_tb.unwrap_or(tb_idx);
 

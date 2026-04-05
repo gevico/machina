@@ -1,7 +1,7 @@
 //! RISC-V CPU state.
 
 use std::mem::offset_of;
-use std::sync::atomic::{AtomicBool, AtomicU32};
+use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU32};
 
 use super::csr::{CsrFile, PrivLevel};
 
@@ -54,6 +54,13 @@ pub struct RiscvCpu {
     pub utval: u64,
     /// User interrupt pending (uip).
     pub uip: u64,
+
+    /// Exit flag for goto_tb chain breaking.
+    /// Negative value causes the next goto_tb to exit
+    /// instead of chaining. Set by device threads (e.g.
+    /// timer) and cleared by the exec loop each iteration.
+    pub neg_align: AtomicI32,
+    _pad_neg: i32,
 
     /// Pending interrupt request bitmap (full-system).
     pub interrupt_request: AtomicU32,
@@ -165,6 +172,9 @@ pub const UTVAL_OFFSET: i64 = UCAUSE_OFFSET + 8; // 608
 /// Byte offset of `uip`.
 pub const UIP_OFFSET: i64 = UTVAL_OFFSET + 8; // 616
 
+/// Byte offset of `neg_align` (exit flag for goto_tb).
+pub const NEG_ALIGN_OFFSET: i64 = UIP_OFFSET + 8; // 624
+
 /// Byte offset of `csr.mstatus`.
 pub const MSTATUS_OFFSET: i64 =
     (offset_of!(RiscvCpu, csr) + offset_of!(CsrFile, mstatus)) as i64;
@@ -193,6 +203,8 @@ impl RiscvCpu {
             ucause: 0,
             utval: 0,
             uip: 0,
+            neg_align: AtomicI32::new(0),
+            _pad_neg: 0,
             interrupt_request: AtomicU32::new(0),
             halted: AtomicBool::new(false),
             priv_level: PrivLevel::Machine,

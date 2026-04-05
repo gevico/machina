@@ -111,7 +111,7 @@ devtmpfs: initialized
 clocksource: jiffies: mask: 0xffffffff max_cycles: 0xffffffff, max_idle_ns: 7645041785100000 ns
 DMA: preallocated 128 KiB GFP_KERNEL pool for atomic allocations
 DMA: preallocated 128 KiB GFP_KERNEL|GFP_DMA32 pool for atomic allocations
-cpu0: Ratio of byte access time to unaligned word access is 7.75, unaligned accesses are fast
+cpu0: Ratio of byte access time to unaligned word access is 7.88, unaligned accesses are fast
 clocksource: Switched to clocksource riscv_clocksource
 Unpacking initramfs...
 workingset: timestamp_bits=62 max_order=16 bucket_order=0

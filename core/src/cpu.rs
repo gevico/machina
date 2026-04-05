@@ -111,6 +111,9 @@ pub trait GuestCpu {
         false
     }
 
+    /// Dump debug state to stderr (crash diagnostics).
+    fn dump_debug_state(&self) {}
+
     // -- GDB support (default no-op) --
 
     fn gdb_read_registers(&self, _buf: &mut [u8]) -> usize {

@@ -62,6 +62,7 @@ pub fn tlb_ptr_offset() -> usize {
 }
 
 /// Re-export TLB layout constants for JIT configuration.
+pub use machina_guest_riscv::riscv::cpu::NEG_ALIGN_OFFSET;
 pub use machina_guest_riscv::riscv::mmu::tlb_offsets;
 pub use machina_guest_riscv::riscv::mmu::TLB_SIZE;
 
@@ -216,6 +217,14 @@ impl FullSystemCpu {
             }
         }
         (std::ptr::null(), 0, 0)
+    }
+
+    /// Return the raw address of neg_align for ACLINT
+    /// timer to break goto_tb chains on interrupt.
+    pub fn neg_align_ptr(&self) -> u64 {
+        &self.cpu.neg_align
+            as *const std::sync::atomic::AtomicI32
+            as u64
     }
 
     /// Register MROM region for instruction fetch.
@@ -542,7 +551,7 @@ impl GuestCpu for FullSystemCpu {
                 }
             }
             RiscvTranslator::tb_stop(&mut d, ir);
-            d.base.num_insns * 4
+            (d.base.pc_next - d.base.pc_first) as u32
         } else {
             let mut d = RiscvDisasContext::new(pc, base, cfg);
             d.base.max_insns = limit;
@@ -569,7 +578,7 @@ impl GuestCpu for FullSystemCpu {
                 }
             }
             RiscvTranslator::tb_stop(&mut d, ir);
-            d.base.num_insns * 4
+            (d.base.pc_next - d.base.pc_first) as u32
         }
     }
 
@@ -627,11 +636,43 @@ impl GuestCpu for FullSystemCpu {
     }
 
     fn handle_interrupt(&mut self) {
-        let dev_mip = self.shared_mip.load(Ordering::Relaxed);
-        let saved = self.cpu.csr.mip;
-        self.cpu.csr.mip = saved | dev_mip;
+        let dev_mip =
+            self.shared_mip.load(Ordering::Relaxed);
+        // Hardware-controlled bits (MTI=7, MSI=3,
+        // MEI=11, SEI=9): mirror from device state.
+        // Software-controlled bits (STIP=5, SSIP=1):
+        // keep as-is in cpu.csr.mip.
+        const HW_BITS: u64 =
+            (1 << 3) | (1 << 7) | (1 << 9) | (1 << 11);
+        self.cpu.csr.mip =
+            (self.cpu.csr.mip & !HW_BITS)
+                | (dev_mip & HW_BITS);
         self.cpu.handle_interrupt();
-        self.cpu.csr.mip &= !dev_mip;
+    }
+
+    fn dump_debug_state(&self) {
+        eprintln!("=== MACHINA DEBUG DUMP ===");
+        eprintln!("pc={:#018x} priv={:?}",
+            self.cpu.pc, self.cpu.priv_level);
+        for i in 0..32 {
+            eprintln!(
+                "  x{:02}={:#018x}",
+                i, self.cpu.gpr[i]
+            );
+        }
+        eprintln!(
+            "  mstatus={:#018x} satp={:#018x}",
+            self.cpu.csr.mstatus, self.cpu.csr.satp
+        );
+        eprintln!(
+            "  mepc={:#018x} sepc={:#018x}",
+            self.cpu.csr.mepc, self.cpu.csr.sepc
+        );
+        eprintln!(
+            "  stvec={:#018x} mtvec={:#018x}",
+            self.cpu.csr.stvec, self.cpu.csr.mtvec
+        );
+        eprintln!("=== END DEBUG DUMP ===");
     }
 
     fn handle_exception(&mut self, excp: u64, tval: u64) {
@@ -730,10 +771,16 @@ impl GuestCpu for FullSystemCpu {
             let tval = self.cpu.mem_fault_tval;
             self.cpu.mem_fault_cause = 0;
             self.cpu.mem_fault_tval = 0;
-            // Use fault_pc for precise mepc.
             if self.cpu.fault_pc != 0 {
                 self.cpu.pc = self.cpu.fault_pc;
                 self.cpu.fault_pc = 0;
+            }
+            if cause == 12 && self.cpu.pc == 0 {
+                eprintln!(
+                    "MACHINA-DBG: insn page fault \
+                     at pc=0x0"
+                );
+                self.dump_debug_state();
             }
             self.handle_exception(cause, tval);
             true
@@ -894,7 +941,8 @@ impl GuestCpu for FullSystemCpu {
                     .sync_from_csr(&self.cpu.csr.pmpcfg, &self.cpu.csr.pmpaddr);
             }
             if csr_addr == CSR_SATP {
-                self.cpu.mmu.set_satp(new_val);
+                let actual_satp = self.cpu.csr.satp;
+                self.cpu.mmu.set_satp(actual_satp);
                 self.cpu.mmu.flush();
                 // No TB flush: matches QEMU behavior.
                 // TLB flush ensures slow-path page walk
@@ -1256,7 +1304,8 @@ pub unsafe extern "C" fn machina_csr_op(
             cpu.pmp.sync_from_csr(&cpu.csr.pmpcfg, &cpu.csr.pmpaddr);
         }
         if csr_addr == CSR_SATP {
-            cpu.mmu.set_satp(new_val);
+            let actual_satp = cpu.csr.satp;
+            cpu.mmu.set_satp(actual_satp);
             cpu.mmu.flush();
             cpu.tb_flush_pending = true;
         } else if should_flush_data_tlb_on_status_write(csr_addr) {

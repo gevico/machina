@@ -111,4 +111,10 @@ pub trait HostCodeGen {
     /// Clear recorded goto_tb offsets before a new codegen
     /// pass.
     fn clear_goto_tb_offsets(&self);
+
+    /// Byte offset of the exit-request flag (neg_align)
+    /// from the env pointer. Returns 0 if not supported.
+    fn neg_align_offset(&self) -> i32 {
+        0
+    }
 }
