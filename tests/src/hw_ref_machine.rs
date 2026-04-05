@@ -609,6 +609,32 @@ fn test_fdt_chosen_initrd() {
 }
 
 #[test]
+fn test_fdt_placement_2mb_aligned() {
+    let mut m = RefMachine::new();
+    m.init(&MachineOpts {
+        ram_size: 128 * 1024 * 1024,
+        cpu_count: 1,
+        kernel: None,
+        bios: Some("none".into()),
+        append: None,
+        initrd: None,
+        nographic: false,
+        drive: None,
+    })
+    .unwrap();
+    m.boot().unwrap();
+    let as_ = m.address_space();
+
+    let fdt_addr = as_.read(GPA::new(MROM_BASE + 0x20), 8);
+    assert_eq!(
+        fdt_addr & 0x1F_FFFF,
+        0,
+        "fdt_addr should be 2MiB-aligned, got {:#x}",
+        fdt_addr
+    );
+}
+
+#[test]
 fn test_boot_loads_initrd_into_ram() {
     let mut m = RefMachine::new();
     let initrd_file = tempfile::NamedTempFile::new().unwrap();

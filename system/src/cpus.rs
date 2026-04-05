@@ -1121,8 +1121,6 @@ pub unsafe extern "C" fn machina_mem_read(
     match translate_for_helper(cpu, gva, AccessType::Read, size) {
         Some(pa) => {
             if !is_phys_backed(cpu, pa, size) {
-                cpu.mem_fault_cause = 5;
-                cpu.mem_fault_tval = gva;
                 return 0;
             }
             read_phys_sized(cpu, pa, size)
@@ -1145,8 +1143,6 @@ pub unsafe extern "C" fn machina_mem_write(
     let cpu = &mut *(env as *mut RiscvCpu);
     if let Some(pa) = translate_for_helper(cpu, gva, AccessType::Write, size) {
         if !is_phys_backed(cpu, pa, size) {
-            cpu.mem_fault_cause = 7;
-            cpu.mem_fault_tval = gva;
             return;
         }
         write_phys_sized(cpu, pa, val, size);

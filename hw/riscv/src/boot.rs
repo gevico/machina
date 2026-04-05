@@ -278,15 +278,21 @@ pub fn boot_ref_machine(
             .map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
     }
 
-    // Place FDT at top of RAM, aligned to 8 bytes.
+    // Place FDT using QEMU-style 2MiB-aligned placement.
+    // QEMU: ALIGN_DOWN(min(ram_end, 3GiB) - fdtsize, 2MiB)
     let fdt = machine.fdt_blob().to_vec();
     let fdt_len = fdt.len() as u64;
     let ram_size = machine.ram_size();
     if fdt_len > ram_size {
         return Err("FDT blob larger than available RAM".into());
     }
-    let fdt_offset = (ram_size - fdt_len) & !0x7;
-    let fdt_addr = RAM_BASE + fdt_offset;
+    let dram_end = RAM_BASE + ram_size;
+    let temp = if RAM_BASE < 0xC000_0000 {
+        std::cmp::min(dram_end, 0xC000_0000)
+    } else {
+        dram_end
+    };
+    let fdt_addr = (temp - fdt_len) & !0x1F_FFFF;
     let as_ = machine.address_space();
     loader::load_binary(&fdt, GPA::new(fdt_addr), as_)
         .map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
