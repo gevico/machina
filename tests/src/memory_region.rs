@@ -1,4 +1,4 @@
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use machina_core::address::GPA;
 use machina_memory::*;
@@ -78,7 +78,7 @@ fn test_flat_view_overlap_priority() {
     // High-priority IO covering 0x1000..0x2000 (4 KiB)
     // overlapping the RAM.
     let uart = MockUart::new();
-    let io_hi = MemoryRegion::io("uart", 0x1000, Box::new(uart));
+    let io_hi = MemoryRegion::io("uart", 0x1000, Arc::new(uart));
 
     let mut root = MemoryRegion::container("root", 0x10_0000);
     root.add_subregion(ram_lo, GPA::new(0));

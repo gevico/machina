@@ -169,7 +169,7 @@ fn test_uart_tx_to_chardev() {
         let region = MemoryRegion::io(
             "uart0",
             0x100,
-            Box::new(machina_hw_char::uart::Uart16550Mmio(Arc::clone(&uart))),
+            Arc::new(machina_hw_char::uart::Uart16550Mmio(Arc::clone(&uart))),
         );
         u.register_mmio(region, GPA::new(0x1000_0000)).unwrap();
         u.attach_chardev(fe).unwrap();
@@ -206,7 +206,7 @@ fn test_uart_rx_irq_line() {
         let region = MemoryRegion::io(
             "uart0",
             0x100,
-            Box::new(machina_hw_char::uart::Uart16550Mmio(Arc::clone(&uart))),
+            Arc::new(machina_hw_char::uart::Uart16550Mmio(Arc::clone(&uart))),
         );
         u.register_mmio(region, GPA::new(0x1000_0000)).unwrap();
         u.attach_irq(line).unwrap();
@@ -283,7 +283,7 @@ fn test_uart_realize_via_sysbus_installs_runtime_wiring() {
         let region = MemoryRegion::io(
             "uart0",
             0x100,
-            Box::new(machina_hw_char::uart::Uart16550Mmio(Arc::clone(&uart))),
+            Arc::new(machina_hw_char::uart::Uart16550Mmio(Arc::clone(&uart))),
         );
         u.register_mmio(region, GPA::new(0x1000_0000)).unwrap();
         u.attach_irq(IrqLine::new(Arc::clone(&sink) as Arc<dyn IrqSink>, 10))
@@ -349,7 +349,7 @@ fn test_uart_unrealize_drops_runtime_wiring() {
         let region = MemoryRegion::io(
             "uart0",
             0x100,
-            Box::new(machina_hw_char::uart::Uart16550Mmio(Arc::clone(&uart))),
+            Arc::new(machina_hw_char::uart::Uart16550Mmio(Arc::clone(&uart))),
         );
         u.register_mmio(region, GPA::new(0x1000_0000)).unwrap();
         u.attach_chardev(CharFrontend::new(Box::new(SinkChardev {

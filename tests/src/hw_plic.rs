@@ -237,7 +237,7 @@ fn test_plic_realize_via_sysbus_maps_mmio() {
                 MemoryRegion::io(
                     "plic",
                     0x0400_0000,
-                    Box::new(PlicMmio(Arc::clone(&plic))),
+                    Arc::new(PlicMmio(Arc::clone(&plic))),
                 ),
                 GPA::new(0x0C00_0000),
             )

@@ -181,7 +181,10 @@ impl VirtioMmio {
         }
     }
 
-    pub fn attach_to_bus(&mut self, bus: &mut SysBus) -> Result<(), SysBusError> {
+    pub fn attach_to_bus(
+        &mut self,
+        bus: &mut SysBus,
+    ) -> Result<(), SysBusError> {
         self.device.attach_to_bus(bus)
     }
 
@@ -197,7 +200,7 @@ impl VirtioMmio {
         MemoryRegion::io(
             name,
             size,
-            Box::new(VirtioMmioRegion(Arc::clone(&self.state))),
+            Arc::new(VirtioMmioRegion(Arc::clone(&self.state))),
         )
     }
 

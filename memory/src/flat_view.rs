@@ -1,4 +1,4 @@
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use machina_core::address::GPA;
 
@@ -13,7 +13,7 @@ use crate::region::{MemoryRegion, MmioOps, RegionType};
 pub enum FlatRangeKind {
     Ram { block: Arc<RamBlock> },
     Rom { block: Arc<RamBlock> },
-    Io { ops: Arc<Mutex<Box<dyn MmioOps>>> },
+    Io { ops: Arc<dyn MmioOps> },
 }
 
 /// A single non-overlapping range in the flattened address

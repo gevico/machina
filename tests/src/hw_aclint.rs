@@ -288,7 +288,7 @@ fn test_aclint_realize_via_sysbus_maps_mmio() {
                 MemoryRegion::io(
                     "clint",
                     0x1_0000,
-                    Box::new(AclintMmio(Arc::clone(&aclint))),
+                    Arc::new(AclintMmio(Arc::clone(&aclint))),
                 ),
                 GPA::new(0x0200_0000),
             )

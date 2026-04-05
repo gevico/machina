@@ -12,8 +12,8 @@ use machina_guest_riscv::riscv::cpu::RiscvCpu;
 use machina_hw_char::uart::{Uart16550, Uart16550Mmio};
 use machina_hw_core::bus::{SysBus, SysBusMapping};
 use machina_hw_core::chardev::{
-    CharFrontend, Chardev, ChardevObject, ChardevResolveError,
-    ChardevResolver, NullChardev, StdioChardev,
+    CharFrontend, Chardev, ChardevObject, ChardevResolveError, ChardevResolver,
+    NullChardev, StdioChardev,
 };
 use machina_hw_core::fdt::FdtBuilder;
 use machina_hw_core::irq::{IrqLine, IrqSink};
@@ -256,8 +256,10 @@ impl RefMachine {
         object_ref: &str,
         property: &str,
     ) -> Option<MPropertyValue> {
-        self.with_mdevice(object_ref, |device| device.property(property).cloned())
-            .flatten()
+        self.with_mdevice(object_ref, |device| {
+            device.property(property).cloned()
+        })
+        .flatten()
     }
 
     fn realized_sysbus_mapping(&self, owner: &str) -> &SysBusMapping {
@@ -295,7 +297,8 @@ impl RefMachine {
     }
 
     fn object_matches(object_ref: &str, info: &MObjectInfo) -> bool {
-        info.local_id == object_ref || info.object_path.as_deref() == Some(object_ref)
+        info.local_id == object_ref
+            || info.object_path.as_deref() == Some(object_ref)
     }
 
     fn with_mdevice<T>(
@@ -672,7 +675,7 @@ impl Machine for RefMachine {
             let plic_region = MemoryRegion::io(
                 "plic",
                 PLIC_SIZE,
-                Box::new(PlicMmio(Arc::clone(&plic))),
+                Arc::new(PlicMmio(Arc::clone(&plic))),
             );
             p.register_mmio(plic_region, GPA::new(PLIC_BASE))?;
         }
@@ -687,7 +690,7 @@ impl Machine for RefMachine {
             let aclint_region = MemoryRegion::io(
                 "clint",
                 ACLINT_SIZE,
-                Box::new(AclintMmio(Arc::clone(&aclint))),
+                Arc::new(AclintMmio(Arc::clone(&aclint))),
             );
             a.register_mmio(aclint_region, GPA::new(ACLINT_BASE))?;
         }
@@ -702,7 +705,7 @@ impl Machine for RefMachine {
             let uart_region = MemoryRegion::io(
                 "uart0",
                 UART0_SIZE,
-                Box::new(Uart16550Mmio(Arc::clone(&uart))),
+                Arc::new(Uart16550Mmio(Arc::clone(&uart))),
             );
             u.register_mmio(uart_region, GPA::new(UART0_BASE))?;
         }
@@ -713,7 +716,7 @@ impl Machine for RefMachine {
         let st_region = MemoryRegion::io(
             "sifive_test",
             SIFIVE_TEST_SIZE,
-            Box::new(SifiveTestMmio(Arc::clone(&sifive_test))),
+            Arc::new(SifiveTestMmio(Arc::clone(&sifive_test))),
         );
         root.add_subregion(st_region, GPA::new(SIFIVE_TEST_BASE));
         self.sifive_test = Some(sifive_test);

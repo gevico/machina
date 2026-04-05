@@ -1,4 +1,4 @@
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use machina_core::address::GPA;
 
@@ -11,7 +11,7 @@ use crate::ram::RamBlock;
 /// Implementors should use interior mutability (e.g. `Mutex`)
 /// for any mutable state so that `write` can take `&self`,
 /// matching the shared-ownership model of the memory tree.
-pub trait MmioOps: Send {
+pub trait MmioOps: Send + Sync {
     fn read(&self, offset: u64, size: u32) -> u64;
 
     fn write(&self, offset: u64, size: u32, val: u64);
@@ -27,7 +27,7 @@ pub enum RegionType {
         block: Arc<RamBlock>,
     },
     Io {
-        ops: Arc<Mutex<Box<dyn MmioOps>>>,
+        ops: Arc<dyn MmioOps>,
     },
     Alias {
         target: Box<MemoryRegion>,
@@ -103,13 +103,11 @@ impl MemoryRegion {
     }
 
     /// Create an MMIO region backed by device callbacks.
-    pub fn io(name: &str, size: u64, ops: Box<dyn MmioOps>) -> Self {
+    pub fn io(name: &str, size: u64, ops: Arc<dyn MmioOps>) -> Self {
         Self {
             name: name.to_string(),
             size,
-            region_type: RegionType::Io {
-                ops: Arc::new(Mutex::new(ops)),
-            },
+            region_type: RegionType::Io { ops },
             priority: 0,
             subregions: Vec::new(),
             enabled: true,

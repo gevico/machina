@@ -83,10 +83,7 @@ impl AddressSpace {
                 }
                 u64::from_le_bytes(buf)
             }
-            FlatRangeKind::Io { ops } => {
-                let ops = ops.lock().unwrap();
-                ops.read(region_off, size)
-            }
+            FlatRangeKind::Io { ops } => ops.read(region_off, size),
         }
     }
 
@@ -123,7 +120,6 @@ impl AddressSpace {
                 // Writes to ROM are silently dropped.
             }
             FlatRangeKind::Io { ops } => {
-                let ops = ops.lock().unwrap();
                 ops.write(region_off, size, val);
             }
         }

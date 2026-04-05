@@ -611,7 +611,7 @@ fn test_fullsys_mmio_observable_dispatch() {
     let io_region = MemoryRegion::io(
         "test-mmio",
         0x1000,
-        Box::new(TestMmioDeviceWrapper {
+        Arc::new(TestMmioDeviceWrapper {
             inner: Arc::clone(&device),
         }),
     );

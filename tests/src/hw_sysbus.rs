@@ -57,7 +57,7 @@ fn test_sysbus_realize_maps_mmio_into_address_space() {
     let region = MemoryRegion::io(
         "uart0-mmio",
         0x100,
-        Box::new(TestMmio {
+        Arc::new(TestMmio {
             value: Arc::clone(&backing),
         }),
     );
@@ -105,7 +105,7 @@ fn test_sysbus_requires_attach_before_realize() {
     let region = MemoryRegion::io(
         "uart0-mmio",
         0x100,
-        Box::new(TestMmio {
+        Arc::new(TestMmio {
             value: Arc::new(Mutex::new(0)),
         }),
     );
@@ -129,7 +129,7 @@ fn test_sysbus_rejects_overlapping_realize() {
             MemoryRegion::io(
                 "uart0-mmio",
                 0x100,
-                Box::new(TestMmio {
+                Arc::new(TestMmio {
                     value: Arc::new(Mutex::new(0)),
                 }),
             ),
@@ -141,7 +141,7 @@ fn test_sysbus_rejects_overlapping_realize() {
             MemoryRegion::io(
                 "timer0-mmio",
                 0x100,
-                Box::new(TestMmio {
+                Arc::new(TestMmio {
                     value: Arc::new(Mutex::new(0)),
                 }),
             ),
@@ -177,7 +177,7 @@ fn test_sysbus_rejects_late_mutation_after_realize() {
             MemoryRegion::io(
                 "uart0-mmio",
                 0x100,
-                Box::new(TestMmio {
+                Arc::new(TestMmio {
                     value: Arc::new(Mutex::new(0)),
                 }),
             ),
@@ -194,7 +194,7 @@ fn test_sysbus_rejects_late_mutation_after_realize() {
             MemoryRegion::io(
                 "late-mmio",
                 0x100,
-                Box::new(TestMmio {
+                Arc::new(TestMmio {
                     value: Arc::new(Mutex::new(0)),
                 }),
             ),
@@ -228,7 +228,7 @@ fn test_sysbus_unrealize_removes_mmio_from_address_space() {
             MemoryRegion::io(
                 "uart0-mmio",
                 0x100,
-                Box::new(TestMmio {
+                Arc::new(TestMmio {
                     value: Arc::new(Mutex::new(0)),
                 }),
             ),
