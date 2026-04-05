@@ -18,6 +18,7 @@ mod gen_priv;
 mod gen_rva;
 mod gen_rvi;
 mod gen_rvm;
+mod gen_zba;
 mod helpers;
 
 use super::ext::MisaExt;
@@ -713,6 +714,35 @@ impl Decode<Context> for RiscvDisasContext {
     fn trans_amomaxu_d(&mut self, ir: &mut Context, a: &ArgsAtomic) -> bool {
         require_ext!(self, MisaExt::A);
         self.gen_amo_minmax(ir, a, Cond::Gtu, MemOp::uq())
+    }
+
+    // ============================================================
+    // Zba — Address Computation
+    // ============================================================
+
+    fn trans_sh1add(&mut self, ir: &mut Context, a: &ArgsR) -> bool {
+        require_cfg!(self, ext_zba);
+        self.gen_sh1add(ir, a)
+    }
+
+    fn trans_sh2add(&mut self, ir: &mut Context, a: &ArgsR) -> bool {
+        require_cfg!(self, ext_zba);
+        self.gen_sh2add(ir, a)
+    }
+
+    fn trans_sh3add(&mut self, ir: &mut Context, a: &ArgsR) -> bool {
+        require_cfg!(self, ext_zba);
+        self.gen_sh3add(ir, a)
+    }
+
+    fn trans_add_uw(&mut self, ir: &mut Context, a: &ArgsR) -> bool {
+        require_cfg!(self, ext_zba);
+        self.gen_add_uw(ir, a)
+    }
+
+    fn trans_slli_uw(&mut self, ir: &mut Context, a: &ArgsShift) -> bool {
+        require_cfg!(self, ext_zba);
+        self.gen_slli_uw(ir, a)
     }
 
     // ============================================================
