@@ -35,6 +35,8 @@ fn usage() {
          vs QEMU"
     );
     eprintln!("  -drive file=<path>  Attach raw disk image");
+    eprintln!("  -initrd path  Initial ramdisk image");
+    eprintln!("  -append line  Kernel command line");
     eprintln!("  -monitor stdio|tcp:host:port  Monitor console");
     eprintln!("  -h, --help    Show this help");
 }
@@ -48,6 +50,8 @@ struct CliArgs {
     difftest: bool,
     drive: Option<PathBuf>,
     monitor: Option<String>,
+    initrd: Option<PathBuf>,
+    append: Option<String>,
 }
 
 impl Default for CliArgs {
@@ -61,6 +65,8 @@ impl Default for CliArgs {
             difftest: false,
             drive: None,
             monitor: None,
+            initrd: None,
+            append: None,
         }
     }
 }
@@ -127,6 +133,21 @@ fn parse_args() -> Result<CliArgs, String> {
             "-device" => {
                 // Accept and skip for QEMU compat.
                 i += 1;
+            }
+            "-initrd" => {
+                i += 1;
+                cli.initrd = Some(
+                    args.get(i)
+                        .ok_or("-initrd requires argument")?
+                        .clone()
+                        .into(),
+                );
+            }
+            "-append" => {
+                i += 1;
+                cli.append = Some(
+                    args.get(i).ok_or("-append requires argument")?.clone(),
+                );
             }
             "-monitor" => {
                 i += 1;
@@ -383,7 +404,8 @@ fn main() {
         cpu_count: 1,
         kernel: cli.kernel.clone(),
         bios: cli.bios.clone(),
-        append: None,
+        append: cli.append.clone(),
+        initrd: cli.initrd.clone(),
         nographic: cli.nographic,
         drive: cli.drive.clone(),
     };

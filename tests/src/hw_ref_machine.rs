@@ -12,6 +12,7 @@ fn default_opts() -> MachineOpts {
         kernel: None,
         bios: None,
         append: None,
+        initrd: None,
         nographic: false,
         drive: None,
     }
@@ -216,6 +217,7 @@ fn test_ref_machine_zero_ram_fails() {
         kernel: None,
         bios: None,
         append: None,
+        initrd: None,
         nographic: false,
         drive: None,
     };
@@ -250,6 +252,7 @@ fn test_ref_machine_plic_contexts_multi_hart() {
         kernel: None,
         bios: None,
         append: None,
+        initrd: None,
         nographic: false,
         drive: None,
     };

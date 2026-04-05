@@ -12,6 +12,7 @@ pub struct MachineOpts {
     pub kernel: Option<PathBuf>,
     pub bios: Option<PathBuf>,
     pub append: Option<String>,
+    pub initrd: Option<PathBuf>,
     pub nographic: bool,
     pub drive: Option<PathBuf>,
 }
