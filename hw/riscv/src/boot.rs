@@ -248,7 +248,7 @@ pub fn boot_ref_machine(
     }
 
     // Load kernel.
-    let mut dinfo_next: Option<u64> = None;
+    let mut kernel_entry: Option<u64> = None;
     if let Some(ref kernel_path) = machine.kernel_path {
         let data = std::fs::read(kernel_path)?;
         let as_ = machine.address_space();
@@ -260,13 +260,13 @@ pub fn boot_ref_machine(
         if is_elf(&data) {
             let info = loader::load_elf(&data, load_addr, as_)
                 .map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
-            dinfo_next = Some(info.entry.0);
+            kernel_entry = Some(info.entry.0);
         } else {
             loader::load_binary(&data, GPA::new(load_addr), as_)
                 .map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
+            kernel_entry = Some(load_addr);
         }
     }
-    let kernel_entry = dinfo_next;
 
     // Load initrd (if provided) after the kernel.
     let mut initrd_range: Option<(u64, u64)> = None;
@@ -308,8 +308,6 @@ pub fn boot_ref_machine(
         RAM_BASE
     } else if let Some(entry) = kernel_entry {
         entry
-    } else if machine.kernel_path.is_some() {
-        RAM_BASE + KERNEL_OFFSET
     } else {
         RAM_BASE
     };
