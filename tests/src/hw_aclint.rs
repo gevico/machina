@@ -1,5 +1,5 @@
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use machina_core::address::GPA;
 use machina_hw_core::bus::SysBus;
@@ -57,7 +57,7 @@ fn test_aclint_mtime_wall_clock() {
 
 #[test]
 fn test_aclint_mtime_write_resets_epoch() {
-    let mut aclint = Aclint::new(2);
+    let aclint = Aclint::new(2);
 
     aclint.write(0xBFF8, 8, 1_000_000);
     let t = aclint.read(0xBFF8, 8);
@@ -71,7 +71,7 @@ fn test_aclint_mtime_write_resets_epoch() {
 
 #[test]
 fn test_aclint_mtimecmp_set() {
-    let mut aclint = Aclint::new(2);
+    let aclint = Aclint::new(2);
 
     aclint.write(0x4000, 8, 500);
     assert_eq!(aclint.read(0x4000, 8), 500);
@@ -82,7 +82,7 @@ fn test_aclint_mtimecmp_set() {
 
 #[test]
 fn test_aclint_msip_set_clear() {
-    let mut aclint = Aclint::new(2);
+    let aclint = Aclint::new(2);
 
     aclint.write(0x0000, 4, 1);
     assert_eq!(aclint.read(0x0000, 4), 1);
@@ -97,7 +97,7 @@ fn test_aclint_msip_set_clear() {
 
 #[test]
 fn test_aclint_timer_compare() {
-    let mut aclint = Aclint::new(2);
+    let aclint = Aclint::new(2);
 
     // Set mtimecmp[0] = 100.
     aclint.write(0x4000, 8, 100);
@@ -116,7 +116,7 @@ fn test_aclint_timer_compare() {
 
 #[test]
 fn test_aclint_mti_output() {
-    let mut aclint = Aclint::new(2);
+    let aclint = Aclint::new(2);
 
     let sink = Arc::new(TestIrqSink::new(16));
     let mti_irq = 7u32;
@@ -150,7 +150,7 @@ fn test_aclint_mti_output() {
 
 #[test]
 fn test_aclint_msi_output() {
-    let mut aclint = Aclint::new(2);
+    let aclint = Aclint::new(2);
 
     let sink = Arc::new(TestIrqSink::new(16));
     let msi_irq = 3u32;
@@ -168,7 +168,7 @@ fn test_aclint_msi_output() {
 
 #[test]
 fn test_aclint_clint_layout() {
-    let mut aclint = Aclint::new(2);
+    let aclint = Aclint::new(2);
 
     aclint.write(0x0000, 4, 1);
     assert_eq!(aclint.read(0x0000, 4), 1);
@@ -187,7 +187,7 @@ fn test_aclint_clint_layout() {
 
 #[test]
 fn test_aclint_mtimecmp_disable() {
-    let mut aclint = Aclint::new(1);
+    let aclint = Aclint::new(1);
     let sink = Arc::new(TestIrqSink::new(16));
     let mti = 7u32;
     let line = IrqLine::new(Arc::clone(&sink) as Arc<dyn IrqSink>, mti);
@@ -209,7 +209,7 @@ fn test_aclint_mtimecmp_disable() {
 
 #[test]
 fn test_aclint_mtimecmp_retarget_past() {
-    let mut aclint = Aclint::new(1);
+    let aclint = Aclint::new(1);
     let sink = Arc::new(TestIrqSink::new(16));
     let mti = 7u32;
     let line = IrqLine::new(Arc::clone(&sink) as Arc<dyn IrqSink>, mti);
@@ -223,7 +223,7 @@ fn test_aclint_mtimecmp_retarget_past() {
 
 #[test]
 fn test_aclint_timer_thread_asserts_mti() {
-    let mut aclint = Aclint::new(1);
+    let aclint = Aclint::new(1);
     let sink = Arc::new(TestIrqSink::new(16));
     let mti = 7u32;
     let line = IrqLine::new(Arc::clone(&sink) as Arc<dyn IrqSink>, mti);
@@ -243,7 +243,7 @@ fn test_aclint_timer_thread_asserts_mti() {
 
 #[test]
 fn test_aclint_retarget_future_cancels_stale_timer() {
-    let mut aclint = Aclint::new(1);
+    let aclint = Aclint::new(1);
     let sink = Arc::new(TestIrqSink::new(16));
     let mti = 7u32;
     let line = IrqLine::new(Arc::clone(&sink) as Arc<dyn IrqSink>, mti);
@@ -279,28 +279,21 @@ fn test_aclint_retarget_future_cancels_stale_timer() {
 #[test]
 fn test_aclint_realize_via_sysbus_maps_mmio() {
     let mut bus = SysBus::new("sysbus0");
-    let aclint = Arc::new(Mutex::new(Aclint::new_named("aclint0", 2)));
-    {
-        let mut device = aclint.lock().unwrap();
-        device.attach_to_bus(&mut bus).unwrap();
-        device
-            .register_mmio(
-                MemoryRegion::io(
-                    "clint",
-                    0x1_0000,
-                    Arc::new(AclintMmio(Arc::clone(&aclint))),
-                ),
-                GPA::new(0x0200_0000),
-            )
-            .unwrap();
-    }
+    let aclint = Arc::new(Aclint::new_named("aclint0", 2));
+    aclint.attach_to_bus(&mut bus).unwrap();
+    aclint
+        .register_mmio(
+            MemoryRegion::io(
+                "clint",
+                0x1_0000,
+                Arc::new(AclintMmio(Arc::clone(&aclint))),
+            ),
+            GPA::new(0x0200_0000),
+        )
+        .unwrap();
 
     let mut address_space = make_address_space();
-    aclint
-        .lock()
-        .unwrap()
-        .realize_onto(&mut bus, &mut address_space)
-        .unwrap();
+    aclint.realize_onto(&mut bus, &mut address_space).unwrap();
 
     assert!(address_space.is_mapped(GPA::new(0x0200_0000), 8));
     address_space.write(GPA::new(0x0200_4000), 8, 0x1234);

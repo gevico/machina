@@ -9,18 +9,24 @@
 // 10 MHz (1 tick = 100 ns). When mtimecmp is set to a
 // future value, a timer thread sleeps until the deadline
 // and then asserts MTI via the IRQ line.
+//
+// Interior mutability: register state is in
+// DeviceRefCell<AclintRegs>, setup state in
+// parking_lot::Mutex<SysBusDeviceState>.  All public
+// methods take &self so the device can be shared via
+// Arc<Aclint> without an outer Mutex.
 
-use std::any::Any;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use machina_core::address::GPA;
-use machina_core::mobject::MObject;
+use machina_core::device_cell::DeviceRefCell;
+use machina_core::mobject::{MObject, MObjectInfo};
 use machina_core::wfi::WfiWaker;
 use machina_hw_core::bus::{SysBus, SysBusDeviceState, SysBusError};
 use machina_hw_core::irq::IrqLine;
-use machina_hw_core::mdev::{MDevice, MDeviceState};
+use machina_hw_core::mdev::MDevice;
 use machina_memory::address_space::AddressSpace;
 use machina_memory::region::{MemoryRegion, MmioOps};
 
@@ -35,16 +41,27 @@ struct TimerState {
     cancel_gen: Vec<AtomicU64>,
 }
 
-pub struct Aclint {
-    state: SysBusDeviceState,
-    num_harts: u32,
+/// Mutable register state protected by DeviceRefCell.
+pub struct AclintRegs {
     epoch: Instant,
     mtime_base: u64,
     mtimecmp: Vec<u64>,
     msip: Vec<u32>,
-    mti_outputs: Vec<Option<IrqLine>>,
-    msi_outputs: Vec<Option<IrqLine>>,
-    wfi_waker: Option<Arc<WfiWaker>>,
+}
+
+pub struct Aclint {
+    // Setup-only state behind parking_lot::Mutex so that
+    // attach_to_bus / register_mmio / realize_onto can be
+    // called through &self (Arc<Aclint>).
+    state: parking_lot::Mutex<SysBusDeviceState>,
+    num_harts: u32,
+    // Runtime register state.
+    regs: DeviceRefCell<AclintRegs>,
+    // Output lines. Written only during init (behind
+    // parking_lot::Mutex), read at runtime via the lock.
+    mti_outputs: parking_lot::Mutex<Vec<Option<IrqLine>>>,
+    msi_outputs: parking_lot::Mutex<Vec<Option<IrqLine>>>,
+    wfi_waker: parking_lot::Mutex<Option<Arc<WfiWaker>>>,
     timer_state: Arc<TimerState>,
 }
 
@@ -64,94 +81,127 @@ impl Aclint {
             gens.push(AtomicU64::new(0));
         }
         Self {
-            state: SysBusDeviceState::new(local_id),
+            state: parking_lot::Mutex::new(SysBusDeviceState::new(local_id)),
             num_harts,
-            epoch: Instant::now(),
-            mtime_base: 0,
-            mtimecmp: vec![u64::MAX; n],
-            msip: vec![0u32; n],
-            mti_outputs: mti,
-            msi_outputs: msi,
-            wfi_waker: None,
+            regs: DeviceRefCell::new(AclintRegs {
+                epoch: Instant::now(),
+                mtime_base: 0,
+                mtimecmp: vec![u64::MAX; n],
+                msip: vec![0u32; n],
+            }),
+            mti_outputs: parking_lot::Mutex::new(mti),
+            msi_outputs: parking_lot::Mutex::new(msi),
+            wfi_waker: parking_lot::Mutex::new(None),
             timer_state: Arc::new(TimerState { cancel_gen: gens }),
         }
     }
 
-    pub fn attach_to_bus(&mut self, bus: &mut SysBus) -> Result<(), SysBusError> {
-        self.state.attach_to_bus(bus)
+    // ---- Setup methods (delegate to locked state) ----
+
+    pub fn attach_to_bus(&self, bus: &mut SysBus) -> Result<(), SysBusError> {
+        self.state.lock().attach_to_bus(bus)
     }
 
     pub fn register_mmio(
-        &mut self,
+        &self,
         region: MemoryRegion,
         base: GPA,
     ) -> Result<(), SysBusError> {
-        self.state.register_mmio(region, base)
+        self.state.lock().register_mmio(region, base)
     }
 
     pub fn realize_onto(
-        &mut self,
+        &self,
         bus: &mut SysBus,
         address_space: &mut AddressSpace,
     ) -> Result<(), SysBusError> {
-        self.state.realize_onto(bus, address_space)
+        self.state.lock().realize_onto(bus, address_space)
     }
 
     pub fn unrealize_from(
-        &mut self,
+        &self,
         bus: &mut SysBus,
         address_space: &mut AddressSpace,
     ) -> Result<(), SysBusError> {
         self.cancel_timers();
         self.lower_outputs();
-        if let Some(ref wk) = self.wfi_waker {
-            wk.clear_deadline();
+        {
+            let wk = self.wfi_waker.lock();
+            if let Some(ref w) = *wk {
+                w.clear_deadline();
+            }
         }
-        self.state.unrealize_from(bus, address_space)
+        self.state.lock().unrealize_from(bus, address_space)
     }
 
     pub fn realized(&self) -> bool {
-        self.state.device().is_realized()
+        self.state.lock().device().is_realized()
     }
 
-    pub fn connect_mti(&mut self, hart: u32, irq: IrqLine) {
-        if (hart as usize) < self.mti_outputs.len() {
-            self.mti_outputs[hart as usize] = Some(irq);
+    pub fn object_info(&self) -> MObjectInfo {
+        self.state.lock().object_info()
+    }
+
+    /// Access the inner SysBusDeviceState as `&dyn MDevice`
+    /// through a closure (for MOM introspection).
+    pub fn with_mdevice<T>(&self, f: impl FnOnce(&dyn MDevice) -> T) -> T {
+        let guard = self.state.lock();
+        f(&*guard)
+    }
+
+    pub fn connect_mti(&self, hart: u32, irq: IrqLine) {
+        let mut outputs = self.mti_outputs.lock();
+        if (hart as usize) < outputs.len() {
+            outputs[hart as usize] = Some(irq);
         }
     }
 
-    pub fn connect_msi(&mut self, hart: u32, irq: IrqLine) {
-        if (hart as usize) < self.msi_outputs.len() {
-            self.msi_outputs[hart as usize] = Some(irq);
+    pub fn connect_msi(&self, hart: u32, irq: IrqLine) {
+        let mut outputs = self.msi_outputs.lock();
+        if (hart as usize) < outputs.len() {
+            outputs[hart as usize] = Some(irq);
         }
     }
 
-    pub fn connect_wfi_waker(&mut self, wk: Arc<WfiWaker>) {
-        self.wfi_waker = Some(wk);
+    pub fn connect_wfi_waker(&self, wk: Arc<WfiWaker>) {
+        *self.wfi_waker.lock() = Some(wk);
     }
 
-    pub fn reset_runtime(&mut self) {
+    pub fn reset_runtime(&self) {
         self.cancel_timers();
-        self.epoch = Instant::now();
-        self.mtime_base = 0;
-        self.mtimecmp.fill(u64::MAX);
-        self.msip.fill(0);
+        {
+            let mut regs = self.regs.borrow();
+            regs.epoch = Instant::now();
+            regs.mtime_base = 0;
+            regs.mtimecmp.fill(u64::MAX);
+            regs.msip.fill(0);
+        }
         self.lower_outputs();
-        if let Some(ref wk) = self.wfi_waker {
-            wk.clear_deadline();
+        {
+            let wk = self.wfi_waker.lock();
+            if let Some(ref w) = *wk {
+                w.clear_deadline();
+            }
         }
     }
 
     /// Current mtime value derived from wall clock.
     pub fn read_mtime(&self) -> u64 {
-        let elapsed = self.epoch.elapsed();
+        let regs = self.regs.borrow();
+        Self::read_mtime_with(&regs)
+    }
+
+    /// Read mtime from an already-borrowed regs guard.
+    fn read_mtime_with(regs: &AclintRegs) -> u64 {
+        let elapsed = regs.epoch.elapsed();
         let ticks = (elapsed.as_nanos() / 100) as u64;
-        self.mtime_base.wrapping_add(ticks)
+        regs.mtime_base.wrapping_add(ticks)
     }
 
     pub fn timer_irq_pending(&self, hart: u32) -> bool {
         if hart < self.num_harts {
-            self.read_mtime() >= self.mtimecmp[hart as usize]
+            let regs = self.regs.borrow();
+            Self::read_mtime_with(&regs) >= regs.mtimecmp[hart as usize]
         } else {
             false
         }
@@ -160,14 +210,15 @@ impl Aclint {
     /// Schedule a background timer for `hart` that will
     /// assert MTI when the wall clock reaches `mtimecmp`.
     fn schedule_timer(&self, hart: usize) {
-        let cmp = self.mtimecmp[hart];
+        // Read values under regs lock.
+        let (cmp, now) = {
+            let regs = self.regs.borrow();
+            (regs.mtimecmp[hart], Self::read_mtime_with(&regs))
+        };
         if cmp == u64::MAX {
             return;
         }
-        let now = self.read_mtime();
         if cmp <= now {
-            // Already expired — MTI already set in the
-            // synchronous write path.
             return;
         }
         let delta_ticks = cmp - now;
@@ -180,19 +231,21 @@ impl Aclint {
             .fetch_add(1, Ordering::SeqCst)
             + 1;
 
-        let line = match &self.mti_outputs[hart] {
-            Some(l) => l.clone(),
-            None => return,
+        let line = {
+            let outputs = self.mti_outputs.lock();
+            match &outputs[hart] {
+                Some(l) => l.clone(),
+                None => return,
+            }
         };
-        let waker = self.wfi_waker.clone();
+        let waker = self.wfi_waker.lock().clone();
         let state = Arc::clone(&self.timer_state);
 
         std::thread::spawn(move || {
             std::thread::sleep(delay);
-            // Check if this timer is still valid.
             let cur = state.cancel_gen[hart].load(Ordering::SeqCst);
             if cur != gen {
-                return; // Cancelled by newer mtimecmp.
+                return;
             }
             line.set(true);
             if let Some(ref wk) = waker {
@@ -203,29 +256,33 @@ impl Aclint {
 
     /// Set the WFI condvar deadline for timer wakeup.
     fn update_wfi_deadline(&self) {
-        if let Some(ref wk) = self.wfi_waker {
+        let wk = self.wfi_waker.lock();
+        if let Some(ref w) = *wk {
+            let regs = self.regs.borrow();
             let nearest =
-                self.mtimecmp.iter().copied().min().unwrap_or(u64::MAX);
+                regs.mtimecmp.iter().copied().min().unwrap_or(u64::MAX);
             if nearest == u64::MAX {
-                wk.clear_deadline();
+                w.clear_deadline();
                 return;
             }
-            let now = self.read_mtime();
+            let now = Self::read_mtime_with(&regs);
             if nearest <= now {
                 return;
             }
             let delta_ticks = nearest - now;
             let delta_ns = delta_ticks.saturating_mul(100).min(100_000_000_000);
             let deadline = Instant::now() + Duration::from_nanos(delta_ns);
-            wk.set_deadline(deadline);
+            w.set_deadline(deadline);
         }
     }
 
     fn update_mti(&self) {
-        let mtime = self.read_mtime();
+        let regs = self.regs.borrow();
+        let mtime = Self::read_mtime_with(&regs);
+        let outputs = self.mti_outputs.lock();
         for hart in 0..self.num_harts as usize {
-            let pending = mtime >= self.mtimecmp[hart];
-            if let Some(ref line) = self.mti_outputs[hart] {
+            let pending = mtime >= regs.mtimecmp[hart];
+            if let Some(ref line) = outputs[hart] {
                 line.set(pending);
             }
         }
@@ -238,10 +295,12 @@ impl Aclint {
     }
 
     fn lower_outputs(&self) {
-        for line in self.mti_outputs.iter().flatten() {
+        let mti = self.mti_outputs.lock();
+        for line in mti.iter().flatten() {
             line.lower();
         }
-        for line in self.msi_outputs.iter().flatten() {
+        let msi = self.msi_outputs.lock();
+        for line in msi.iter().flatten() {
             line.lower();
         }
     }
@@ -250,42 +309,49 @@ impl Aclint {
         if offset == MTIME_OFFSET {
             return self.read_mtime();
         }
+        let regs = self.regs.borrow();
         if offset >= MTIMECMP_BASE {
             let hart = ((offset - MTIMECMP_BASE) / 8) as usize;
             if hart < self.num_harts as usize {
-                return self.mtimecmp[hart];
+                return regs.mtimecmp[hart];
             }
             return 0;
         }
         let hart = ((offset - MSIP_BASE) / 4) as usize;
         if hart < self.num_harts as usize {
-            self.msip[hart] as u64
+            regs.msip[hart] as u64
         } else {
             0
         }
     }
 
-    pub fn write(&mut self, offset: u64, _size: u32, val: u64) {
+    pub fn write(&self, offset: u64, _size: u32, val: u64) {
         if offset == MTIME_OFFSET {
-            // Invalidate all pending timer threads.
             self.cancel_timers();
-            self.mtime_base = val;
-            self.epoch = Instant::now();
+            {
+                let mut regs = self.regs.borrow();
+                regs.mtime_base = val;
+                regs.epoch = Instant::now();
+            }
             self.update_mti();
             return;
         }
         if offset >= MTIMECMP_BASE {
             let hart = ((offset - MTIMECMP_BASE) / 8) as usize;
             if hart < self.num_harts as usize {
-                // Invalidate any pending timer thread
-                // for this hart before updating state.
                 self.timer_state.cancel_gen[hart]
                     .fetch_add(1, Ordering::SeqCst);
 
-                self.mtimecmp[hart] = val;
-                let pending = self.read_mtime() >= self.mtimecmp[hart];
-                if let Some(ref line) = self.mti_outputs[hart] {
-                    line.set(pending);
+                let pending = {
+                    let mut regs = self.regs.borrow();
+                    regs.mtimecmp[hart] = val;
+                    Self::read_mtime_with(&regs) >= regs.mtimecmp[hart]
+                };
+                {
+                    let outputs = self.mti_outputs.lock();
+                    if let Some(ref line) = outputs[hart] {
+                        line.set(pending);
+                    }
                 }
                 if !pending {
                     self.schedule_timer(hart);
@@ -297,52 +363,23 @@ impl Aclint {
         let hart = ((offset - MSIP_BASE) / 4) as usize;
         if hart < self.num_harts as usize {
             let v = (val as u32) & 1;
-            self.msip[hart] = v;
-            if let Some(ref line) = self.msi_outputs[hart] {
+            self.regs.borrow().msip[hart] = v;
+            let outputs = self.msi_outputs.lock();
+            if let Some(ref line) = outputs[hart] {
                 line.set(v != 0);
             }
         }
     }
 }
 
-pub struct AclintMmio(pub Arc<Mutex<Aclint>>);
+pub struct AclintMmio(pub Arc<Aclint>);
 
 impl MmioOps for AclintMmio {
     fn read(&self, offset: u64, size: u32) -> u64 {
-        self.0.lock().unwrap().read(offset, size)
+        self.0.read(offset, size)
     }
 
     fn write(&self, offset: u64, size: u32, val: u64) {
-        self.0.lock().unwrap().write(offset, size, val);
-    }
-}
-
-impl MObject for Aclint {
-    fn mobject_state(&self) -> &machina_core::mobject::MObjectState {
-        self.state.mobject_state()
-    }
-
-    fn mobject_state_mut(
-        &mut self,
-    ) -> &mut machina_core::mobject::MObjectState {
-        self.state.mobject_state_mut()
-    }
-
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
-    fn as_any_mut(&mut self) -> &mut dyn Any {
-        self
-    }
-}
-
-impl MDevice for Aclint {
-    fn mdevice_state(&self) -> &MDeviceState {
-        self.state.device()
-    }
-
-    fn mdevice_state_mut(&mut self) -> &mut MDeviceState {
-        self.state.device_mut()
+        self.0.write(offset, size, val);
     }
 }

@@ -163,7 +163,7 @@ pub struct RefMachine {
     ram_block: Option<Arc<RamBlock>>,
     mrom_block: Option<Arc<RamBlock>>,
     plic: Option<Arc<Plic>>,
-    aclint: Option<Arc<Mutex<Aclint>>>,
+    aclint: Option<Arc<Aclint>>,
     uart: Option<Arc<Uart16550>>,
     uart_chardev: Option<Arc<Mutex<ChardevObject>>>,
     virtio_mmio: Option<VirtioMmio>,
@@ -285,7 +285,7 @@ impl RefMachine {
             infos.push(plic.object_info());
         }
         if let Some(aclint) = &self.aclint {
-            infos.push(aclint.lock().unwrap().object_info());
+            infos.push(aclint.object_info());
         }
         if let Some(uart) = &self.uart {
             infos.push(uart.object_info());
@@ -317,9 +317,8 @@ impl RefMachine {
             }
         }
         if let Some(aclint) = &self.aclint {
-            let aclint = aclint.lock().unwrap();
             if Self::object_matches(object_ref, &aclint.object_info()) {
-                return Some(f(&*aclint));
+                return Some(aclint.with_mdevice(f));
             }
         }
         if let Some(virtio_mmio) = &self.virtio_mmio {
@@ -352,7 +351,7 @@ impl RefMachine {
         self.plic.as_ref().expect("machine not initialized")
     }
 
-    pub fn aclint(&self) -> &Arc<Mutex<Aclint>> {
+    pub fn aclint(&self) -> &Arc<Aclint> {
         self.aclint.as_ref().expect("machine not initialized")
     }
 
@@ -676,19 +675,15 @@ impl Machine for RefMachine {
         plic.register_mmio(plic_region, GPA::new(PLIC_BASE))?;
         self.plic = Some(Arc::clone(&plic));
 
-        // ACLINT (CLINT-compatible).
-        let aclint =
-            Arc::new(Mutex::new(Aclint::new_named("aclint0", opts.cpu_count)));
-        {
-            let mut a = aclint.lock().unwrap();
-            a.attach_to_bus(&mut sysbus)?;
-            let aclint_region = MemoryRegion::io(
-                "clint",
-                ACLINT_SIZE,
-                Arc::new(AclintMmio(Arc::clone(&aclint))),
-            );
-            a.register_mmio(aclint_region, GPA::new(ACLINT_BASE))?;
-        }
+        // ACLINT (CLINT-compatible) — interior mutability.
+        let aclint = Arc::new(Aclint::new_named("aclint0", opts.cpu_count));
+        aclint.attach_to_bus(&mut sysbus)?;
+        let aclint_region = MemoryRegion::io(
+            "clint",
+            ACLINT_SIZE,
+            Arc::new(AclintMmio(Arc::clone(&aclint))),
+        );
+        aclint.register_mmio(aclint_region, GPA::new(ACLINT_BASE))?;
         self.aclint = Some(Arc::clone(&aclint));
 
         // UART0 — interior mutability, no outer Mutex.
@@ -791,11 +786,9 @@ impl Machine for RefMachine {
         {
             let mip = &self.shared_mip;
             let wk = &self.wfi_waker;
-            let mut a = self.aclint.as_ref().unwrap().lock().unwrap();
-            // Connect WfiWaker for timer-driven WFI wakeup.
+            let a = self.aclint.as_ref().unwrap();
             a.connect_wfi_waker(Arc::clone(wk));
             for hart in 0..opts.cpu_count as usize {
-                let _ = hart;
                 let mti_sink = Arc::new(RiscvCpuIrqSink::new(
                     Arc::clone(mip),
                     Arc::clone(wk),
@@ -823,8 +816,6 @@ impl Machine for RefMachine {
                 .realize_onto(&mut sysbus, address_space)?;
             self.aclint
                 .as_ref()
-                .unwrap()
-                .lock()
                 .unwrap()
                 .realize_onto(&mut sysbus, address_space)?;
             if let Some(virtio_mmio) = self.virtio_mmio.as_mut() {
@@ -878,7 +869,7 @@ impl Machine for RefMachine {
             plic.reset_runtime();
         }
         if let Some(aclint) = &self.aclint {
-            aclint.lock().unwrap().reset_runtime();
+            aclint.reset_runtime();
         }
         if let Some(uart) = &self.uart {
             uart.reset_runtime();
