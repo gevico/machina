@@ -12,8 +12,8 @@ on:
         type: string
 
 env:
-  TOOLCHAIN_TAG: "2026.03.28"
-  TOOLCHAIN_ASSET: riscv64-glibc-ubuntu-24.04-gcc.tar.xz
+  TOOLCHAIN_TAG: "2026.04.05"
+  TOOLCHAIN_ASSET: riscv64-elf-ubuntu-24.04-gcc.tar.xz
 
 jobs:
   riscv-tests:
