@@ -498,19 +498,23 @@ fn rx_loop(
             )
         };
         if n <= 0 {
+            // EAGAIN/EWOULDBLOCK is normal for non-blocking fd.
             continue;
         }
 
+        eprintln!("virtio-net RX: {} bytes from TAP fd={}", n, tap_fd);
         let packet = &buf[..n as usize];
 
         let mut st = state.lock().unwrap();
         if st.status & 0x4 == 0 {
+            eprintln!("virtio-net RX: DROP (driver not ready, status=0x{:x})", st.status);
             continue;
         }
         if st.queues.is_empty()
             || !st.queues[0].ready
             || st.queues[0].num == 0
         {
+            eprintln!("virtio-net RX: DROP (queue not ready)");
             continue;
         }
 
@@ -519,6 +523,11 @@ fn rx_loop(
         let ram_ptr = st.ram_ptr;
         let ram_base = st.ram_base;
         let ram_size = st.ram_size;
+        let q = &st.queues[0];
+        eprintln!(
+            "virtio-net RX: queue avail_idx check: last_avail={}, interrupt_status=0x{:x}",
+            q.last_avail_idx, st.interrupt_status
+        );
         let injected = unsafe {
             fill_rx_queue(
                 packet,
@@ -532,6 +541,9 @@ fn rx_loop(
         if injected > 0 {
             st.interrupt_status |= 1;
             st.irq.set(true);
+            eprintln!("virtio-net RX: injected {} into guest, IRQ fired", injected);
+        } else {
+            eprintln!("virtio-net RX: DROP (fill_rx_queue returned 0, no avail bufs?)");
         }
     }
 }

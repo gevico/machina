@@ -12,8 +12,10 @@ const VIRTIO_DEVICE_NET: u32 = 1;
 const VIRTIO_NET_F_MAC: u64 = 1 << 5;
 const VIRTIO_NET_F_STATUS: u64 = 1 << 16;
 
-// Net header size (without mergeable rx buffers).
-pub const VIRTIO_NET_HDR_SIZE: usize = 10;
+// Net header size for VirtIO v1 (modern).
+// Includes num_buffers field: flags(1) + gso_type(1) + hdr_len(2)
+// + gso_size(2) + csum_start(2) + csum_offset(2) + num_buffers(2) = 12.
+pub const VIRTIO_NET_HDR_SIZE: usize = 12;
 
 // TAP ioctl constants (Linux x86_64 / generic).
 const TUNSETIFF: libc::c_ulong = 0x400454ca;
@@ -32,7 +34,7 @@ pub fn tap_open(ifname: &str) -> io::Result<RawFd> {
     let fd = unsafe {
         libc::open(
             b"/dev/net/tun\0".as_ptr() as *const libc::c_char,
-            libc::O_RDWR | libc::O_CLOEXEC,
+            libc::O_RDWR | libc::O_CLOEXEC | libc::O_NONBLOCK,
         )
     };
     if fd < 0 {
@@ -152,7 +154,8 @@ impl VirtioNet {
             return 0;
         }
 
-        let _written = unsafe {
+        let payload_len: usize = iov[start..].iter().map(|v| v.iov_len).sum();
+        let written = unsafe {
             libc::writev(
                 self.tap_fd,
                 iov[start..].as_ptr(),
@@ -160,7 +163,22 @@ impl VirtioNet {
             )
         };
 
-        0
+        if written < 0 {
+            eprintln!(
+                "virtio-net TX: writev failed (fd={}, {} bytes): {}",
+                self.tap_fd,
+                payload_len,
+                io::Error::last_os_error()
+            );
+            return 0;
+        }
+
+        eprintln!(
+            "virtio-net TX: {} bytes -> TAP fd={}",
+            written, self.tap_fd
+        );
+
+        (written as u32).wrapping_add(VIRTIO_NET_HDR_SIZE as u32)
     }
 }
 
@@ -233,6 +251,10 @@ pub unsafe fn fill_rx_queue(
 ) -> u32 {
     let avail_idx = queue.read_avail_idx(ram, ram_base, ram_size);
     if queue.last_avail_idx == avail_idx {
+        eprintln!(
+            "virtio-net fill_rx: no avail bufs (last_avail={}, avail_idx={})",
+            queue.last_avail_idx, avail_idx
+        );
         return 0;
     }
 
