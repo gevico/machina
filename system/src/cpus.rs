@@ -196,10 +196,7 @@ impl FullSystemCpu {
     }
 
     /// Attach GDB state for debug control.
-    pub fn set_gdb_state(
-        &mut self,
-        gs: Arc<crate::gdb::GdbState>,
-    ) {
+    pub fn set_gdb_state(&mut self, gs: Arc<crate::gdb::GdbState>) {
         self.gdb_state = Some(gs);
     }
 
@@ -556,7 +553,7 @@ impl GuestCpu for FullSystemCpu {
                 }
             }
             RiscvTranslator::tb_stop(&mut d, ir);
-            d.base.num_insns * 4
+            (d.base.pc_next - d.base.pc_first) as u32
         } else {
             let mut d = RiscvDisasContext::new(pc, base, cfg);
             d.base.max_insns = limit;
@@ -583,7 +580,7 @@ impl GuestCpu for FullSystemCpu {
                 }
             }
             RiscvTranslator::tb_stop(&mut d, ir);
-            d.base.num_insns * 4
+            (d.base.pc_next - d.base.pc_first) as u32
         }
     }
 
@@ -717,13 +714,10 @@ impl GuestCpu for FullSystemCpu {
         if let Some(ref gs) = self.gdb_state {
             if gs.is_connected() {
                 let state = gs.run_state();
-                if state
-                    == crate::gdb::GdbRunState::Paused
-                    || state
-                        == crate::gdb::GdbRunState::PauseRequested
+                if state == crate::gdb::GdbRunState::Paused
+                    || state == crate::gdb::GdbRunState::PauseRequested
                 {
-                    let csrs =
-                        self.collect_gdb_csrs();
+                    let csrs = self.collect_gdb_csrs();
                     gs.save_snapshot(
                         0,
                         &self.cpu.gpr,
@@ -733,22 +727,16 @@ impl GuestCpu for FullSystemCpu {
                         &csrs,
                     );
                     let quit = gs.check_and_wait();
-                    if let Some(snap) =
-                        gs.take_dirty_snapshot(0)
-                    {
+                    if let Some(snap) = gs.take_dirty_snapshot(0) {
                         unsafe {
                             let cpu_ptr =
-                                &self.cpu
-                                    as *const RiscvCpu
-                                    as *mut RiscvCpu;
+                                &self.cpu as *const RiscvCpu as *mut RiscvCpu;
                             for i in 1..32 {
-                                (*cpu_ptr).gpr[i] =
-                                    snap.gpr[i];
+                                (*cpu_ptr).gpr[i] = snap.gpr[i];
                             }
                             (*cpu_ptr).pc = snap.pc;
                             for i in 0..32 {
-                                (*cpu_ptr).fpr[i] =
-                                    snap.fpr[i];
+                                (*cpu_ptr).fpr[i] = snap.fpr[i];
                             }
                         }
                         self.restore_csrs(&snap.csr);
@@ -852,9 +840,7 @@ impl GuestCpu for FullSystemCpu {
                 self.cpu.priv_level as u8,
                 &csrs,
             );
-            gs.set_stop_reason(
-                machina_gdbstub::handler::StopReason::Step,
-            );
+            gs.set_stop_reason(machina_gdbstub::handler::StopReason::Step);
             gs.complete_step();
         }
     }
@@ -1222,7 +1208,7 @@ pub unsafe extern "C" fn machina_mem_read(
             }
             read_phys_sized(cpu, pa, size)
         }
-        None => 0
+        None => 0,
     }
 }
 
@@ -1350,7 +1336,15 @@ pub unsafe extern "C" fn machina_csr_op(
 // ---- GDB register access and GdbTarget implementation ----
 
 /// Helper: read guest memory at physical address.
-fn gdb_read_phys(ram_ptr: *const u8, _ram_size: u64, _guest_base: u64, ram_end: u64, as_ptr: u64, pa: u64, len: usize) -> Vec<u8> {
+fn gdb_read_phys(
+    ram_ptr: *const u8,
+    _ram_size: u64,
+    _guest_base: u64,
+    ram_end: u64,
+    as_ptr: u64,
+    pa: u64,
+    len: usize,
+) -> Vec<u8> {
     if pa >= RAM_BASE && pa + len as u64 <= ram_end {
         let off = pa.wrapping_sub(RAM_BASE);
         let ptr = unsafe { ram_ptr.add(off as usize) };
@@ -1373,7 +1367,15 @@ fn gdb_read_phys(ram_ptr: *const u8, _ram_size: u64, _guest_base: u64, ram_end: 
 }
 
 /// Helper: write guest memory at physical address.
-fn gdb_write_phys(ram_ptr: *const u8, _ram_size: u64, _guest_base: u64, ram_end: u64, as_ptr: u64, pa: u64, data: &[u8]) -> bool {
+fn gdb_write_phys(
+    ram_ptr: *const u8,
+    _ram_size: u64,
+    _guest_base: u64,
+    ram_end: u64,
+    as_ptr: u64,
+    pa: u64,
+    data: &[u8],
+) -> bool {
     if pa >= RAM_BASE && pa + data.len() as u64 <= ram_end {
         let off = pa.wrapping_sub(RAM_BASE);
         let ptr = unsafe { (ram_ptr as *mut u8).add(off as usize) };
@@ -1399,12 +1401,7 @@ impl FullSystemCpu {
         let priv_level = self.cpu.priv_level;
         GDB_CSRS
             .iter()
-            .map(|entry| {
-                self.cpu
-                    .csr
-                    .read(entry.addr, priv_level)
-                    .unwrap_or(0)
-            })
+            .map(|entry| self.cpu.csr.read(entry.addr, priv_level).unwrap_or(0))
             .collect()
     }
 
@@ -1412,20 +1409,11 @@ impl FullSystemCpu {
     fn restore_csrs(&self, csrs: &[u64]) {
         use crate::gdb_csr::GDB_CSRS;
         let priv_level = self.cpu.priv_level;
-        let cpu_ptr = &self.cpu as *const RiscvCpu
-            as *mut RiscvCpu;
-        for (i, entry) in
-            GDB_CSRS.iter().enumerate()
-        {
+        let cpu_ptr = &self.cpu as *const RiscvCpu as *mut RiscvCpu;
+        for (i, entry) in GDB_CSRS.iter().enumerate() {
             if let Some(&val) = csrs.get(i) {
                 unsafe {
-                    let _ = (*cpu_ptr)
-                        .csr
-                        .write(
-                            entry.addr,
-                            val,
-                            priv_level,
-                        );
+                    let _ = (*cpu_ptr).csr.write(entry.addr, val, priv_level);
                 }
             }
         }
@@ -1490,40 +1478,26 @@ impl GdbTarget for FullSystemCpu {
         }
         for i in 0..NUM_GPRS {
             let off = i * 8;
-            self.cpu.gpr[i] = u64::from_le_bytes(
-                data[off..off + 8].try_into().unwrap(),
-            );
+            self.cpu.gpr[i] =
+                u64::from_le_bytes(data[off..off + 8].try_into().unwrap());
         }
         self.cpu.pc = u64::from_le_bytes(
-            data[NUM_GPRS * 8..NUM_GPRS * 8 + 8]
-                .try_into()
-                .unwrap(),
+            data[NUM_GPRS * 8..NUM_GPRS * 8 + 8].try_into().unwrap(),
         );
         for i in 0..NUM_FPRS {
             let off = (NUM_GPRS + 1 + i) * 8;
-            self.cpu.fpr[i] = u64::from_le_bytes(
-                data[off..off + 8].try_into().unwrap(),
-            );
+            self.cpu.fpr[i] =
+                u64::from_le_bytes(data[off..off + 8].try_into().unwrap());
         }
         true
     }
 
     fn read_register(&self, reg: usize) -> Vec<u8> {
         match reg {
-            0..=31 => {
-                self.cpu.gpr[reg].to_le_bytes().to_vec()
-            }
+            0..=31 => self.cpu.gpr[reg].to_le_bytes().to_vec(),
             32 => self.cpu.pc.to_le_bytes().to_vec(),
-            33..=64 => {
-                self.cpu.fpr[reg - 33]
-                    .to_le_bytes()
-                    .to_vec()
-            }
-            65 => {
-                (self.cpu.priv_level as u64)
-                    .to_le_bytes()
-                    .to_vec()
-            }
+            33..=64 => self.cpu.fpr[reg - 33].to_le_bytes().to_vec(),
+            65 => (self.cpu.priv_level as u64).to_le_bytes().to_vec(),
             r if r >= 66 => {
                 use crate::gdb_csr::csr_by_gdb_reg;
                 match csr_by_gdb_reg(r) {
@@ -1531,10 +1505,7 @@ impl GdbTarget for FullSystemCpu {
                         let val = self
                             .cpu
                             .csr
-                            .read(
-                                entry.addr,
-                                self.cpu.priv_level,
-                            )
+                            .read(entry.addr, self.cpu.priv_level)
                             .unwrap_or(0);
                         val.to_le_bytes().to_vec()
                     }
@@ -1545,17 +1516,11 @@ impl GdbTarget for FullSystemCpu {
         }
     }
 
-    fn write_register(
-        &mut self,
-        reg: usize,
-        val: &[u8],
-    ) -> bool {
+    fn write_register(&mut self, reg: usize, val: &[u8]) -> bool {
         if val.len() < 8 {
             return false;
         }
-        let v = u64::from_le_bytes(
-            val[..8].try_into().unwrap(),
-        );
+        let v = u64::from_le_bytes(val[..8].try_into().unwrap());
         match reg {
             0 => {}
             1..=31 => self.cpu.gpr[reg] = v,
