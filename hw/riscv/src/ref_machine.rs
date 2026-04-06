@@ -18,6 +18,9 @@ use machina_hw_core::irq::{IrqLine, IrqSink};
 use machina_hw_intc::aclint::{Aclint, AclintMmio};
 use machina_hw_intc::plic::{Plic, PlicIrqSink, PlicMmio};
 use machina_hw_virtio::mmio::VirtioMmio;
+use machina_hw_virtio::pci::{
+    PciBarOps, PciEcamOps, VirtioPciState,
+};
 use machina_memory::address_space::AddressSpace;
 use machina_memory::ram::RamBlock;
 use machina_memory::region::{MemoryRegion, MmioOps};
@@ -43,9 +46,21 @@ const ACLINT_SIZE: u64 = 0x0001_0000;
 const UART0_SIZE: u64 = 0x100;
 const VIRTIO0_SIZE: u64 = 0x1000;
 
+// PCI Express ECAM and MMIO window (matches QEMU virt riscv64).
+const PCIE_ECAM_BASE: u64 = 0x3000_0000;
+const PCIE_ECAM_SIZE: u64 = 0x1000_0000;
+const PCIE_MMIO_BASE: u64 = 0x4000_0000;
+const PCIE_MMIO_SIZE: u64 = 0x4000_0000;
+const PCIE_PIO_BASE: u64 = 0x0300_0000;
+const PCIE_PIO_SIZE: u64 = 0x0001_0000;
+
 const UART_IRQ: u32 = 10;
 const VIRTIO_IRQ: u32 = 1;
+const PCIE_IRQ_BASE: u32 = 32;
+const PCIE_NUM_IRQS: u32 = 4;
 const PLIC_NUM_SOURCES: u32 = 96;
+
+const VIRTIO_PCI_SLOT: u32 = 1;
 // PLIC context count is 2 * cpu_count (M-mode + S-mode per
 // hart), computed dynamically in init().
 
@@ -126,6 +141,7 @@ pub struct RefMachine {
     aclint: Option<Arc<Mutex<Aclint>>>,
     uart: Option<Arc<Mutex<Uart16550>>>,
     virtio_mmio: Option<VirtioMmio>,
+    virtio_pci: Option<Arc<Mutex<VirtioPciState>>>,
     sifive_test: Option<Arc<SifiveTest>>,
     fdt_blob: Option<Vec<u8>>,
     // Per-hart RiscvCpu instances. None after take_cpu().
@@ -163,6 +179,7 @@ impl RefMachine {
             aclint: None,
             uart: None,
             virtio_mmio: None,
+            virtio_pci: None,
             sifive_test: None,
             fdt_blob: None,
             cpus: Arc::new(Mutex::new(Vec::new())),
@@ -464,6 +481,56 @@ impl RefMachine {
         fdt.property_u32("clock-frequency", 3686400);
         fdt.end_node();
 
+        // /soc/pci@30000000 (PCIe ECAM host bridge)
+        if self.virtio_pci.is_some() {
+            let pci_phandle = plic_phandle + 1;
+            fdt.begin_node(&format!("pci@{:x}", PCIE_ECAM_BASE));
+            fdt.property_string("compatible", "pci-host-ecam-generic");
+            fdt.property_string("device_type", "pci");
+            fdt.property_u32_list(
+                "reg",
+                &[
+                    (PCIE_ECAM_BASE >> 32) as u32,
+                    PCIE_ECAM_BASE as u32,
+                    (PCIE_ECAM_SIZE >> 32) as u32,
+                    PCIE_ECAM_SIZE as u32,
+                ],
+            );
+            fdt.property_u32_list("bus-range", &[0, 0xFF]);
+            fdt.property_u32("#address-cells", 3);
+            fdt.property_u32("#size-cells", 2);
+            fdt.property_u32("#interrupt-cells", 1);
+            fdt.property_u32("phandle", pci_phandle);
+
+            // ranges: PIO, 32-bit MMIO
+            #[rustfmt::skip]
+            fdt.property_u32_list("ranges", &[
+                // PIO: phys_hi | phys_mid | phys_lo | cpu_hi | cpu_lo | size_hi | size_lo
+                0x0100_0000, 0, 0,
+                (PCIE_PIO_BASE >> 32) as u32, PCIE_PIO_BASE as u32,
+                0, PCIE_PIO_SIZE as u32,
+                // 32-bit MMIO
+                0x0200_0000, 0, PCIE_MMIO_BASE as u32,
+                (PCIE_MMIO_BASE >> 32) as u32, PCIE_MMIO_BASE as u32,
+                0, PCIE_MMIO_SIZE as u32,
+            ]);
+
+            // interrupt-map-mask: device[15:11], func=0, pin[2:0]
+            fdt.property_u32_list("interrupt-map-mask", &[0xf800, 0, 0, 7]);
+
+            // interrupt-map: for each slot/pin, map to PLIC IRQ.
+            let mut imap = Vec::new();
+            for slot in 0..4u32 {
+                for pin in 1..=4u32 {
+                    let dev_hi = slot << 11;
+                    let irq = PCIE_IRQ_BASE + ((slot + pin - 1) % PCIE_NUM_IRQS);
+                    imap.extend_from_slice(&[dev_hi, 0, 0, pin, plic_phandle, irq]);
+                }
+            }
+            fdt.property_u32_list("interrupt-map", &imap);
+            fdt.end_node();
+        }
+
         // /soc/virtio_mmio@10001000 (if drive configured)
         if let Some(mapping) = virtio_mapping {
             fdt.begin_node(&format!("virtio_mmio@{:x}", mapping.base.0));
@@ -633,25 +700,61 @@ impl Machine for RefMachine {
         root.add_subregion(mrom_region, GPA::new(MROM_BASE));
 
         // VirtIO block device (if -drive configured).
+        // Exposed via PCI (ECAM + BAR) for default StarryOS builds,
+        // and also via VirtIO-MMIO for bus-mmio builds.
         if let Some(ref drive_path) = opts.drive {
             use machina_hw_virtio::block::VirtioBlk;
 
-            let blk = VirtioBlk::open(drive_path).unwrap_or_else(|e| {
-                panic!(
-                    "virtio-blk: failed to open \
-                         {:?}: {}",
-                    drive_path, e
-                );
-            });
-            let plic_sink =
-                Arc::new(PlicIrqSink(Arc::clone(self.plic.as_ref().unwrap())));
-            let virtio_irq =
-                IrqLine::new(plic_sink as Arc<dyn IrqSink>, VIRTIO_IRQ);
             let ram_ptr = self.ram_block.as_ref().unwrap().as_ptr();
+
+            // --- VirtIO-PCI (primary: matches QEMU virt PCI) ---
+            let blk_pci = VirtioBlk::open(drive_path).unwrap_or_else(|e| {
+                panic!("virtio-blk: failed to open {:?}: {}", drive_path, e);
+            });
+            let plic_sink_pci =
+                Arc::new(PlicIrqSink(Arc::clone(self.plic.as_ref().unwrap())));
+            let pci_irq = IrqLine::new(
+                plic_sink_pci as Arc<dyn IrqSink>,
+                PCIE_IRQ_BASE + ((VIRTIO_PCI_SLOT + 0) % PCIE_NUM_IRQS),
+            );
+            let vpci_state = Arc::new(Mutex::new(VirtioPciState::new(
+                blk_pci,
+                pci_irq,
+                ram_ptr,
+                RAM_BASE,
+                opts.ram_size,
+            )));
+
+            let ecam_ops = PciEcamOps::new(VIRTIO_PCI_SLOT, Arc::clone(&vpci_state));
+            let ecam_region = MemoryRegion::io(
+                "pcie-ecam",
+                PCIE_ECAM_SIZE,
+                Box::new(ecam_ops),
+            );
+            root.add_subregion(ecam_region, GPA::new(PCIE_ECAM_BASE));
+
+            let bar_ops = PciBarOps::new(PCIE_MMIO_BASE, Arc::clone(&vpci_state));
+            let bar_region = MemoryRegion::io(
+                "pcie-mmio",
+                PCIE_MMIO_SIZE,
+                Box::new(bar_ops),
+            );
+            root.add_subregion(bar_region, GPA::new(PCIE_MMIO_BASE));
+
+            self.virtio_pci = Some(vpci_state);
+
+            // --- VirtIO-MMIO (secondary: for bus-mmio kernels) ---
+            let blk_mmio = VirtioBlk::open(drive_path).unwrap_or_else(|e| {
+                panic!("virtio-blk: failed to open {:?}: {}", drive_path, e);
+            });
+            let plic_sink_mmio =
+                Arc::new(PlicIrqSink(Arc::clone(self.plic.as_ref().unwrap())));
+            let mmio_irq =
+                IrqLine::new(plic_sink_mmio as Arc<dyn IrqSink>, VIRTIO_IRQ);
             let mut virtio_mmio = VirtioMmio::new_named(
                 "virtio-mmio0",
-                blk,
-                virtio_irq,
+                blk_mmio,
+                mmio_irq,
                 ram_ptr,
                 RAM_BASE,
                 opts.ram_size,
