@@ -15,6 +15,7 @@ use machina_hw_core::irq::IrqLine;
 use machina_memory::region::MmioOps;
 
 use crate::block::VirtioBlk;
+use crate::device::VirtioDevice;
 use crate::queue::{VirtQueue, MAX_QUEUE_SIZE};
 
 // PCI vendor/device IDs.
@@ -214,7 +215,7 @@ impl VirtioPciState {
         }
         let n = unsafe {
             self.device
-                .handle_queue(q, self.ram_ptr, self.ram_base, self.ram_size)
+                .handle_queue(sel, q, self.ram_ptr, self.ram_base, self.ram_size)
         };
         if n > 0 {
             self.isr_status |= 1;
