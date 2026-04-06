@@ -56,6 +56,9 @@ pub struct RiscvDisasContext {
     pub guest_base: *const u8,
     /// Address of the CSR helper function for JIT call.
     pub csr_helper: u64,
+    /// Virtual PC beyond which the TB must not decode
+    /// (page boundary). Set by gen_code; 0 = no limit.
+    pub page_byte_limit: u64,
 }
 
 impl RiscvDisasContext {
@@ -84,6 +87,7 @@ impl RiscvDisasContext {
             cur_insn_len: 4,
             guest_base,
             csr_helper: 0,
+            page_byte_limit: 0,
         }
     }
 
@@ -185,6 +189,13 @@ impl TranslatorOps for RiscvTranslator {
         }
 
         ctx.base.pc_next += ctx.cur_insn_len as u64;
+
+        if ctx.page_byte_limit != 0
+            && ctx.base.pc_next >= ctx.page_byte_limit
+            && ctx.base.is_jmp == DisasJumpType::Next
+        {
+            ctx.base.is_jmp = DisasJumpType::TooMany;
+        }
     }
 
     fn tb_stop(ctx: &mut RiscvDisasContext, ir: &mut Context) {

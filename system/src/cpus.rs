@@ -500,11 +500,14 @@ impl GuestCpu for FullSystemCpu {
             0
         };
 
+        let page_byte_limit = pc + page_remain;
+
         if ir.nb_globals() == 0 {
             let mut d = RiscvDisasContext::new(pc, base, cfg);
             d.base.max_insns = limit;
             d.cross_page_insn = cross_page;
             d.cross_page_pc = xpage_pc;
+            d.page_byte_limit = page_byte_limit;
             d.env = ir.new_fixed(machina_accel::ir::types::Type::I64, 5, "env");
             for i in 0..NUM_GPRS {
                 d.gpr[i] = ir.new_global(
@@ -557,6 +560,7 @@ impl GuestCpu for FullSystemCpu {
             d.base.max_insns = limit;
             d.cross_page_insn = cross_page;
             d.cross_page_pc = xpage_pc;
+            d.page_byte_limit = page_byte_limit;
             d.env = TempIdx(0);
             for i in 0..NUM_GPRS {
                 d.gpr[i] = TempIdx(1 + i as u32);

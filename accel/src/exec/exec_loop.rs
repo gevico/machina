@@ -17,8 +17,8 @@ use crate::cpu::GuestCpu;
 use crate::ir::context::Context;
 use crate::ir::tb::{
     decode_tb_exit, TranslationBlock, EXCP_EBREAK, EXCP_ECALL, EXCP_FENCE_I,
-    EXCP_MRET, EXCP_PRIV_CSR, EXCP_SFENCE_VMA, EXCP_SRET, EXCP_WFI,
-    EXIT_TARGET_NONE, TB_EXIT_NOCHAIN,
+    EXCP_MRET, EXCP_PRIV_CSR, EXCP_SFENCE_VMA, EXCP_SRET, EXCP_UNDEF,
+    EXCP_WFI, EXIT_TARGET_NONE, TB_EXIT_NOCHAIN,
 };
 use crate::translate::translate;
 use crate::HostCodeGen;
@@ -341,6 +341,11 @@ where
                 per_cpu.stats.real_exit += 1;
                 let pc = cpu.get_pc();
                 cpu.handle_exception(3, pc);
+            }
+            v if v == EXCP_UNDEF as usize => {
+                per_cpu.stats.real_exit += 1;
+                let pc = cpu.get_pc();
+                cpu.handle_exception(2, pc);
             }
             v if v == EXCP_ECALL as usize => {
                 // The translator emits a unified EXCP_ECALL;
