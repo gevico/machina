@@ -111,7 +111,7 @@ run_tests() {
             tout=$((tout + 1))
         else
             local code
-            code="$(printf '%s\n' "${output}" | rg -o 'fail \(code 0x[0-9a-f]+\)' | tail -n1 || true)"
+            code="$(printf '%s\n' "${output}" | grep -oE 'fail \(code 0x[0-9a-f]+\)' | tail -n1 || true)"
             [ -n "${code}" ] || code="exit:${status}"
             printf '%s\t%s\n' "${test_name}" "${code}" >> "${FAIL_FILE}"
             bad=$((bad + 1))
