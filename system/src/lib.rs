@@ -93,9 +93,6 @@ impl CpuManager {
                     per_cpu.jump_cache.invalidate();
                 }
                 ExitReason::Ecall { priv_level } => {
-                    // Route ECALL as trap exception.
-                    // 8=EcallFromU, 9=EcallFromS,
-                    // 11=EcallFromM.
                     let cause = match priv_level {
                         0 => 8,
                         1 => 9,

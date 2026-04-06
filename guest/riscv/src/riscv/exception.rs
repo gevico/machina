@@ -104,7 +104,6 @@ impl RiscvCpu {
         let delegated =
             (deleg >> code) & 1 != 0 && self.priv_level < PrivLevel::Machine;
 
-
         if delegated {
             // Trap to S-mode.
             self.csr.sepc = self.pc;

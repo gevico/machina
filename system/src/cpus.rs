@@ -349,6 +349,7 @@ impl FullSystemCpu {
             std::ptr::read_unaligned(ptr as *const u32)
         }
     }
+
 }
 
 impl GuestCpu for FullSystemCpu {

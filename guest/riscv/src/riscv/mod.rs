@@ -173,7 +173,22 @@ impl TranslatorOps for RiscvTranslator {
                 insn_decode::decode16(ctx, ir, half)
             }
         } else {
-            // 32-bit instruction
+            // 32-bit instruction — check for cross-page boundary.
+            // The 4-byte fetch would read 2 bytes from the next
+            // physical page via a raw pointer, but the next virtual
+            // page may map to a non-contiguous physical page.
+            // If the cross-page instruction was not pre-fetched,
+            // end the TB here; the next TB will start at this PC
+            // with page_remain == 2, triggering the pre-fetch.
+            if ctx.page_byte_limit != 0
+                && ctx.base.pc_next + 4 > ctx.page_byte_limit
+                && (ctx.cross_page_insn == 0
+                    || ctx.base.pc_next != ctx.cross_page_pc)
+            {
+                ctx.cur_insn_len = 0;
+                ctx.base.is_jmp = DisasJumpType::TooMany;
+                return;
+            }
             let insn = unsafe { ctx.fetch_insn32() };
             ctx.opcode = insn;
             ctx.cur_insn_len = 4;
