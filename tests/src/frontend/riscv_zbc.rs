@@ -64,21 +64,42 @@ fn test_clmul_rejected_without_zbc() {
     let mut cpu = RiscvCpu::new();
     cpu.gpr[1] = 3;
     cpu.gpr[2] = 5;
-    let exit = run_rv_with_cfg(&mut cpu, clmul(3, 1, 2), RiscvCfg::default());
+    let exit = run_rv_with_cfg(
+        &mut cpu,
+        clmul(3, 1, 2),
+        RiscvCfg {
+            ext_zbc: false,
+            ..RiscvCfg::default()
+        },
+    );
     assert_eq!(exit, EXCP_UNDEF as usize);
 }
 
 #[test]
 fn test_clmulh_rejected_without_zbc() {
     let mut cpu = RiscvCpu::new();
-    let exit = run_rv_with_cfg(&mut cpu, clmulh(3, 1, 2), RiscvCfg::default());
+    let exit = run_rv_with_cfg(
+        &mut cpu,
+        clmulh(3, 1, 2),
+        RiscvCfg {
+            ext_zbc: false,
+            ..RiscvCfg::default()
+        },
+    );
     assert_eq!(exit, EXCP_UNDEF as usize);
 }
 
 #[test]
 fn test_clmulr_rejected_without_zbc() {
     let mut cpu = RiscvCpu::new();
-    let exit = run_rv_with_cfg(&mut cpu, clmulr(3, 1, 2), RiscvCfg::default());
+    let exit = run_rv_with_cfg(
+        &mut cpu,
+        clmulr(3, 1, 2),
+        RiscvCfg {
+            ext_zbc: false,
+            ..RiscvCfg::default()
+        },
+    );
     assert_eq!(exit, EXCP_UNDEF as usize);
 }
 

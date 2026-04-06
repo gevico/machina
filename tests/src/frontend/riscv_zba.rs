@@ -220,21 +220,42 @@ fn test_sh1add_rejected_without_zba() {
     let mut cpu = RiscvCpu::new();
     cpu.gpr[1] = 10;
     cpu.gpr[2] = 100;
-    let exit = run_zba_cfg(&mut cpu, sh1add(3, 1, 2), RiscvCfg::default());
+    let exit = run_zba_cfg(
+        &mut cpu,
+        sh1add(3, 1, 2),
+        RiscvCfg {
+            ext_zba: false,
+            ..RiscvCfg::default()
+        },
+    );
     assert_eq!(exit, EXCP_UNDEF as usize);
 }
 
 #[test]
 fn test_add_uw_rejected_without_zba() {
     let mut cpu = RiscvCpu::new();
-    let exit = run_zba_cfg(&mut cpu, add_uw(3, 1, 2), RiscvCfg::default());
+    let exit = run_zba_cfg(
+        &mut cpu,
+        add_uw(3, 1, 2),
+        RiscvCfg {
+            ext_zba: false,
+            ..RiscvCfg::default()
+        },
+    );
     assert_eq!(exit, EXCP_UNDEF as usize);
 }
 
 #[test]
 fn test_slli_uw_rejected_without_zba() {
     let mut cpu = RiscvCpu::new();
-    let exit = run_zba_cfg(&mut cpu, slli_uw(3, 1, 4), RiscvCfg::default());
+    let exit = run_zba_cfg(
+        &mut cpu,
+        slli_uw(3, 1, 4),
+        RiscvCfg {
+            ext_zba: false,
+            ..RiscvCfg::default()
+        },
+    );
     assert_eq!(exit, EXCP_UNDEF as usize);
 }
 

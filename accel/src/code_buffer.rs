@@ -136,10 +136,7 @@ impl CodeBuffer {
             unsafe {
                 extern "C" {
                     #[link_name = "siglongjmp"]
-                    fn siglongjmp(
-                        env: *mut u8,
-                        val: i32,
-                    ) -> !;
+                    fn siglongjmp(env: *mut u8, val: i32) -> !;
                 }
                 siglongjmp(self.jmp_trans, -2);
             }
@@ -150,40 +147,28 @@ impl CodeBuffer {
 
     #[inline]
     pub fn emit_u8(&mut self, val: u8) {
-        debug_assert!(
-            self.offset < self.size,
-            "code buffer overflow"
-        );
+        debug_assert!(self.offset < self.size, "code buffer overflow");
         unsafe { self.ptr.add(self.offset).write(val) };
         self.offset += 1;
     }
 
     #[inline]
     pub fn emit_u16(&mut self, val: u16) {
-        debug_assert!(
-            self.offset + 2 <= self.size,
-            "code buffer overflow"
-        );
+        debug_assert!(self.offset + 2 <= self.size, "code buffer overflow");
         unsafe { (self.ptr.add(self.offset) as *mut u16).write_unaligned(val) };
         self.offset += 2;
     }
 
     #[inline]
     pub fn emit_u32(&mut self, val: u32) {
-        debug_assert!(
-            self.offset + 4 <= self.size,
-            "code buffer overflow"
-        );
+        debug_assert!(self.offset + 4 <= self.size, "code buffer overflow");
         unsafe { (self.ptr.add(self.offset) as *mut u32).write_unaligned(val) };
         self.offset += 4;
     }
 
     #[inline]
     pub fn emit_u64(&mut self, val: u64) {
-        debug_assert!(
-            self.offset + 8 <= self.size,
-            "code buffer overflow"
-        );
+        debug_assert!(self.offset + 8 <= self.size, "code buffer overflow");
         unsafe { (self.ptr.add(self.offset) as *mut u64).write_unaligned(val) };
         self.offset += 8;
     }

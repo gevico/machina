@@ -30,16 +30,12 @@ fn test_monitor_state_stop_resume() {
     // until quit is requested.
     let handle = std::thread::spawn(move || {
         while !ms2.check_pause() {
-            std::thread::sleep(
-                std::time::Duration::from_millis(1),
-            );
+            std::thread::sleep(std::time::Duration::from_millis(1));
         }
     });
 
     // Give the exec-loop thread time to start polling.
-    std::thread::sleep(
-        std::time::Duration::from_millis(20),
-    );
+    std::thread::sleep(std::time::Duration::from_millis(20));
 
     // Stop: blocks until the thread parks.
     ms.request_stop();
@@ -61,15 +57,11 @@ fn test_monitor_state_stop_idempotent() {
 
     let handle = std::thread::spawn(move || {
         while !ms2.check_pause() {
-            std::thread::sleep(
-                std::time::Duration::from_millis(1),
-            );
+            std::thread::sleep(std::time::Duration::from_millis(1));
         }
     });
 
-    std::thread::sleep(
-        std::time::Duration::from_millis(20),
-    );
+    std::thread::sleep(std::time::Duration::from_millis(20));
 
     ms.request_stop();
     // Second stop when already paused is idempotent.

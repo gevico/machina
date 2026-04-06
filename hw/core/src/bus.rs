@@ -121,7 +121,10 @@ impl SysBusDeviceState {
         &mut self.device
     }
 
-    pub fn attach_to_bus(&mut self, bus: &mut SysBus) -> Result<(), SysBusError> {
+    pub fn attach_to_bus(
+        &mut self,
+        bus: &mut SysBus,
+    ) -> Result<(), SysBusError> {
         self.device.set_parent_bus(&bus.name)?;
         bus.attach_child(self.device.object_mut())?;
         Ok(())

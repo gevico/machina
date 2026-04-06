@@ -3,9 +3,7 @@
 // Tests protocol encoding/decoding, GdbHandler command
 // dispatch, and GdbState breakpoint management.
 
-use machina_gdbstub::handler::{
-    GdbHandler, GdbTarget, StopReason,
-};
+use machina_gdbstub::handler::{GdbHandler, GdbTarget, StopReason};
 use machina_gdbstub::protocol;
 use machina_system::gdb::{GdbRunState, GdbState};
 
@@ -14,16 +12,12 @@ use machina_system::gdb::{GdbRunState, GdbState};
 #[test]
 fn test_encode_hex_bytes() {
     let data = [0x00, 0x01, 0xfe, 0xff];
-    assert_eq!(
-        protocol::encode_hex_bytes(&data),
-        "0001feff",
-    );
+    assert_eq!(protocol::encode_hex_bytes(&data), "0001feff",);
 }
 
 #[test]
 fn test_decode_hex_bytes() {
-    let decoded =
-        protocol::decode_hex_bytes("0001feff").unwrap();
+    let decoded = protocol::decode_hex_bytes("0001feff").unwrap();
     assert_eq!(decoded, vec![0x00, 0x01, 0xfe, 0xff]);
 }
 
@@ -36,10 +30,7 @@ fn test_decode_hex_bytes_odd_len() {
 fn test_parse_hex() {
     assert_eq!(protocol::parse_hex("0"), 0);
     assert_eq!(protocol::parse_hex("ff"), 255);
-    assert_eq!(
-        protocol::parse_hex("deadbeef"),
-        0xdeadbeef,
-    );
+    assert_eq!(protocol::parse_hex("deadbeef"), 0xdeadbeef,);
     assert_eq!(
         protocol::parse_hex("123456789abcdef0"),
         0x1234_5678_9abc_def0,
@@ -48,26 +39,14 @@ fn test_parse_hex() {
 
 #[test]
 fn test_encode_reg_hex() {
-    assert_eq!(
-        protocol::encode_reg_hex(1u64),
-        "0100000000000000",
-    );
-    assert_eq!(
-        protocol::encode_reg_hex(0xdead_beef),
-        "efbeadde00000000",
-    );
+    assert_eq!(protocol::encode_reg_hex(1u64), "0100000000000000",);
+    assert_eq!(protocol::encode_reg_hex(0xdead_beef), "efbeadde00000000",);
 }
 
 #[test]
 fn test_decode_reg_hex() {
-    assert_eq!(
-        protocol::decode_reg_hex("0100000000000000"),
-        1,
-    );
-    assert_eq!(
-        protocol::decode_reg_hex("efbeadde00000000"),
-        0xdead_beef,
-    );
+    assert_eq!(protocol::decode_reg_hex("0100000000000000"), 1,);
+    assert_eq!(protocol::decode_reg_hex("efbeadde00000000"), 0xdead_beef,);
 }
 
 #[test]
@@ -81,8 +60,7 @@ fn test_send_packet_format() {
 fn test_recv_packet_valid() {
     let data = b"+$OK#9a+".to_vec();
     let mut cursor = std::io::Cursor::new(data);
-    let pkt =
-        protocol::recv_packet(&mut cursor).unwrap();
+    let pkt = protocol::recv_packet(&mut cursor).unwrap();
     assert_eq!(pkt, "OK");
 }
 
@@ -157,11 +135,7 @@ impl GdbTarget for MockTarget {
         }
     }
 
-    fn write_register(
-        &mut self,
-        reg: usize,
-        val: &[u8],
-    ) -> bool {
+    fn write_register(&mut self, reg: usize, val: &[u8]) -> bool {
         if val.len() != 8 {
             return false;
         }
@@ -188,27 +162,17 @@ impl GdbTarget for MockTarget {
         }
     }
 
-    fn write_memory(
-        &mut self,
-        addr: u64,
-        data: &[u8],
-    ) -> bool {
+    fn write_memory(&mut self, addr: u64, data: &[u8]) -> bool {
         let off = addr as usize;
         if off + data.len() <= self.mem.len() {
-            self.mem[off..off + data.len()]
-                .copy_from_slice(data);
+            self.mem[off..off + data.len()].copy_from_slice(data);
             true
         } else {
             false
         }
     }
 
-    fn set_breakpoint(
-        &mut self,
-        _type_: u8,
-        _addr: u64,
-        _kind: u32,
-    ) -> bool {
+    fn set_breakpoint(&mut self, _type_: u8, _addr: u64, _kind: u32) -> bool {
         true
     }
 
@@ -252,10 +216,7 @@ fn test_handler_write_registers() {
     let mut h = GdbHandler::new();
     let mut t = MockTarget::new();
     let zeros = "0".repeat(1040);
-    assert_eq!(
-        h.handle(&format!("G{}", zeros), &mut t).unwrap(),
-        "OK",
-    );
+    assert_eq!(h.handle(&format!("G{}", zeros), &mut t).unwrap(), "OK",);
     assert!(t.regs.iter().all(|&b| b == 0));
 }
 
@@ -263,10 +224,7 @@ fn test_handler_write_registers() {
 fn test_handler_write_registers_bad_len() {
     let mut h = GdbHandler::new();
     let mut t = MockTarget::new();
-    assert_eq!(
-        h.handle("G00", &mut t).unwrap(),
-        "E01",
-    );
+    assert_eq!(h.handle("G00", &mut t).unwrap(), "E01",);
 }
 
 #[test]
@@ -274,10 +232,7 @@ fn test_handler_read_register_pc() {
     let mut h = GdbHandler::new();
     let mut t = MockTarget::new();
     // p20 = register 32 (0x20) = PC.
-    assert_eq!(
-        h.handle("p20", &mut t).unwrap(),
-        "0000208000000000",
-    );
+    assert_eq!(h.handle("p20", &mut t).unwrap(), "0000208000000000",);
 }
 
 #[test]
@@ -285,13 +240,8 @@ fn test_handler_write_register() {
     let mut h = GdbHandler::new();
     let mut t = MockTarget::new();
     // P20=<new_pc_hex>.
-    assert_eq!(
-        h.handle("P20=0000408000000000", &mut t).unwrap(),
-        "OK",
-    );
-    let pc = u64::from_le_bytes(
-        t.regs[256..264].try_into().unwrap(),
-    );
+    assert_eq!(h.handle("P20=0000408000000000", &mut t).unwrap(), "OK",);
+    let pc = u64::from_le_bytes(t.regs[256..264].try_into().unwrap());
     assert_eq!(pc, 0x8040_0000);
 }
 
@@ -300,20 +250,14 @@ fn test_handler_read_memory() {
     let mut h = GdbHandler::new();
     let mut t = MockTarget::new();
     t.mem[0..4].copy_from_slice(&[0xde, 0xad, 0xbe, 0xef]);
-    assert_eq!(
-        h.handle("m0,4", &mut t).unwrap(),
-        "deadbeef",
-    );
+    assert_eq!(h.handle("m0,4", &mut t).unwrap(), "deadbeef",);
 }
 
 #[test]
 fn test_handler_write_memory() {
     let mut h = GdbHandler::new();
     let mut t = MockTarget::new();
-    assert_eq!(
-        h.handle("M0,4:cafebabe", &mut t).unwrap(),
-        "OK",
-    );
+    assert_eq!(h.handle("M0,4:cafebabe", &mut t).unwrap(), "OK",);
     assert_eq!(&t.mem[0..4], &[0xca, 0xfe, 0xba, 0xbe]);
 }
 
@@ -321,22 +265,15 @@ fn test_handler_write_memory() {
 fn test_handler_breakpoint_add_remove() {
     let mut h = GdbHandler::new();
     let mut t = MockTarget::new();
-    assert_eq!(
-        h.handle("Z0,80200000,4", &mut t).unwrap(),
-        "OK",
-    );
-    assert_eq!(
-        h.handle("z0,80200000,4", &mut t).unwrap(),
-        "OK",
-    );
+    assert_eq!(h.handle("Z0,80200000,4", &mut t).unwrap(), "OK",);
+    assert_eq!(h.handle("z0,80200000,4", &mut t).unwrap(), "OK",);
 }
 
 #[test]
 fn test_handler_query_supported() {
     let mut h = GdbHandler::new();
     let mut t = MockTarget::new();
-    let resp =
-        h.handle("qSupported:foo+", &mut t).unwrap();
+    let resp = h.handle("qSupported:foo+", &mut t).unwrap();
     assert!(resp.contains("multiprocess+"));
     assert!(resp.contains("vContSupported+"));
     assert!(resp.contains("PacketSize=4000"));
@@ -347,24 +284,15 @@ fn test_handler_query_supported() {
 fn test_handler_query_attached() {
     let mut h = GdbHandler::new();
     let mut t = MockTarget::new();
-    assert_eq!(
-        h.handle("qAttached", &mut t).unwrap(),
-        "1",
-    );
+    assert_eq!(h.handle("qAttached", &mut t).unwrap(), "1",);
 }
 
 #[test]
 fn test_handler_query_thread_info() {
     let mut h = GdbHandler::new();
     let mut t = MockTarget::new();
-    assert_eq!(
-        h.handle("qfThreadInfo", &mut t).unwrap(),
-        "m01",
-    );
-    assert_eq!(
-        h.handle("qsThreadInfo", &mut t).unwrap(),
-        "l",
-    );
+    assert_eq!(h.handle("qfThreadInfo", &mut t).unwrap(), "m01",);
+    assert_eq!(h.handle("qsThreadInfo", &mut t).unwrap(), "l",);
 }
 
 #[test]
@@ -417,20 +345,14 @@ fn test_handler_vcont_query() {
 fn test_handler_vcont_step() {
     let mut h = GdbHandler::new();
     let mut t = MockTarget::new();
-    assert_eq!(
-        h.handle("vCont;s:1", &mut t).unwrap(),
-        "T05thread:01;",
-    );
+    assert_eq!(h.handle("vCont;s:1", &mut t).unwrap(), "T05thread:01;",);
 }
 
 #[test]
 fn test_handler_no_ack() {
     let mut h = GdbHandler::new();
     let mut t = MockTarget::new();
-    assert_eq!(
-        h.handle("QStartNoAckMode", &mut t).unwrap(),
-        "OK",
-    );
+    assert_eq!(h.handle("QStartNoAckMode", &mut t).unwrap(), "OK",);
     assert!(h.no_ack());
 }
 
@@ -438,10 +360,7 @@ fn test_handler_no_ack() {
 fn test_handler_ctrl_c() {
     let mut h = GdbHandler::new();
     let mut t = MockTarget::new();
-    assert_eq!(
-        h.handle("\x03", &mut t).unwrap(),
-        "T02thread:01;",
-    );
+    assert_eq!(h.handle("\x03", &mut t).unwrap(), "T02thread:01;",);
 }
 
 // ── GdbState tests ──────────────────────────────────
@@ -567,15 +486,9 @@ fn test_register_write_read_roundtrip() {
     let mut t = MockTarget::new();
     // Write x5 = 0x4242424242424242.
     let val = "4242424242424242";
-    assert_eq!(
-        h.handle(&format!("P5={}", val), &mut t).unwrap(),
-        "OK",
-    );
+    assert_eq!(h.handle(&format!("P5={}", val), &mut t).unwrap(), "OK",);
     // Read it back.
-    assert_eq!(
-        h.handle("p5", &mut t).unwrap(),
-        val,
-    );
+    assert_eq!(h.handle("p5", &mut t).unwrap(), val,);
 }
 
 #[test]
@@ -583,16 +496,9 @@ fn test_memory_write_read_roundtrip() {
     let mut h = GdbHandler::new();
     let mut t = MockTarget::new();
     // Write 8 bytes at addr 0x100.
-    assert_eq!(
-        h.handle("M100,8:0102030405060708", &mut t)
-            .unwrap(),
-        "OK",
-    );
+    assert_eq!(h.handle("M100,8:0102030405060708", &mut t).unwrap(), "OK",);
     // Read back.
-    assert_eq!(
-        h.handle("m100,8", &mut t).unwrap(),
-        "0102030405060708",
-    );
+    assert_eq!(h.handle("m100,8", &mut t).unwrap(), "0102030405060708",);
 }
 
 // ── qXfer target XML tests ─────────────────────────────
@@ -603,10 +509,7 @@ fn test_handler_qxfer_target_xml() {
     let mut t = MockTarget::new();
     // Read first chunk of target.xml.
     let resp = h
-        .handle(
-            "qXfer:features:read:target.xml:0,fff",
-            &mut t,
-        )
+        .handle("qXfer:features:read:target.xml:0,fff", &mut t)
         .unwrap();
     assert!(resp.starts_with('m') || resp.starts_with('l'));
     let xml = &resp[1..];
@@ -620,10 +523,7 @@ fn test_handler_qxfer_nonexistent() {
     let mut h = GdbHandler::new();
     let mut t = MockTarget::new();
     let resp = h
-        .handle(
-            "qXfer:features:read:nonexistent.xml:0,fff",
-            &mut t,
-        )
+        .handle("qXfer:features:read:nonexistent.xml:0,fff", &mut t)
         .unwrap();
     assert!(resp.is_empty());
 }
@@ -634,10 +534,7 @@ fn test_handler_qxfer_offset_beyond_end() {
     let mut t = MockTarget::new();
     // Offset beyond XML length returns 'l' (end).
     let resp = h
-        .handle(
-            "qXfer:features:read:target.xml:fffff,fff",
-            &mut t,
-        )
+        .handle("qXfer:features:read:target.xml:fffff,fff", &mut t)
         .unwrap();
     assert_eq!(resp, "l");
 }
@@ -692,15 +589,11 @@ fn test_gdb_state_snapshot_on_step() {
 fn test_gdb_state_wait_paused_timeout() {
     let gs = GdbState::new();
     // Already paused -> should return true immediately.
-    assert!(gs.wait_paused_timeout(
-        std::time::Duration::from_millis(10)
-    ));
+    assert!(gs.wait_paused_timeout(std::time::Duration::from_millis(10)));
 
     // Resume -> not paused, timeout should return false.
     gs.request_resume();
-    assert!(!gs.wait_paused_timeout(
-        std::time::Duration::from_millis(10)
-    ));
+    assert!(!gs.wait_paused_timeout(std::time::Duration::from_millis(10)));
 }
 
 #[test]
@@ -715,10 +608,7 @@ fn test_gdb_state_breakpoint_triggers_pause() {
     gs.set_stop_reason(StopReason::Breakpoint);
     gs.request_pause();
     assert_eq!(gs.run_state(), GdbRunState::PauseRequested);
-    assert_eq!(
-        gs.get_stop_reason(),
-        StopReason::Breakpoint,
-    );
+    assert_eq!(gs.get_stop_reason(), StopReason::Breakpoint,);
 }
 
 // ── Round 1: resume/step flow tests ──────────────
@@ -782,8 +672,7 @@ fn mock_exec_loop(gs: &GdbState) {
         match gs.run_state() {
             GdbRunState::Stepping => {
                 // Apply dirty register writes from GDB.
-                if let Some(snap) = gs.take_dirty_snapshot(0)
-                {
+                if let Some(snap) = gs.take_dirty_snapshot(0) {
                     for i in 1..32 {
                         gpr[i] = snap.gpr[i];
                     }
@@ -800,8 +689,7 @@ fn mock_exec_loop(gs: &GdbState) {
             }
             GdbRunState::Running => {
                 // Apply dirty register writes.
-                if let Some(snap) = gs.take_dirty_snapshot(0)
-                {
+                if let Some(snap) = gs.take_dirty_snapshot(0) {
                     for i in 1..32 {
                         gpr[i] = snap.gpr[i];
                     }
@@ -811,14 +699,10 @@ fn mock_exec_loop(gs: &GdbState) {
                 // breakpoints and pause requests.
                 loop {
                     pc += 4;
-                    if gs.has_breakpoints()
-                        && gs.hit_breakpoint(pc)
-                    {
+                    if gs.has_breakpoints() && gs.hit_breakpoint(pc) {
                         gpr[1] = pc;
                         gs.save_snapshot(0, &gpr, &fpr, pc, 3, &[]);
-                        gs.set_stop_reason(
-                            StopReason::Breakpoint,
-                        );
+                        gs.set_stop_reason(StopReason::Breakpoint);
                         gs.request_pause();
                         break;
                     }
@@ -831,9 +715,7 @@ fn mock_exec_loop(gs: &GdbState) {
                         gs.set_stop_reason(StopReason::Pause);
                         break;
                     }
-                    std::thread::sleep(
-                        Duration::from_millis(1),
-                    );
+                    std::thread::sleep(Duration::from_millis(1));
                 }
                 // Park until resumed.
                 if gs.check_and_wait() {
@@ -853,9 +735,7 @@ fn mock_exec_loop(gs: &GdbState) {
 // RSP helpers for the test client side.
 
 fn rsp_send(stream: &mut TcpStream, packet: &str) {
-    let checksum: u8 = packet
-        .bytes()
-        .fold(0u8, |a, b| a.wrapping_add(b));
+    let checksum: u8 = packet.bytes().fold(0u8, |a, b| a.wrapping_add(b));
     let msg = format!("${}#{:02x}", packet, checksum);
     stream.write_all(msg.as_bytes()).unwrap();
     stream.flush().unwrap();
@@ -890,13 +770,7 @@ fn rsp_recv(stream: &mut TcpStream) -> String {
 /// Helper: decode LE hex bytes to u64.
 fn u8hex_to_u64(hex: &str) -> u64 {
     let bytes: Vec<u8> = (0..8)
-        .map(|i| {
-            u8::from_str_radix(
-                &hex[i * 2..i * 2 + 2],
-                16,
-            )
-            .unwrap()
-        })
+        .map(|i| u8::from_str_radix(&hex[i * 2..i * 2 + 2], 16).unwrap())
         .collect();
     u64::from_le_bytes(bytes.try_into().unwrap())
 }
@@ -911,12 +785,7 @@ fn test_serve_integration_full_path() {
 
     // Create GdbState and configure memory access.
     let gs = Arc::new(GdbState::new());
-    gs.set_mem_access(
-        ram.as_ptr(),
-        ram_size,
-        0x8000_0000,
-        0,
-    );
+    gs.set_mem_access(ram.as_ptr(), ram_size, 0x8000_0000, 0);
     gs.set_connected(true);
 
     // Start mock exec loop thread.
@@ -929,8 +798,7 @@ fn test_serve_integration_full_path() {
         .unwrap();
 
     // TCP listener on random port.
-    let listener =
-        TcpListener::bind("127.0.0.1:0").unwrap();
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let addr = listener.local_addr().unwrap();
 
     // Start serve() in a thread.
@@ -939,8 +807,7 @@ fn test_serve_integration_full_path() {
         .name("gdb-serve".into())
         .spawn(move || {
             let (stream, _) = listener.accept().unwrap();
-            machina_system::gdb::serve(stream, &gs_serve)
-                .unwrap();
+            machina_system::gdb::serve(stream, &gs_serve).unwrap();
         })
         .unwrap();
 
@@ -955,24 +822,17 @@ fn test_serve_integration_full_path() {
 
     // ── 1. Initial stop reply ──
     let init = rsp_recv(&mut stream);
-    assert_eq!(
-        init, "T05thread:01;",
-        "initial stop: no swbreak claim"
-    );
+    assert_eq!(init, "T05thread:01;", "initial stop: no swbreak claim");
 
     // ── 2. Enable no-ack mode ──
     rsp_send(&mut stream, "QStartNoAckMode");
     assert_eq!(rsp_recv(&mut stream), "OK");
 
     // ── 3. qXfer target XML ──
-    rsp_send(
-        &mut stream,
-        "qXfer:features:read:target.xml:0,fff",
-    );
+    rsp_send(&mut stream, "qXfer:features:read:target.xml:0,fff");
     let xml_resp = rsp_recv(&mut stream);
     assert!(
-        xml_resp.starts_with('m')
-            || xml_resp.starts_with('l'),
+        xml_resp.starts_with('m') || xml_resp.starts_with('l'),
         "qXfer prefix"
     );
     let xml = &xml_resp[1..];
@@ -982,84 +842,47 @@ fn test_serve_integration_full_path() {
     // ── 4. Read all registers (g) ──
     rsp_send(&mut stream, "g");
     let regs = rsp_recv(&mut stream);
-    assert_eq!(
-        regs.len(),
-        1040,
-        "65 regs * 8 bytes * 2 hex"
-    );
+    assert_eq!(regs.len(), 1040, "65 regs * 8 bytes * 2 hex");
 
     // ── 5. Read PC (p20 = reg 32) ──
     rsp_send(&mut stream, "p20");
     let pc_hex = rsp_recv(&mut stream);
-    assert_ne!(
-        pc_hex,
-        "0000000000000000",
-        "PC not zero"
-    );
+    assert_ne!(pc_hex, "0000000000000000", "PC not zero");
 
     // ── 6. Write + read x5 (P5/p5) ──
     rsp_send(&mut stream, "P5=4242424242424242");
     assert_eq!(rsp_recv(&mut stream), "OK");
     rsp_send(&mut stream, "p5");
-    assert_eq!(
-        rsp_recv(&mut stream),
-        "4242424242424242",
-        "P5/p5 roundtrip"
-    );
+    assert_eq!(rsp_recv(&mut stream), "4242424242424242", "P5/p5 roundtrip");
 
     // ── 7. Memory read (m) ──
     rsp_send(&mut stream, "m80000000,4");
-    assert_eq!(
-        rsp_recv(&mut stream),
-        "deadbeef",
-        "RAM read"
-    );
+    assert_eq!(rsp_recv(&mut stream), "deadbeef", "RAM read");
 
     // ── 8. Memory write + read (M/m) ──
     rsp_send(&mut stream, "M80000004,4:cafebabe");
     assert_eq!(rsp_recv(&mut stream), "OK");
     rsp_send(&mut stream, "m80000004,4");
-    assert_eq!(
-        rsp_recv(&mut stream),
-        "cafebabe",
-        "RAM write/read"
-    );
+    assert_eq!(rsp_recv(&mut stream), "cafebabe", "RAM write/read");
 
     // ── 9. Step (s) ──
     rsp_send(&mut stream, "s");
-    assert_eq!(
-        rsp_recv(&mut stream),
-        "T05thread:01;",
-        "step stop reply"
-    );
+    assert_eq!(rsp_recv(&mut stream), "T05thread:01;", "step stop reply");
     rsp_send(&mut stream, "p20");
     let pc_after = rsp_recv(&mut stream);
-    assert_ne!(
-        pc_after, pc_hex,
-        "PC changed after step"
-    );
+    assert_ne!(pc_after, pc_hex, "PC changed after step");
 
     // ── 10. Set breakpoint + continue ──
     let cur_pc = u8hex_to_u64(&pc_after);
     let bp_addr = cur_pc + 4;
-    rsp_send(
-        &mut stream,
-        &format!("Z0,{:x},4", bp_addr),
-    );
+    rsp_send(&mut stream, &format!("Z0,{:x},4", bp_addr));
     assert_eq!(rsp_recv(&mut stream), "OK");
     rsp_send(&mut stream, "c");
     let bp_reply = rsp_recv(&mut stream);
-    assert!(
-        bp_reply.contains("swbreak"),
-        "bp hit: {}",
-        bp_reply,
-    );
+    assert!(bp_reply.contains("swbreak"), "bp hit: {}", bp_reply,);
 
     // ── 11. Remove breakpoint + continue + Ctrl-C ──
-    rsp_send(
-        &mut stream,
-        &format!("z0,{:x},4", bp_addr),
-    );
+    rsp_send(&mut stream, &format!("z0,{:x},4", bp_addr));
     assert_eq!(rsp_recv(&mut stream), "OK");
     rsp_send(&mut stream, "c");
     // Brief delay then Ctrl-C.
@@ -1067,11 +890,7 @@ fn test_serve_integration_full_path() {
     stream.write_all(&[0x03]).unwrap();
     stream.flush().unwrap();
     let ctrl_reply = rsp_recv(&mut stream);
-    assert!(
-        ctrl_reply.starts_with("T02"),
-        "Ctrl-C: {}",
-        ctrl_reply,
-    );
+    assert!(ctrl_reply.starts_with("T02"), "Ctrl-C: {}", ctrl_reply,);
 
     // ── 12. Detach ──
     rsp_send(&mut stream, "D");
@@ -1088,20 +907,15 @@ fn test_serve_integration_full_path() {
 use std::process::{Child, Command, Stdio};
 
 fn project_root() -> std::path::PathBuf {
-    std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("..")
+    std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..")
 }
 
 fn bin_path(name: &str) -> std::path::PathBuf {
-    project_root()
-        .join("target")
-        .join("debug")
-        .join(name)
+    project_root().join("target").join("debug").join(name)
 }
 
 fn sifive_pass_bin() -> std::path::PathBuf {
-    project_root()
-        .join("tests/firmware/sifive_pass.bin")
+    project_root().join("tests/firmware/sifive_pass.bin")
 }
 
 fn ensure_machina_built() {
@@ -1144,11 +958,7 @@ fn wait_process(child: &mut Child, timeout: Duration) {
     loop {
         match child.try_wait() {
             Ok(Some(status)) => {
-                assert!(
-                    status.success(),
-                    "machina exited: {:?}",
-                    status,
-                );
+                assert!(status.success(), "machina exited: {:?}", status,);
                 return;
             }
             Ok(None) => {
@@ -1176,13 +986,11 @@ fn test_gdb_production_integration() {
     ensure_machina_built();
 
     // Allocate a random port for GDB.
-    let probe =
-        TcpListener::bind("127.0.0.1:0").unwrap();
+    let probe = TcpListener::bind("127.0.0.1:0").unwrap();
     let gdb_port = probe.local_addr().unwrap().port();
     drop(probe);
 
-    let gdb_addr =
-        format!("tcp:127.0.0.1:{}", gdb_port);
+    let gdb_addr = format!("tcp:127.0.0.1:{}", gdb_port);
     let kernel = sifive_pass_bin();
     let kernel_str = kernel.to_str().unwrap();
 
@@ -1214,10 +1022,7 @@ fn test_gdb_production_integration() {
     let mut stream = None;
     for attempt in 0..20 {
         std::thread::sleep(Duration::from_millis(200));
-        match TcpStream::connect(format!(
-            "127.0.0.1:{}",
-            gdb_port,
-        )) {
+        match TcpStream::connect(format!("127.0.0.1:{}", gdb_port,)) {
             Ok(s) => {
                 stream = Some(s);
                 break;
@@ -1225,18 +1030,13 @@ fn test_gdb_production_integration() {
             Err(_) => {
                 // Check if process crashed.
                 if let Ok(Some(status)) = child.try_wait() {
-                    panic!(
-                        "machina exited early: {:?}",
-                        status,
-                    );
+                    panic!("machina exited early: {:?}", status,);
                 }
                 if attempt == 19 {
                     // Last attempt, clean up.
                     let _ = child.kill();
                     let _ = child.wait();
-                    panic!(
-                        "GDB port not available after 4s"
-                    );
+                    panic!("GDB port not available after 4s");
                 }
             }
         }
@@ -1264,21 +1064,14 @@ fn test_gdb_production_integration() {
             );
         }
     };
-    assert_eq!(
-        init, "T05thread:01;",
-        "initial stop: got {}",
-        init,
-    );
+    assert_eq!(init, "T05thread:01;", "initial stop: got {}", init,);
 
     // ── 2. No-ack mode ──
     rsp_send(&mut stream, "QStartNoAckMode");
     assert_eq!(rsp_recv(&mut stream), "OK");
 
     // ── 3. qXfer target XML (AC-4) ──
-    rsp_send(
-        &mut stream,
-        "qXfer:features:read:target.xml:0,fff",
-    );
+    rsp_send(&mut stream, "qXfer:features:read:target.xml:0,fff");
     let xml_resp = rsp_recv(&mut stream);
     assert!(
         xml_resp.starts_with('m') || xml_resp.starts_with('l'),
@@ -1292,11 +1085,7 @@ fn test_gdb_production_integration() {
     // ── 4. Read all registers g (AC-1) ──
     rsp_send(&mut stream, "g");
     let regs = rsp_recv(&mut stream);
-    assert_eq!(
-        regs.len(),
-        1040,
-        "65 regs * 8 bytes * 2 hex"
-    );
+    assert_eq!(regs.len(), 1040, "65 regs * 8 bytes * 2 hex");
 
     // ── 5. Read PC p20 (AC-1) ──
     // With -S, CPU freezes before executing. PC may be
@@ -1305,61 +1094,40 @@ fn test_gdb_production_integration() {
     rsp_send(&mut stream, "p20");
     let pc_hex = rsp_recv(&mut stream);
     let pc_val = u8hex_to_u64(&pc_hex);
-    assert_ne!(
-        pc_val, 0,
-        "PC non-zero after initial stop",
-    );
+    assert_ne!(pc_val, 0, "PC non-zero after initial stop",);
 
     // ── 6. Write + read x5 (AC-1) ──
     rsp_send(&mut stream, "P5=4242424242424242");
     assert_eq!(rsp_recv(&mut stream), "OK");
     rsp_send(&mut stream, "p5");
-    assert_eq!(
-        rsp_recv(&mut stream),
-        "4242424242424242",
-        "P5/p5 roundtrip",
-    );
+    assert_eq!(rsp_recv(&mut stream), "4242424242424242", "P5/p5 roundtrip",);
 
     // ── 7. RAM read (AC-2) ──
     // Read kernel code at 0x80000000 (first instruction).
     rsp_send(&mut stream, "m80000000,4");
     let ram_read = rsp_recv(&mut stream);
-    assert_ne!(
-        ram_read, "",
-        "RAM read non-empty",
-    );
+    assert_ne!(ram_read, "", "RAM read non-empty",);
 
     // ── 8. RAM write + read (AC-2) ──
     // Write at 0x80001000 (above kernel, safe RAM).
     rsp_send(&mut stream, "M80001000,4:cafebabe");
     assert_eq!(rsp_recv(&mut stream), "OK");
     rsp_send(&mut stream, "m80001000,4");
-    assert_eq!(
-        rsp_recv(&mut stream),
-        "cafebabe",
-        "RAM write/read",
-    );
+    assert_eq!(rsp_recv(&mut stream), "cafebabe", "RAM write/read",);
 
     // ── 9. MMIO read via AddressSpace (AC-2) ──
     // UART at 0x10000000 in riscv64-ref.
     rsp_send(&mut stream, "m10000000,4");
     let mmio_read = rsp_recv(&mut stream);
     // Should return something (no crash, no empty).
-    assert!(
-        !mmio_read.is_empty(),
-        "MMIO read: got empty",
-    );
+    assert!(!mmio_read.is_empty(), "MMIO read: got empty",);
 
     // ── 10. Negative: unmapped address (AC-2) ──
     // Address 0 is not in RAM range. Goes through
     // AddressSpace fallback; should return zeros.
     rsp_send(&mut stream, "m0,4");
     let neg_read = rsp_recv(&mut stream);
-    assert_eq!(
-        neg_read, "00000000",
-        "unmapped read: got {}",
-        neg_read,
-    );
+    assert_eq!(neg_read, "00000000", "unmapped read: got {}", neg_read,);
 
     // ── 11. Negative: out-of-range write (AC-2) ──
     // On production path with full AddressSpace,
@@ -1395,11 +1163,7 @@ fn test_gdb_production_integration() {
             );
         }
     };
-    assert!(
-        bp_reply.contains("swbreak"),
-        "bp hit: {}",
-        bp_reply,
-    );
+    assert!(bp_reply.contains("swbreak"), "bp hit: {}", bp_reply,);
 
     // ── 13. g after breakpoint stop (AC-1, AC-6) ──
     // Verify register snapshot reflects post-execution state.
@@ -1408,14 +1172,8 @@ fn test_gdb_production_integration() {
     assert_eq!(bp_regs.len(), 1040);
     // Extract PC from g response (reg 32, offset 32*16).
     let pc_off = 32 * 8 * 2;
-    let bp_pc = u8hex_to_u64(
-        &bp_regs[pc_off..pc_off + 16],
-    );
-    assert_eq!(
-        bp_pc, 0x8000_0000,
-        "PC at breakpoint: got {:#x}",
-        bp_pc,
-    );
+    let bp_pc = u8hex_to_u64(&bp_regs[pc_off..pc_off + 16]);
+    assert_eq!(bp_pc, 0x8000_0000, "PC at breakpoint: got {:#x}", bp_pc,);
 
     // ── 14. p20 after execution (AC-6) ──
     rsp_send(&mut stream, "p20");
@@ -1431,11 +1189,7 @@ fn test_gdb_production_integration() {
     // Step from the kernel entry. The CPU is at
     // 0x80000000, stepping advances to 0x80000004.
     rsp_send(&mut stream, "s");
-    assert_eq!(
-        rsp_recv(&mut stream),
-        "T05thread:01;",
-        "step stop reply",
-    );
+    assert_eq!(rsp_recv(&mut stream), "T05thread:01;", "step stop reply",);
     // Verify PC advanced after step.
     rsp_send(&mut stream, "p20");
     let step_pc_hex = rsp_recv(&mut stream);

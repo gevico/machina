@@ -27,10 +27,7 @@ impl GdbServer {
     /// The target must be in a paused state. Commands like
     /// resume/step are blocking: they run the CPU and
     /// return only after the CPU stops again.
-    pub fn serve(
-        &self,
-        target: &mut dyn GdbTarget,
-    ) -> io::Result<()> {
+    pub fn serve(&self, target: &mut dyn GdbTarget) -> io::Result<()> {
         let listener = TcpListener::bind(&self.addr)?;
         eprintln!("machina: gdbstub waiting on {}", self.addr);
 
@@ -41,42 +38,30 @@ impl GdbServer {
         let mut handler = GdbHandler::new();
 
         loop {
-            let packet =
-                match protocol::recv_packet(&mut stream) {
-                    Ok(p) => p,
-                    Err(e) => {
-                        if e.kind()
-                            == io::ErrorKind::UnexpectedEof
-                        {
-                            eprintln!(
-                                "machina: gdb \
+            let packet = match protocol::recv_packet(&mut stream) {
+                Ok(p) => p,
+                Err(e) => {
+                    if e.kind() == io::ErrorKind::UnexpectedEof {
+                        eprintln!(
+                            "machina: gdb \
                                  client disconnected"
-                            );
-                            break;
-                        }
-                        continue;
-                    }
-                };
-
-            let response =
-                match handler.handle(&packet, target) {
-                    Some(resp) => resp,
-                    None => {
-                        let _ = protocol::send_packet(
-                            &mut stream, "OK",
                         );
                         break;
                     }
-                };
+                    continue;
+                }
+            };
 
-            if let Err(e) = protocol::send_packet(
-                &mut stream,
-                &response,
-            ) {
-                eprintln!(
-                    "machina: gdb send error: {}",
-                    e
-                );
+            let response = match handler.handle(&packet, target) {
+                Some(resp) => resp,
+                None => {
+                    let _ = protocol::send_packet(&mut stream, "OK");
+                    break;
+                }
+            };
+
+            if let Err(e) = protocol::send_packet(&mut stream, &response) {
+                eprintln!("machina: gdb send error: {}", e);
                 break;
             }
         }

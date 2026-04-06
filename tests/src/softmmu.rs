@@ -711,10 +711,8 @@ fn test_fence_i_invalidates_dirty_page_tbs() {
     unsafe {
         let tb = store.get_mut(idx);
         tb.phys_pc = 0x8000_1000;
-        tb.gen.store(
-            store.global_gen(),
-            std::sync::atomic::Ordering::Release,
-        );
+        tb.gen
+            .store(store.global_gen(), std::sync::atomic::Ordering::Release);
     }
     store.mark_code_page(0x8000_1000 >> 12, idx);
     store.insert(idx);

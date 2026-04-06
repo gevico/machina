@@ -949,38 +949,22 @@ impl Decode<Context> for RiscvDisasContext {
     // Zicbom / Zicboz — Cache Block Operations (NOP)
     // ============================================================
 
-    fn trans_cbo_inval(
-        &mut self,
-        _ir: &mut Context,
-        _a: &ArgsEmpty,
-    ) -> bool {
+    fn trans_cbo_inval(&mut self, _ir: &mut Context, _a: &ArgsEmpty) -> bool {
         require_cfg!(self, ext_zicbom);
         true // NOP — no cache simulation
     }
 
-    fn trans_cbo_clean(
-        &mut self,
-        _ir: &mut Context,
-        _a: &ArgsEmpty,
-    ) -> bool {
+    fn trans_cbo_clean(&mut self, _ir: &mut Context, _a: &ArgsEmpty) -> bool {
         require_cfg!(self, ext_zicbom);
         true // NOP — no cache simulation
     }
 
-    fn trans_cbo_flush(
-        &mut self,
-        _ir: &mut Context,
-        _a: &ArgsEmpty,
-    ) -> bool {
+    fn trans_cbo_flush(&mut self, _ir: &mut Context, _a: &ArgsEmpty) -> bool {
         require_cfg!(self, ext_zicbom);
         true // NOP — no cache simulation
     }
 
-    fn trans_cbo_zero(
-        &mut self,
-        _ir: &mut Context,
-        _a: &ArgsEmpty,
-    ) -> bool {
+    fn trans_cbo_zero(&mut self, _ir: &mut Context, _a: &ArgsEmpty) -> bool {
         require_cfg!(self, ext_zicboz);
         true // NOP — no cache simulation
     }

@@ -1735,32 +1735,28 @@ fn test_cbo_zero_accepted() {
 #[test]
 fn test_cbo_clean_rejected_without_zicbom() {
     let mut cpu = RiscvCpu::new();
-    let exit =
-        run_rv_with_cfg(&mut cpu, cbo_clean(5), cfg_rv64i_only());
+    let exit = run_rv_with_cfg(&mut cpu, cbo_clean(5), cfg_rv64i_only());
     assert_eq!(exit, EXCP_UNDEF as usize);
 }
 
 #[test]
 fn test_cbo_flush_rejected_without_zicbom() {
     let mut cpu = RiscvCpu::new();
-    let exit =
-        run_rv_with_cfg(&mut cpu, cbo_flush(5), cfg_rv64i_only());
+    let exit = run_rv_with_cfg(&mut cpu, cbo_flush(5), cfg_rv64i_only());
     assert_eq!(exit, EXCP_UNDEF as usize);
 }
 
 #[test]
 fn test_cbo_inval_rejected_without_zicbom() {
     let mut cpu = RiscvCpu::new();
-    let exit =
-        run_rv_with_cfg(&mut cpu, cbo_inval(5), cfg_rv64i_only());
+    let exit = run_rv_with_cfg(&mut cpu, cbo_inval(5), cfg_rv64i_only());
     assert_eq!(exit, EXCP_UNDEF as usize);
 }
 
 #[test]
 fn test_cbo_zero_rejected_without_zicboz() {
     let mut cpu = RiscvCpu::new();
-    let exit =
-        run_rv_with_cfg(&mut cpu, cbo_zero(5), cfg_rv64i_only());
+    let exit = run_rv_with_cfg(&mut cpu, cbo_zero(5), cfg_rv64i_only());
     assert_eq!(exit, EXCP_UNDEF as usize);
 }
 

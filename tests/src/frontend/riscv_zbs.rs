@@ -331,21 +331,42 @@ fn test_bseti_or_semantics() {
 #[test]
 fn test_bclr_rejected_without_zbs() {
     let mut cpu = RiscvCpu::new();
-    let exit = run_zbs_cfg(&mut cpu, bclr(3, 1, 2), RiscvCfg::default());
+    let exit = run_zbs_cfg(
+        &mut cpu,
+        bclr(3, 1, 2),
+        RiscvCfg {
+            ext_zbs: false,
+            ..RiscvCfg::default()
+        },
+    );
     assert_eq!(exit, EXCP_UNDEF as usize);
 }
 
 #[test]
 fn test_bext_rejected_without_zbs() {
     let mut cpu = RiscvCpu::new();
-    let exit = run_zbs_cfg(&mut cpu, bext(3, 1, 2), RiscvCfg::default());
+    let exit = run_zbs_cfg(
+        &mut cpu,
+        bext(3, 1, 2),
+        RiscvCfg {
+            ext_zbs: false,
+            ..RiscvCfg::default()
+        },
+    );
     assert_eq!(exit, EXCP_UNDEF as usize);
 }
 
 #[test]
 fn test_bseti_rejected_without_zbs() {
     let mut cpu = RiscvCpu::new();
-    let exit = run_zbs_cfg(&mut cpu, bseti(3, 1, 5), RiscvCfg::default());
+    let exit = run_zbs_cfg(
+        &mut cpu,
+        bseti(3, 1, 5),
+        RiscvCfg {
+            ext_zbs: false,
+            ..RiscvCfg::default()
+        },
+    );
     assert_eq!(exit, EXCP_UNDEF as usize);
 }
 
