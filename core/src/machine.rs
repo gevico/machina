@@ -6,6 +6,14 @@ use crate::mobject::MObjectState;
 // TODO: use GPA in Machine trait methods (e.g. ram_base)
 // use crate::address::GPA;
 
+/// Parsed `-netdev` + `-device virtio-net-device` combo.
+#[derive(Clone, Debug)]
+pub struct NetdevOpts {
+    pub id: String,
+    pub ifname: String,
+    pub mac: Option<String>,
+}
+
 pub struct MachineOpts {
     pub ram_size: u64,
     pub cpu_count: u32,
@@ -15,6 +23,7 @@ pub struct MachineOpts {
     pub initrd: Option<PathBuf>,
     pub nographic: bool,
     pub drive: Option<PathBuf>,
+    pub netdev: Option<NetdevOpts>,
 }
 
 pub struct MachineState {
