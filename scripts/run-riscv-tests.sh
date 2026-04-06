@@ -133,6 +133,13 @@ run_tests() {
         echo "summary total=${total} ok=${ok} fail=${bad} timeout=${tout}"
     } | tee "${SUMMARY_FILE}"
 
+    echo "failures file: ${FAIL_FILE}"
+    if [ -s "${FAIL_FILE}" ]; then
+        cat "${FAIL_FILE}"
+    else
+        echo "(no failed tests)"
+    fi
+
     if [ "${bad}" -ne 0 ] || [ "${tout}" -ne 0 ]; then
         return 1
     fi
