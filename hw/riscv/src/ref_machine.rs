@@ -98,7 +98,6 @@ impl IrqSink for RiscvCpuIrqSink {
         let bit = 1u64 << irq;
         if level {
             self.shared_mip.fetch_or(bit, Ordering::SeqCst);
-            // Wake halted CPU waiting in WFI.
             self.wfi_waker.wake();
         } else {
             self.shared_mip.fetch_and(!bit, Ordering::SeqCst);

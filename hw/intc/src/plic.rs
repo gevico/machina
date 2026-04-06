@@ -5,6 +5,16 @@
 //   0x001000 .. 0x001FFF  pending bitmap  (32 sources/word)
 //   0x002000 + 0x80*ctx   enable bitmap per context
 //   0x200000 + 0x1000*ctx threshold (off 0), claim/complete (off 4)
+//
+// Interrupt semantics follow QEMU's PLIC model:
+//   - set_irq only latches pending on a 0→1 (rising edge)
+//     transition of the source wire.
+//   - complete_irq clears the claim and re-evaluates outputs
+//     without automatically re-pending based on wire level.
+//   - If the device keeps its IRQ line asserted, the pending
+//     bit is NOT re-set until the line goes low and then high
+//     again.  This prevents interrupt storms when the guest's
+//     handler defers source-clearing to a bottom-half/task.
 
 use std::sync::{Arc, Mutex};
 
@@ -31,7 +41,7 @@ pub struct Plic {
     threshold: Vec<u32>,
     claim: Vec<u32>,
     context_outputs: Vec<Option<IrqLine>>,
-    /// Per-source level state for level-triggered resample.
+    /// Per-source wire level from the device.
     source_level: Vec<bool>,
 }
 
@@ -122,16 +132,19 @@ impl Plic {
         }
     }
 
-    /// Set or clear a source interrupt and re-evaluate
-    /// outputs.  Tracks the wire level so that
-    /// level-triggered sources can be resampled on
-    /// complete.
+    /// Update the source wire level.  Only a rising edge
+    /// (0→1) latches the pending bit, matching QEMU
+    /// semantics and preventing interrupt storms when the
+    /// guest defers source-clearing to a task/bottom-half.
     pub fn set_irq(&mut self, source: u32, level: bool) {
         if source == 0 || source >= self.num_sources {
             return;
         }
+        let prev = self.source_level[source as usize];
         self.source_level[source as usize] = level;
-        self.set_pending(source, level);
+        if level && !prev {
+            self.set_pending(source, true);
+        }
         self.update_outputs();
     }
 
@@ -186,7 +199,6 @@ impl Plic {
         let mut best_irq: Option<u32> = None;
         let mut best_pri: u32 = 0;
 
-        // IRQ 0 is reserved; scan from 1.
         for irq in 1..self.num_sources {
             let word = (irq / 32) as usize;
             let bit = 1u32 << (irq % 32);
@@ -202,7 +214,6 @@ impl Plic {
         }
 
         if let Some(irq) = best_irq {
-            // Clear pending, record claimed.
             let word = (irq / 32) as usize;
             let bit = 1u32 << (irq % 32);
             self.pending[word] &= !bit;
@@ -213,8 +224,10 @@ impl Plic {
     }
 
     /// Complete (acknowledge) a previously claimed IRQ.
-    /// If the source is still asserted (level-triggered),
-    /// re-pend and re-evaluate outputs.
+    /// Clears the claim record and re-evaluates outputs.
+    /// Does NOT automatically re-pend based on source wire
+    /// level — the device must de-assert and re-assert to
+    /// generate a new interrupt (matching QEMU semantics).
     pub fn complete_irq(&mut self, context: u32, irq: u32) {
         if context >= self.num_contexts {
             return;
@@ -223,15 +236,7 @@ impl Plic {
         if self.claim[ctx] == irq {
             self.claim[ctx] = 0;
         }
-        // Level-triggered resample: if the source wire is
-        // still high, re-assert pending.
-        if irq > 0
-            && (irq as usize) < self.source_level.len()
-            && self.source_level[irq as usize]
-        {
-            self.set_pending(irq, true);
-            self.update_outputs();
-        }
+        self.update_outputs();
     }
 
     // ---- MMIO interface ----
@@ -275,9 +280,6 @@ impl Plic {
         match reg {
             0 => self.threshold[ctx] as u64,
             4 => {
-                // Perform claim: find highest-priority
-                // pending+enabled source, clear pending,
-                // update outputs.
                 let irq = self.claim_irq(ctx as u32).unwrap_or(0);
                 self.update_outputs();
                 irq as u64
