@@ -11,7 +11,7 @@ use std::sync::Arc;
 use machina_accel::exec::ExecEnv;
 use machina_accel::x86_64::emitter::SoftMmuConfig;
 use machina_accel::X86_64CodeGen;
-use machina_core::machine::{Machine, MachineOpts};
+use machina_core::machine::{Machine, MachineOpts, NetdevOpts};
 use machina_hw_riscv::ref_machine::RefMachine;
 use machina_hw_riscv::sifive_test::ShutdownReason;
 use machina_system::cpus::{
@@ -35,6 +35,14 @@ fn usage() {
          vs QEMU"
     );
     eprintln!("  -drive file=<path>  Attach raw disk image");
+    eprintln!(
+        "  -netdev tap,id=<id>,ifname=<name>  \
+         TAP network backend"
+    );
+    eprintln!(
+        "  -device virtio-net-device,netdev=<id>\
+         [,mac=XX:XX:XX:XX:XX:XX]"
+    );
     eprintln!("  -initrd path  Initial ramdisk image");
     eprintln!("  -append line  Kernel command line");
     eprintln!("  -monitor stdio|tcp:host:port  Monitor console");
@@ -54,6 +62,7 @@ struct CliArgs {
     initrd: Option<PathBuf>,
     append: Option<String>,
     trace: Option<PathBuf>,
+    netdev: Option<NetdevOpts>,
 }
 
 impl Default for CliArgs {
@@ -70,6 +79,7 @@ impl Default for CliArgs {
             initrd: None,
             append: None,
             trace: None,
+            netdev: None,
         }
     }
 }
@@ -133,9 +143,81 @@ fn parse_args() -> Result<CliArgs, String> {
                     return Err("-drive: missing file=<path>".to_string());
                 }
             }
-            "-device" => {
-                // Accept and skip for QEMU compat.
+            "-netdev" => {
                 i += 1;
+                let s = args.get(i).ok_or("-netdev requires argument")?;
+                let mut typ = None;
+                let mut id = None;
+                let mut ifname = None;
+                for (idx, part) in s.split(',').enumerate() {
+                    if idx == 0 {
+                        typ = Some(part.to_string());
+                    } else if let Some(v) = part.strip_prefix("id=") {
+                        id = Some(v.to_string());
+                    } else if let Some(v) = part.strip_prefix("ifname=") {
+                        ifname = Some(v.to_string());
+                    }
+                    // script=, downscript= silently accepted
+                }
+                match typ.as_deref() {
+                    Some("tap") => {}
+                    Some(other) => {
+                        return Err(format!(
+                            "-netdev: unsupported type '{}'",
+                            other
+                        ));
+                    }
+                    None => {
+                        return Err("-netdev: missing type".to_string());
+                    }
+                }
+                let id =
+                    id.ok_or("-netdev: missing id=<id>".to_string())?;
+                let ifname = ifname
+                    .ok_or("-netdev: missing ifname=<name>".to_string())?;
+                // Store as pending; MAC comes from -device.
+                cli.netdev = Some(NetdevOpts {
+                    id,
+                    ifname,
+                    mac: None,
+                });
+            }
+            "-device" => {
+                i += 1;
+                let s = args.get(i).ok_or("-device requires argument")?;
+                let parts: Vec<&str> = s.split(',').collect();
+                let dev_type = parts.first().copied().unwrap_or("");
+                if dev_type == "virtio-net-device" {
+                    let mut netdev_id = None;
+                    let mut mac = None;
+                    for part in &parts[1..] {
+                        if let Some(v) = part.strip_prefix("netdev=") {
+                            netdev_id = Some(v.to_string());
+                        } else if let Some(v) = part.strip_prefix("mac=") {
+                            mac = Some(v.to_string());
+                        }
+                    }
+                    if let Some(ref mut nd) = cli.netdev {
+                        if let Some(ref nid) = netdev_id {
+                            if nid != &nd.id {
+                                return Err(format!(
+                                    "-device: netdev='{}' \
+                                     does not match -netdev id='{}'",
+                                    nid, nd.id
+                                ));
+                            }
+                        }
+                        nd.mac = mac;
+                    } else if netdev_id.is_some() {
+                        return Err(
+                            "-device virtio-net-device: \
+                             no matching -netdev defined"
+                                .to_string(),
+                        );
+                    }
+                }
+                // Other device types silently accepted for
+                // QEMU compat.
             }
             "-initrd" => {
                 i += 1;
@@ -448,6 +530,7 @@ fn main() {
         initrd: cli.initrd.clone(),
         nographic: cli.nographic,
         drive: cli.drive.clone(),
+        netdev: cli.netdev.clone(),
     };
 
     // Check -monitor stdio + -nographic conflict.

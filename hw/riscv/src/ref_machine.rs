@@ -45,6 +45,8 @@ const PLIC_SIZE: u64 = 0x0400_0000;
 const ACLINT_SIZE: u64 = 0x0001_0000;
 const UART0_SIZE: u64 = 0x100;
 const VIRTIO0_SIZE: u64 = 0x1000;
+const VIRTIO1_BASE: u64 = 0x1000_2000;
+const VIRTIO1_SIZE: u64 = 0x1000;
 
 // PCI Express ECAM and MMIO window (matches QEMU virt riscv64).
 const PCIE_ECAM_BASE: u64 = 0x3000_0000;
@@ -56,6 +58,7 @@ const PCIE_PIO_SIZE: u64 = 0x0001_0000;
 
 const UART_IRQ: u32 = 10;
 const VIRTIO_IRQ: u32 = 1;
+const VIRTIO_NET_IRQ: u32 = 2;
 const PCIE_IRQ_BASE: u32 = 32;
 const PCIE_NUM_IRQS: u32 = 4;
 const PLIC_NUM_SOURCES: u32 = 96;
@@ -141,6 +144,7 @@ pub struct RefMachine {
     uart: Option<Arc<Mutex<Uart16550>>>,
     virtio_mmio: Option<VirtioMmio>,
     virtio_pci: Option<Arc<Mutex<VirtioPciState>>>,
+    virtio_net_mmio: Option<VirtioMmio>,
     sifive_test: Option<Arc<SifiveTest>>,
     fdt_blob: Option<Vec<u8>>,
     // Per-hart RiscvCpu instances. None after take_cpu().
@@ -179,6 +183,7 @@ impl RefMachine {
             uart: None,
             virtio_mmio: None,
             virtio_pci: None,
+            virtio_net_mmio: None,
             sifive_test: None,
             fdt_blob: None,
             cpus: Arc::new(Mutex::new(Vec::new())),
@@ -353,6 +358,11 @@ impl RefMachine {
             .mappings()
             .iter()
             .find(|mapping| mapping.owner == "virtio-mmio0");
+        let virtio_net_mapping = self
+            .sysbus()
+            .mappings()
+            .iter()
+            .find(|mapping| mapping.owner == "virtio-mmio1");
 
         // Phandle allocation: intc_phandle(hart) = hart + 1,
         // PLIC phandle = cpu_count + 1.
@@ -539,6 +549,19 @@ impl RefMachine {
                 &self.sysbus_reg_cells("virtio-mmio0"),
             );
             fdt.property_u32("interrupts", VIRTIO_IRQ);
+            fdt.property_u32("interrupt-parent", plic_phandle);
+            fdt.end_node();
+        }
+
+        // /soc/virtio_mmio@10002000 (if netdev configured)
+        if let Some(mapping) = virtio_net_mapping {
+            fdt.begin_node(&format!("virtio_mmio@{:x}", mapping.base.0));
+            fdt.property_string("compatible", "virtio,mmio");
+            fdt.property_u32_list(
+                "reg",
+                &self.sysbus_reg_cells("virtio-mmio1"),
+            );
+            fdt.property_u32("interrupts", VIRTIO_NET_IRQ);
             fdt.property_u32("interrupt-parent", plic_phandle);
             fdt.end_node();
         }
@@ -752,7 +775,7 @@ impl Machine for RefMachine {
                 IrqLine::new(plic_sink_mmio as Arc<dyn IrqSink>, VIRTIO_IRQ);
             let mut virtio_mmio = VirtioMmio::new_named(
                 "virtio-mmio0",
-                blk_mmio,
+                Box::new(blk_mmio),
                 mmio_irq,
                 ram_ptr,
                 RAM_BASE,
@@ -763,6 +786,43 @@ impl Machine for RefMachine {
                 virtio_mmio.make_mmio_region("virtio-mmio0", VIRTIO0_SIZE);
             virtio_mmio.register_mmio(virtio_region, GPA::new(VIRTIO0_BASE))?;
             self.virtio_mmio = Some(virtio_mmio);
+        }
+
+        // VirtIO network device (if -netdev configured).
+        if let Some(ref nd) = opts.netdev {
+            use machina_hw_virtio::net::VirtioNet;
+
+            let mac_str = nd.mac.as_deref().unwrap_or("52:54:00:12:34:56");
+            let net = VirtioNet::open(&nd.ifname, mac_str)
+                .unwrap_or_else(|e| {
+                    panic!(
+                        "virtio-net: failed to open TAP '{}': {}",
+                        nd.ifname, e
+                    );
+                });
+            let plic_sink =
+                Arc::new(PlicIrqSink(Arc::clone(self.plic.as_ref().unwrap())));
+            let net_irq =
+                IrqLine::new(plic_sink as Arc<dyn IrqSink>, VIRTIO_NET_IRQ);
+            let ram_ptr = self.ram_block.as_ref().unwrap().as_ptr();
+            let mut virtio_net_mmio = VirtioMmio::new_named(
+                "virtio-mmio1",
+                Box::new(net),
+                net_irq,
+                ram_ptr,
+                RAM_BASE,
+                opts.ram_size,
+            );
+            virtio_net_mmio.attach_to_bus(&sysbus)?;
+            let net_region =
+                virtio_net_mmio.make_mmio_region("virtio-mmio1", VIRTIO1_SIZE);
+            virtio_net_mmio
+                .register_mmio(net_region, GPA::new(VIRTIO1_BASE))?;
+            self.virtio_net_mmio = Some(virtio_net_mmio);
+            eprintln!(
+                "machina: virtio-net on TAP '{}', MAC {}",
+                nd.ifname, mac_str
+            );
         }
 
         // ---- IRQ wiring ----
@@ -849,6 +909,9 @@ impl Machine for RefMachine {
             if let Some(virtio_mmio) = self.virtio_mmio.as_mut() {
                 virtio_mmio.realize_onto(&mut sysbus, address_space)?;
             }
+            if let Some(virtio_net) = self.virtio_net_mmio.as_mut() {
+                virtio_net.realize_onto(&mut sysbus, address_space)?;
+            }
         }
 
         // ---- Attach IRQ + chardev to UART ----
@@ -907,6 +970,9 @@ impl Machine for RefMachine {
         }
         if let Some(virtio_mmio) = &mut self.virtio_mmio {
             virtio_mmio.reset_runtime();
+        }
+        if let Some(virtio_net) = &mut self.virtio_net_mmio {
+            virtio_net.reset_runtime();
         }
     }
 

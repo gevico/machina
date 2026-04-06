@@ -15,6 +15,7 @@ fn default_opts() -> MachineOpts {
         initrd: None,
         nographic: false,
         drive: None,
+        netdev: None,
     }
 }
 
@@ -220,6 +221,7 @@ fn test_ref_machine_zero_ram_fails() {
         initrd: None,
         nographic: false,
         drive: None,
+        netdev: None,
     };
     let result = m.init(&opts);
     assert!(result.is_err(), "init with 0 RAM should fail");
@@ -255,6 +257,7 @@ fn test_ref_machine_plic_contexts_multi_hart() {
         initrd: None,
         nographic: false,
         drive: None,
+        netdev: None,
     };
     m.init(&opts).expect("init failed");
 
@@ -620,6 +623,7 @@ fn test_fdt_placement_2mb_aligned() {
         initrd: None,
         nographic: false,
         drive: None,
+        netdev: None,
     })
     .unwrap();
     m.boot().unwrap();

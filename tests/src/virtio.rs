@@ -32,7 +32,7 @@ fn make_test_device() -> (VirtioMmio, Arc<DummySink>) {
     });
     let irq = IrqLine::new(sink.clone() as Arc<dyn IrqSink>, 1);
     let mmio = VirtioMmio::new(
-        blk,
+        Box::new(blk),
         irq,
         std::ptr::null_mut(),
         0x8000_0000,
