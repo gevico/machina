@@ -243,8 +243,11 @@ pub struct CsrFile {
 
 impl CsrFile {
     pub fn new() -> Self {
+        // FS = Initial (01) so that FP instructions are legal when F/D
+        // extensions are present (matches QEMU's reset behaviour).
+        let mstatus_init: u64 = 1 << 13;
         Self {
-            mstatus: 0,
+            mstatus: mstatus_init,
             misa: misa_rv64imafdcsu(),
             medeleg: 0,
             mideleg: 0,

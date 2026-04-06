@@ -39,6 +39,19 @@ const LSR_TEMT: u8 = 1 << 6; // transmitter empty
 // LCR bits
 const LCR_DLAB: u8 = 1 << 7;
 
+// MCR bits
+const MCR_DTR: u8 = 1 << 0;
+const MCR_RTS: u8 = 1 << 1;
+const MCR_OUT1: u8 = 1 << 2;
+const MCR_OUT2: u8 = 1 << 3;
+const MCR_LOOPBACK: u8 = 1 << 4;
+
+// MSR bits
+const MSR_CTS: u8 = 1 << 4;
+const MSR_DSR: u8 = 1 << 5;
+const MSR_RI: u8 = 1 << 6;
+const MSR_DCD: u8 = 1 << 7;
+
 const FIFO_SIZE: usize = 16;
 
 #[derive(Debug)]
@@ -184,6 +197,7 @@ impl Uart16550 {
         if let Some(mut fe) = self.configured_chardev.take() {
             fe.start_input(rx_cb);
             self.chardev = Some(fe);
+            self.msr = MSR_CTS | MSR_DSR | MSR_DCD;
         }
 
         Ok(())
@@ -209,14 +223,31 @@ impl Uart16550 {
         self.lcr = 0;
         self.mcr = 0;
         self.lsr = LSR_THRE | LSR_TEMT;
-        self.msr = 0;
         self.scr = 0;
         self.dll = 0;
         self.dlm = 0;
         self.rx_fifo.clear();
         self.irq_pending = false;
+        self.update_msr();
         if let Some(ref line) = self.irq_line {
             line.lower();
+        }
+    }
+
+    /// Recompute MSR based on MCR loopback state and chardev presence.
+    fn update_msr(&mut self) {
+        if self.mcr & MCR_LOOPBACK != 0 {
+            // 16550 loopback: MCR outputs are internally connected to MSR inputs.
+            let mut msr = 0u8;
+            if self.mcr & MCR_DTR != 0 { msr |= MSR_DSR; }
+            if self.mcr & MCR_RTS != 0 { msr |= MSR_CTS; }
+            if self.mcr & MCR_OUT1 != 0 { msr |= MSR_RI; }
+            if self.mcr & MCR_OUT2 != 0 { msr |= MSR_DCD; }
+            self.msr = msr;
+        } else if self.chardev.is_some() {
+            self.msr = MSR_CTS | MSR_DSR | MSR_DCD;
+        } else {
+            self.msr = 0;
         }
     }
 
@@ -304,7 +335,10 @@ impl Uart16550 {
                 }
             }
             3 => self.lcr = val,
-            4 => self.mcr = val,
+            4 => {
+                self.mcr = val;
+                self.update_msr();
+            }
             5 => {} // LSR is read-only
             6 => {} // MSR is read-only
             7 => self.scr = val,
@@ -327,7 +361,14 @@ impl Uart16550 {
 
     fn write_thr(&mut self, val: u8) {
         self.thr = val;
-        if let Some(ref mut fe) = self.chardev {
+        if self.mcr & MCR_LOOPBACK != 0 {
+            // Loopback mode: route THR output back into the receive FIFO
+            // instead of sending to the external chardev.
+            if self.rx_fifo.len() < FIFO_SIZE {
+                self.rx_fifo.push_back(val);
+            }
+            self.lsr |= LSR_DR;
+        } else if let Some(ref mut fe) = self.chardev {
             fe.write(&[val]);
         }
         // In emulation the byte is "transmitted"
