@@ -738,6 +738,21 @@ impl Decode<Context> for RiscvDisasContext {
         self.gen_sh3add(ir, a)
     }
 
+    fn trans_sh1add_uw(&mut self, ir: &mut Context, a: &ArgsR) -> bool {
+        require_cfg!(self, ext_zba);
+        self.gen_sh1add_uw(ir, a)
+    }
+
+    fn trans_sh2add_uw(&mut self, ir: &mut Context, a: &ArgsR) -> bool {
+        require_cfg!(self, ext_zba);
+        self.gen_sh2add_uw(ir, a)
+    }
+
+    fn trans_sh3add_uw(&mut self, ir: &mut Context, a: &ArgsR) -> bool {
+        require_cfg!(self, ext_zba);
+        self.gen_sh3add_uw(ir, a)
+    }
+
     fn trans_add_uw(&mut self, ir: &mut Context, a: &ArgsR) -> bool {
         require_cfg!(self, ext_zba);
         self.gen_add_uw(ir, a)
