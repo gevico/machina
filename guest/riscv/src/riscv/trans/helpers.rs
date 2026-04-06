@@ -63,6 +63,67 @@ pub extern "C" fn helper_remw64(a: i64, b: i64) -> i64 {
     r as i64 // sign-extend
 }
 
+// ── Zbb: orc.b helper ─────────────────────────────
+// OR-combine bytes: for each byte of the input, the
+// result byte is 0xFF if any bit was set, else 0x00.
+
+/// Zbb orc.b helper.
+#[no_mangle]
+pub extern "C" fn helper_orc_b(val: u64) -> u64 {
+    let mut r = 0u64;
+    for i in 0..8 {
+        let byte = (val >> (i * 8)) & 0xFF;
+        if byte != 0 {
+            r |= 0xFF << (i * 8);
+        }
+    }
+    r
+}
+
+// ── Zbc: carry-less multiplication helpers ────────
+
+/// Carry-less multiply (low half).
+#[no_mangle]
+pub extern "C" fn helper_clmul(rs1: u64, rs2: u64) -> u64 {
+    let mut result = 0u64;
+    for i in 0..64 {
+        if (rs2 >> i) & 1 != 0 {
+            result ^= rs1 << i;
+        }
+    }
+    result
+}
+
+/// Carry-less multiply (high half).
+#[no_mangle]
+pub extern "C" fn helper_clmulh(
+    rs1: u64,
+    rs2: u64,
+) -> u64 {
+    let mut result = 0u64;
+    for i in 1..64 {
+        if (rs2 >> i) & 1 != 0 {
+            result ^= rs1 >> (64 - i);
+        }
+    }
+    result
+}
+
+/// Carry-less multiply (reversed).
+#[no_mangle]
+pub extern "C" fn helper_clmulr(
+    rs1: u64,
+    rs2: u64,
+) -> u64 {
+    let mut result = 0u64;
+    for i in 0..64 {
+        if (rs2 >> i) & 1 != 0 {
+            result ^= rs1 >> (63 - i);
+        }
+    }
+    result
+}
+
 /// SC helper: check reservation, conditionally store.
 /// Returns 0 on success, 1 on failure.
 ///
@@ -96,8 +157,8 @@ pub extern "C" fn helper_sc(
         // back to read addend — same host mapping.
         entry.addend
     } else {
-        // TLB miss: return SC failure (spurious
-        // failure is legal per RISC-V spec).
+        // TLB miss: return SC failure. Spurious failure
+        // is legal per RISC-V spec (allowed by LR/SC).
         cpu.load_res = u64::MAX;
         return 1;
     };
