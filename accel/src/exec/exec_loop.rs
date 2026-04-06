@@ -145,7 +145,9 @@ where
 
         // GDB breakpoint check: if a breakpoint is set at
         // the current PC, skip TB execution and park.
-        if cpu.gdb_check_breakpoint(cpu.get_pc()) {
+        // Skip during single-step: the current instruction
+        // must execute before breakpoints take effect.
+        if !stepping && cpu.gdb_check_breakpoint(cpu.get_pc()) {
             // Save snapshot and park via check_monitor_pause.
             if cpu.check_monitor_pause() {
                 return ExitReason::Halted;

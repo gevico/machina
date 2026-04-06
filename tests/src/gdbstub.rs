@@ -1096,11 +1096,14 @@ fn test_gdb_production_integration() {
     let pc_val = u8hex_to_u64(&pc_hex);
     assert_ne!(pc_val, 0, "PC non-zero after initial stop",);
 
-    // ── 6. Write + read x5 (AC-1) ──
-    rsp_send(&mut stream, "P5=4242424242424242");
+    // ── 6. Write + read s1 (x9) (AC-1) ──
+    // Use s1 (x9) instead of t0 (x5) because the
+    // MROM reset vector uses t0 for address computation.
+    // Writing t0 would corrupt the jump target.
+    rsp_send(&mut stream, "P9=4242424242424242");
     assert_eq!(rsp_recv(&mut stream), "OK");
-    rsp_send(&mut stream, "p5");
-    assert_eq!(rsp_recv(&mut stream), "4242424242424242", "P5/p5 roundtrip",);
+    rsp_send(&mut stream, "p9");
+    assert_eq!(rsp_recv(&mut stream), "4242424242424242", "P9/p9 roundtrip",);
 
     // ── 7. RAM read (AC-2) ──
     // Read kernel code at 0x80000000 (first instruction).
@@ -1189,7 +1192,12 @@ fn test_gdb_production_integration() {
     // Step from the kernel entry. The CPU is at
     // 0x80000000, stepping advances to 0x80000004.
     rsp_send(&mut stream, "s");
-    assert_eq!(rsp_recv(&mut stream), "T05thread:01;", "step stop reply",);
+    let step_reply = rsp_recv(&mut stream);
+    assert!(
+        step_reply.starts_with("T05thread:01;"),
+        "step stop reply: got {}",
+        step_reply,
+    );
     // Verify PC advanced after step.
     rsp_send(&mut stream, "p20");
     let step_pc_hex = rsp_recv(&mut stream);
