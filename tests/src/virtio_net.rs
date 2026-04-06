@@ -25,8 +25,7 @@ struct GuestRam {
 
 impl GuestRam {
     fn new(size: usize, base: u64) -> Self {
-        let layout =
-            std::alloc::Layout::from_size_align(size, 4096).unwrap();
+        let layout = std::alloc::Layout::from_size_align(size, 4096).unwrap();
         let ptr = unsafe { std::alloc::alloc_zeroed(layout) };
         assert!(!ptr.is_null());
         Self {
@@ -105,8 +104,7 @@ fn push_avail(ram: &GuestRam, avail_idx: u16, desc_idx: u16) {
     unsafe {
         let ring_off = AVAIL_OFF + 4 + (avail_idx as usize) * 2;
         (ram.ptr.add(ring_off) as *mut u16).write_unaligned(desc_idx);
-        (ram.ptr.add(AVAIL_OFF + 2) as *mut u16)
-            .write_unaligned(avail_idx + 1);
+        (ram.ptr.add(AVAIL_OFF + 2) as *mut u16).write_unaligned(avail_idx + 1);
     }
 }
 
@@ -142,11 +140,7 @@ impl PipePair {
     fn read_all(&self) -> Vec<u8> {
         unsafe {
             let flags = libc::fcntl(self.read_fd, libc::F_GETFL);
-            libc::fcntl(
-                self.read_fd,
-                libc::F_SETFL,
-                flags | libc::O_NONBLOCK,
-            );
+            libc::fcntl(self.read_fd, libc::F_SETFL, flags | libc::O_NONBLOCK);
         }
         let mut buf = vec![0u8; 65536];
         let n = unsafe {
@@ -334,34 +328,25 @@ fn test_net_rx_chained_descriptors() {
         VRING_DESC_F_WRITE | VRING_DESC_F_NEXT,
         1,
     );
-    write_desc(
-        &ram,
-        1,
-        ram.gpa(BUF_OFF + 16),
-        2032,
-        VRING_DESC_F_WRITE,
-        0,
-    );
+    write_desc(&ram, 1, ram.gpa(BUF_OFF + 16), 2032, VRING_DESC_F_WRITE, 0);
     push_avail(&ram, 0, 0);
 
     let pkt_data = vec![0xCC_u8; 100];
     let n = unsafe {
-        fill_rx_queue(
-            &pkt_data,
-            &mut q,
-            ram.ptr,
-            ram.base,
-            ram.size as u64,
-        )
+        fill_rx_queue(&pkt_data, &mut q, ram.ptr, ram.base, ram.size as u64)
     };
     assert_eq!(n, 1);
 
     let d0 = ram.read_bytes(BUF_OFF, 16);
-    assert_eq!(&d0[..VIRTIO_NET_HDR_SIZE], &[0u8; 10]);
-    assert_eq!(&d0[10..16], &pkt_data[..6]);
+    assert_eq!(&d0[..VIRTIO_NET_HDR_SIZE], &vec![0u8; VIRTIO_NET_HDR_SIZE]);
+    assert_eq!(
+        &d0[VIRTIO_NET_HDR_SIZE..16],
+        &pkt_data[..16 - VIRTIO_NET_HDR_SIZE]
+    );
 
-    let d1 = ram.read_bytes(BUF_OFF + 16, 94);
-    assert_eq!(&d1[..94], &pkt_data[6..]);
+    let rest = 100 - (16 - VIRTIO_NET_HDR_SIZE);
+    let d1 = ram.read_bytes(BUF_OFF + 16, rest);
+    assert_eq!(&d1[..rest], &pkt_data[16 - VIRTIO_NET_HDR_SIZE..]);
 }
 
 #[test]
@@ -378,13 +363,7 @@ fn test_net_rx_multiple_packets_sequential() {
     for i in 0..3u32 {
         let pkt = vec![(i + 1) as u8; 60];
         let n = unsafe {
-            fill_rx_queue(
-                &pkt,
-                &mut q,
-                ram.ptr,
-                ram.base,
-                ram.size as u64,
-            )
+            fill_rx_queue(&pkt, &mut q, ram.ptr, ram.base, ram.size as u64)
         };
         assert_eq!(n, 1, "packet {i}");
     }
@@ -531,14 +510,7 @@ fn test_net_rx_then_tx_round_trip() {
     let mut rx_q = new_queue(&ram);
 
     let rx_buf_off = BUF_OFF;
-    write_desc(
-        &ram,
-        0,
-        ram.gpa(rx_buf_off),
-        2048,
-        VRING_DESC_F_WRITE,
-        0,
-    );
+    write_desc(&ram, 0, ram.gpa(rx_buf_off), 2048, VRING_DESC_F_WRITE, 0);
     push_avail(&ram, 0, 0);
 
     let original = b"Hello, virtio-net!";

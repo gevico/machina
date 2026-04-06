@@ -6,15 +6,14 @@
 //   0x002000 + 0x80*ctx   enable bitmap per context
 //   0x200000 + 0x1000*ctx threshold (off 0), claim/complete (off 4)
 //
-// Interrupt semantics follow QEMU's PLIC model:
-//   - set_irq only latches pending on a 0→1 (rising edge)
-//     transition of the source wire.
-//   - complete_irq clears the claim and re-evaluates outputs
-//     without automatically re-pending based on wire level.
-//   - If the device keeps its IRQ line asserted, the pending
-//     bit is NOT re-set until the line goes low and then high
-//     again.  This prevents interrupt storms when the guest's
-//     handler defers source-clearing to a bottom-half/task.
+// Interrupt semantics follow level-triggered PLIC behaviour:
+//   - set_irq latches pending on a 0→1 (rising edge) and
+//     clears pending on a 1→0 (falling edge) of the source
+//     wire.
+//   - complete_irq clears the claim.  If the source wire is
+//     still asserted the pending bit is re-latched so that
+//     a still-active device generates another interrupt
+//     (level-triggered resample).
 
 use std::sync::{Arc, Mutex};
 
@@ -132,10 +131,12 @@ impl Plic {
         }
     }
 
-    /// Update the source wire level.  Only a rising edge
-    /// (0→1) latches the pending bit, matching QEMU
-    /// semantics and preventing interrupt storms when the
-    /// guest defers source-clearing to a task/bottom-half.
+    /// Update the source wire level.  For level-triggered
+    /// semantics the pending bit tracks the source level:
+    /// rising edge sets pending, falling edge clears it.
+    /// After a claim+complete cycle the pending bit is
+    /// re-evaluated against the current source level so that
+    /// a still-asserted line generates a new interrupt.
     pub fn set_irq(&mut self, source: u32, level: bool) {
         if source == 0 || source >= self.num_sources {
             return;
@@ -144,6 +145,8 @@ impl Plic {
         self.source_level[source as usize] = level;
         if level && !prev {
             self.set_pending(source, true);
+        } else if !level && prev {
+            self.set_pending(source, false);
         }
         self.update_outputs();
     }
@@ -224,10 +227,10 @@ impl Plic {
     }
 
     /// Complete (acknowledge) a previously claimed IRQ.
-    /// Clears the claim record and re-evaluates outputs.
-    /// Does NOT automatically re-pend based on source wire
-    /// level — the device must de-assert and re-assert to
-    /// generate a new interrupt (matching QEMU semantics).
+    /// Clears the claim record.  If the source wire is
+    /// still asserted the pending bit is re-latched so the
+    /// guest sees another interrupt (level-triggered
+    /// resample), then outputs are re-evaluated.
     pub fn complete_irq(&mut self, context: u32, irq: u32) {
         if context >= self.num_contexts {
             return;
@@ -235,6 +238,11 @@ impl Plic {
         let ctx = context as usize;
         if self.claim[ctx] == irq {
             self.claim[ctx] = 0;
+        }
+        if (irq as usize) < self.source_level.len()
+            && self.source_level[irq as usize]
+        {
+            self.set_pending(irq, true);
         }
         self.update_outputs();
     }
