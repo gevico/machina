@@ -26,11 +26,13 @@ jobs:
           targets: riscv64gc-unknown-none-elf
           components: llvm-tools-preview
 
-      - name: Install cargo-binutils
-        run: cargo install cargo-binutils
-
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
+
+      - name: Install cargo tools
+        run: |
+          cargo install cargo-clone
+          cargo install cargo-binutils
 
       - name: Clone tg-rcore-tutorial
         run: git clone https://github.com/rcore-os/tg-rcore-tutorial.git ../tg-rcore-tutorial
