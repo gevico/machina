@@ -81,10 +81,10 @@ cargo fmt                          # 自动格式化
 cargo test -p machina-tests exec::mttcg -- --nocapture
 
 # 打印执行统计（TB 命中率、链路 patch、hint 命中）
-TCG_STATS=1 target/release/machina <machine-config>
+TCG_STATS=1 target/release/mchn <machine-config>
 
 # 简单性能对照（本机基线）
-TIMEFORMAT=%R; time target/release/machina <machine-config>
+TIMEFORMAT=%R; time target/release/mchn <machine-config>
 ```
 
 ---

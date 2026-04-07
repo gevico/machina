@@ -408,7 +408,7 @@ fn run_machine_cycle(
     None
 }
 
-fn main() {
+pub fn main() {
     install_crash_handler();
     let cli = match parse_args() {
         Ok(c) => c,

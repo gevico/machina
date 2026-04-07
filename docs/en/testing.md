@@ -83,10 +83,10 @@ cargo fmt                          # Auto-format
 cargo test -p machina-tests exec::mttcg -- --nocapture
 
 # Print execution statistics (TB hit rate, chain patches, hint hits)
-TCG_STATS=1 target/release/machina <machine-config>
+TCG_STATS=1 target/release/mchn <machine-config>
 
 # Simple performance comparison (native baseline)
-TIMEFORMAT=%R; time target/release/machina <machine-config>
+TIMEFORMAT=%R; time target/release/mchn <machine-config>
 ```
 
 ---

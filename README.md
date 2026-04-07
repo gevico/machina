@@ -47,27 +47,31 @@ cd machina
 cargo build --release
 ```
 
+This builds both `machina` and the shorter alias `mchn`.
+
 ### Run rCore-Tutorial
 
 ```bash
 # Ch1-Ch5: bare-metal kernel (no disk needed)
-./target/release/machina -nographic -bios none -kernel path/to/ch5.elf
+./target/release/mchn -nographic -bios none -kernel path/to/ch5.elf
 
 # Ch6-Ch8: with VirtIO block device
-./target/release/machina -nographic \
+./target/release/mchn -nographic \
   -drive file=path/to/fs.img \
   -kernel path/to/ch6.elf
 
 # With monitor console (QMP over TCP)
-./target/release/machina -nographic \
+./target/release/mchn -nographic \
   -monitor tcp:127.0.0.1:4444 \
   -bios none -kernel path/to/ch5.elf
 
 # Instruction-level difftest against QEMU
-./target/release/machina --difftest \
+./target/release/mchn --difftest \
   -bios none -kernel path/to/ch1.elf
 
 ```
+
+`./target/release/machina` remains available for compatibility.
 
 ### Keyboard Shortcuts (-nographic)
 

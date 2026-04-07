@@ -20,7 +20,7 @@ RISC-V Linux 内核。
 cargo build --release
 
 # 2. 使用系统 OpenSBI + initramfs 启动
-./target/release/machina \
+./target/release/mchn \
     -nographic -m 256 \
     -bios /usr/share/qemu/opensbi-riscv64-generic-fw_dynamic.bin \
     -kernel /path/to/Image \
@@ -47,7 +47,7 @@ Please press Enter to activate this console.
 使用外部 OpenSBI `fw_dynamic.bin`：
 
 ```bash
-./target/release/machina \
+./target/release/mchn \
     -nographic -m 256 \
     -bios /usr/share/qemu/opensbi-riscv64-generic-fw_dynamic.bin \
     -kernel Image \
@@ -66,7 +66,7 @@ OpenSBI 获取方式：
 省略 `-bios` 参数即使用内置的 RustSBI v0.4.0：
 
 ```bash
-./target/release/machina \
+./target/release/mchn \
     -nographic -m 256 \
     -kernel Image \
     -initrd rootfs.cpio.gz \
@@ -78,7 +78,7 @@ OpenSBI 获取方式：
 适用于裸机固件或 riscv-tests：
 
 ```bash
-./target/release/machina \
+./target/release/mchn \
     -nographic -m 128 \
     -bios none \
     -kernel firmware.bin

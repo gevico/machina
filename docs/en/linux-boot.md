@@ -20,7 +20,7 @@ kernel on the machina `riscv64-ref` platform.
 cargo build --release
 
 # 2. Boot with system OpenSBI + initramfs
-./target/release/machina \
+./target/release/mchn \
     -nographic -m 256 \
     -bios /usr/share/qemu/opensbi-riscv64-generic-fw_dynamic.bin \
     -kernel /path/to/Image \
@@ -47,7 +47,7 @@ Please press Enter to activate this console.
 Use an external OpenSBI `fw_dynamic.bin`:
 
 ```bash
-./target/release/machina \
+./target/release/mchn \
     -nographic -m 256 \
     -bios /usr/share/qemu/opensbi-riscv64-generic-fw_dynamic.bin \
     -kernel Image \
@@ -66,7 +66,7 @@ OpenSBI sources:
 Omit the `-bios` flag to use the built-in RustSBI v0.4.0:
 
 ```bash
-./target/release/machina \
+./target/release/mchn \
     -nographic -m 256 \
     -kernel Image \
     -initrd rootfs.cpio.gz \
@@ -78,7 +78,7 @@ Omit the `-bios` flag to use the built-in RustSBI v0.4.0:
 For firmware or bare-metal binaries without SBI:
 
 ```bash
-./target/release/machina \
+./target/release/mchn \
     -nographic -m 128 \
     -bios none \
     -kernel firmware.bin
