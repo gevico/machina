@@ -47,31 +47,31 @@ cd machina
 cargo build --release
 ```
 
-构建完成后会同时生成 `machina` 和较短的别名 `mchn`。
+构建完成后会生成 `machina`，同时也支持较短的别名 `mchn`。
 
 ### 运行 rCore-Tutorial
 
 ```bash
 # Ch1-Ch5：裸机内核（无需磁盘）
-./target/release/mchn -nographic -bios none -kernel path/to/ch5.elf
+./target/release/machina -nographic -bios none -kernel path/to/ch5.elf
 
 # Ch6-Ch8：带 VirtIO 块设备
-./target/release/mchn -nographic \
+./target/release/machina -nographic \
   -drive file=path/to/fs.img \
   -kernel path/to/ch6.elf
 
 # 带 Monitor 控制台（QMP over TCP）
-./target/release/mchn -nographic \
+./target/release/machina -nographic \
   -monitor tcp:127.0.0.1:4444 \
   -bios none -kernel path/to/ch5.elf
 
 # 与 QEMU 逐指令对比测试
-./target/release/mchn --difftest \
+./target/release/machina --difftest \
   -bios none -kernel path/to/ch1.elf
 
 ```
 
-原有的 `./target/release/machina` 仍然保留以兼容现有脚本。
+如果你更喜欢更短的命令，也可以使用 `./target/release/mchn`。
 
 ### 快捷键（-nographic 模式）
 
