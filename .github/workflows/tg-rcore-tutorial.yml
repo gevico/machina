@@ -30,9 +30,7 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Install cargo tools
-        run: |
-          cargo install cargo-clone
-          cargo install cargo-binutils
+        run: cargo install cargo-binutils
 
       - name: Clone tg-rcore-tutorial
         run: git clone https://github.com/rcore-os/tg-rcore-tutorial.git ../tg-rcore-tutorial
@@ -47,42 +45,53 @@ jobs:
 
           for ch in 1 2 3 4; do
             pushd "../tg-rcore-tutorial/tg-rcore-tutorial-ch${ch}"
-            cargo build
+            TG_USER_DIR=../tg-rcore-tutorial-user cargo build
             popd
           done
 
           for ch in 5 6 7 8; do
             pushd "../tg-rcore-tutorial/tg-rcore-tutorial-ch${ch}"
             cargo clean
-            rm -rf tg-rcore-tutorial-user/target
-            CHAPTER=-${ch} cargo build
+            rm -rf target/riscv64gc-unknown-none-elf/debug/build
+            TG_USER_DIR=../tg-rcore-tutorial-user CHAPTER=-${ch} cargo build
             popd
           done
 
-      - name: Run tg-rcore-tutorial ch1-ch5 with machina
+      - name: Run ch1 on machina
+        run: ./target/release/machina -nographic -bios none -kernel ../tg-rcore-tutorial/tg-rcore-tutorial-ch1/target/riscv64gc-unknown-none-elf/debug/tg-rcore-tutorial-ch1
+
+      - name: Run ch2 on machina
+        run: ./target/release/machina -nographic -bios none -kernel ../tg-rcore-tutorial/tg-rcore-tutorial-ch2/target/riscv64gc-unknown-none-elf/debug/tg-rcore-tutorial-ch2
+
+      - name: Run ch3 on machina
+        run: ./target/release/machina -nographic -bios none -kernel ../tg-rcore-tutorial/tg-rcore-tutorial-ch3/target/riscv64gc-unknown-none-elf/debug/tg-rcore-tutorial-ch3
+
+      - name: Run ch4 on machina
+        run: ./target/release/machina -nographic -bios none -kernel ../tg-rcore-tutorial/tg-rcore-tutorial-ch4/target/riscv64gc-unknown-none-elf/debug/tg-rcore-tutorial-ch4
+
+      - name: Run ch5 on machina
+        run: ./target/release/machina -nographic -bios none -kernel ../tg-rcore-tutorial/tg-rcore-tutorial-ch5/target/riscv64gc-unknown-none-elf/debug/tg-rcore-tutorial-ch5
+
+      - name: Run ch6 on machina
         shell: bash
         run: |
           set -euo pipefail
-
-          ./target/release/machina -nographic -bios none -kernel ../tg-rcore-tutorial/tg-rcore-tutorial-ch1/target/riscv64gc-unknown-none-elf/debug/tg-rcore-tutorial-ch1
-          ./target/release/machina -nographic -bios none -kernel ../tg-rcore-tutorial/tg-rcore-tutorial-ch2/target/riscv64gc-unknown-none-elf/debug/tg-rcore-tutorial-ch2
-          ./target/release/machina -nographic -bios none -kernel ../tg-rcore-tutorial/tg-rcore-tutorial-ch3/target/riscv64gc-unknown-none-elf/debug/tg-rcore-tutorial-ch3
-          ./target/release/machina -nographic -bios none -kernel ../tg-rcore-tutorial/tg-rcore-tutorial-ch4/target/riscv64gc-unknown-none-elf/debug/tg-rcore-tutorial-ch4
-          ./target/release/machina -nographic -bios none -kernel ../tg-rcore-tutorial/tg-rcore-tutorial-ch5/target/riscv64gc-unknown-none-elf/debug/tg-rcore-tutorial-ch5
-
-      - name: Run tg-rcore-tutorial ch6-ch8 with machina
-        shell: bash
-        run: |
-          set -euo pipefail
-
           ./target/release/machina -nographic -bios none \
             -kernel ../tg-rcore-tutorial/tg-rcore-tutorial-ch6/target/riscv64gc-unknown-none-elf/debug/tg-rcore-tutorial-ch6 \
             -drive file=../tg-rcore-tutorial/tg-rcore-tutorial-ch6/target/riscv64gc-unknown-none-elf/debug/fs.img
 
+      - name: Run ch7 on machina
+        shell: bash
+        run: |
+          set -euo pipefail
           ./target/release/machina -nographic -bios none \
             -kernel ../tg-rcore-tutorial/tg-rcore-tutorial-ch7/target/riscv64gc-unknown-none-elf/debug/tg-rcore-tutorial-ch7 \
             -drive file=../tg-rcore-tutorial/tg-rcore-tutorial-ch7/target/riscv64gc-unknown-none-elf/debug/fs.img
 
+      - name: Run ch8 on machina
+        shell: bash
+        run: |
+          set -euo pipefail
           ./target/release/machina -nographic -bios none \
             -kernel ../tg-rcore-tutorial/tg-rcore-tutorial-ch8/target/riscv64gc-unknown-none-elf/debug/tg-rcore-tutorial-ch8 \
             -drive file=../tg-rcore-tutorial/tg-rcore-tutorial-ch8/target/riscv64gc-unknown-none-elf/debug/fs.img
