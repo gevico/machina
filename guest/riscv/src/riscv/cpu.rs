@@ -117,6 +117,14 @@ pub struct RiscvCpu {
     /// Physical pages written since last fence.i. Used
     /// for page-granularity TB invalidation.
     pub dirty_pages: Vec<u64>,
+
+    /// Raw pointer to `GdbState` for watchpoint checks.
+    /// Set by `set_gdb_state()`. Zero if no GDB session.
+    pub gdb_state_ptr: u64,
+    /// Watchpoint hit recorded by JIT helpers.
+    /// Layout: (addr << 8) | (1 for write, 2 for read,
+    /// 3 for access). Zero if none.
+    pub watchpoint_hit: u64,
 }
 
 // Field offsets (bytes) from the start of RiscvCpu.
@@ -210,6 +218,8 @@ impl RiscvCpu {
             fault_pc: 0,
             jmp_env: 0,
             dirty_pages: Vec::new(),
+            gdb_state_ptr: 0,
+            watchpoint_hit: 0,
         }
     }
 

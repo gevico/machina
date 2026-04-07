@@ -190,6 +190,15 @@ where
             }
         }
 
+        // GDB watchpoint check: if a slow-path memory
+        // access hit a watchpoint, record it and park.
+        if cpu.gdb_check_watchpoint() {
+            if cpu.check_monitor_pause() {
+                return ExitReason::Halted;
+            }
+            continue;
+        }
+
         match exit_code {
             v @ 0..=1 => {
                 let slot = v;

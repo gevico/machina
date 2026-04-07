@@ -200,6 +200,7 @@ impl FullSystemCpu {
         &mut self,
         gs: Arc<crate::gdb::GdbState>,
     ) {
+        self.cpu.gdb_state_ptr = Arc::as_ptr(&gs) as u64;
         self.gdb_state = Some(gs);
     }
 
@@ -875,6 +876,42 @@ impl GuestCpu for FullSystemCpu {
         false
     }
 
+    /// Check if a watchpoint was hit during the last TB
+    /// execution (wired into the slow-path helpers).
+    /// Records a snapshot of registers and waits for GDB
+    /// client before returning.
+    fn gdb_check_watchpoint(&mut self) -> bool {
+        let hit_addr = self.cpu.watchpoint_hit;
+        if hit_addr == 0 {
+            return false;
+        }
+        self.cpu.watchpoint_hit = 0;
+
+        if let Some(ref gs) = self.gdb_state {
+            // Save snapshot so GDB can inspect registers.
+            let csrs = self.collect_gdb_csrs();
+            gs.save_snapshot(
+                0,
+                &self.cpu.gpr,
+                &self.cpu.fpr,
+                self.cpu.pc,
+                self.cpu.priv_level as u8,
+                &csrs,
+            );
+            gs.set_stop_reason(
+                machina_gdbstub::handler::StopReason::Watchpoint {
+                    addr: hit_addr,
+                    wtype: 0,
+                },
+            );
+            // Wait until GDB sends resume command.
+            let quit = gs.check_and_wait();
+            quit
+        } else {
+            false
+        }
+    }
+
     fn handle_priv_csr(&mut self) -> bool {
         let pc = self.cpu.pc;
         self.cpu.fault_pc = 0;
@@ -1202,6 +1239,47 @@ fn is_phys_backed(cpu: &RiscvCpu, pa: u64, size: u32) -> bool {
     as_.is_mapped(GPA::new(pa), size)
 }
 
+/// Check GDB watchpoints and record a hit if
+/// the given physical address overlaps an active
+/// watchpoint. Called by the JIT slow-path memory
+/// helpers.
+///
+/// # Safety
+/// `cpu` must be a valid pointer.
+unsafe fn check_gdb_watchpoint(
+    cpu: &mut RiscvCpu,
+    pa: u64,
+    size: u32,
+    is_write: bool,
+) {
+    // Fast check: if no GDB state, skip entirely.
+    if cpu.gdb_state_ptr == 0 {
+        return;
+    }
+    let gs =
+        &*(cpu.gdb_state_ptr as *const crate::gdb::GdbState);
+    // Check if hit, record it in the CPU struct.
+    if let Some(hit) = gs.check_watchpoint(pa, size, is_write) {
+        // Record which watchpoint address was hit
+        // for the stop reply.
+        cpu.watchpoint_hit = hit.addr;
+        // Save stop reason for the GDB stop reply.
+        let wtype_code = match hit.wtype {
+            crate::gdb::WatchType::Write => 0u8,
+            crate::gdb::WatchType::Read => 1u8,
+            crate::gdb::WatchType::Access => 2u8,
+        };
+        gs.set_watchpoint_hit(hit);
+        gs.set_stop_reason(StopReason::Watchpoint {
+            addr: hit.addr,
+            wtype: wtype_code,
+        });
+        // Request the CPU to pause so the exec loop
+        // returns to GDB.
+        gs.request_pause();
+    }
+}
+
 /// JIT slow path: guest load (TLB miss or MMIO).
 ///
 /// # Safety
@@ -1213,17 +1291,19 @@ pub unsafe extern "C" fn machina_mem_read(
     size: u32,
 ) -> u64 {
     let cpu = &mut *(env as *mut RiscvCpu);
-    match translate_for_helper(cpu, gva, AccessType::Read, size) {
+    let result = match translate_for_helper(cpu, gva, AccessType::Read, size) {
         Some(pa) => {
             if !is_phys_backed(cpu, pa, size) {
                 cpu.mem_fault_cause = 5;
                 cpu.mem_fault_tval = gva;
                 return 0;
             }
+            check_gdb_watchpoint(cpu, pa, size, false);
             read_phys_sized(cpu, pa, size)
         }
         None => 0
-    }
+    };
+    result
 }
 
 /// JIT slow path: guest store (TLB miss or MMIO).
@@ -1245,6 +1325,7 @@ pub unsafe extern "C" fn machina_mem_write(
             return;
         }
         write_phys_sized(cpu, pa, val, size);
+        check_gdb_watchpoint(cpu, pa, size, true);
     }
 }
 

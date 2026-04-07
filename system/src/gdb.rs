@@ -509,6 +509,12 @@ impl GdbState {
             || !inner.hw_breakpoints.is_empty()
     }
 
+    pub fn has_watchpoints(&self) -> bool {
+        self.watchpoint_count
+            .load(Ordering::Relaxed)
+            > 0
+    }
+
     // -- Watchpoint management --
 
     pub fn set_watchpoint(

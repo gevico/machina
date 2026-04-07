@@ -99,15 +99,18 @@ fn test_aclint_msip_set_clear() {
 fn test_aclint_timer_compare() {
     let mut aclint = Aclint::new(2);
 
-    // Set mtimecmp[0] = 100.
-    aclint.write(0x4000, 8, 100);
+    const CMP: u64 = 1_000_000;  // 100 ms at 10 MHz
+    const LOW: u64 = 500_000;    // ~50 ms
 
-    // Set mtime to 50 (below mtimecmp).
-    aclint.write(0xBFF8, 8, 50);
+    // Set mtimecmp[0] = CMP.
+    aclint.write(0x4000, 8, CMP);
+
+    // Set mtime to LOW (below mtimecmp).
+    aclint.write(0xBFF8, 8, LOW);
     assert!(!aclint.timer_irq_pending(0));
 
-    // Set mtime to 100 (at threshold).
-    aclint.write(0xBFF8, 8, 100);
+    // Set mtime to CMP (at threshold).
+    aclint.write(0xBFF8, 8, CMP);
     assert!(aclint.timer_irq_pending(0));
 
     // Hart 1 has mtimecmp = u64::MAX, not pending.
@@ -123,25 +126,29 @@ fn test_aclint_mti_output() {
     let line = IrqLine::new(Arc::clone(&sink) as Arc<dyn IrqSink>, mti_irq);
     aclint.connect_mti(0, line);
 
-    // Set mtimecmp[0] = 100.
-    aclint.write(0x4000, 8, 100);
+    const CMP: u64 = 1_000_000;  // 100 ms at 10 MHz
+    const LOW: u64 = 500_000;    // ~50 ms
+    const HIGH: u64 = 2_000_000; // 200 ms
 
-    // Set mtime = 50 -> MTI low.
-    aclint.write(0xBFF8, 8, 50);
+    // Set mtimecmp[0] = CMP.
+    aclint.write(0x4000, 8, CMP);
+
+    // Set mtime = LOW -> MTI low.
+    aclint.write(0xBFF8, 8, LOW);
     assert!(
         !sink.level(mti_irq),
         "MTI should be low when mtime < mtimecmp"
     );
 
-    // Set mtime = 100 -> MTI high.
-    aclint.write(0xBFF8, 8, 100);
+    // Set mtime = CMP -> MTI high.
+    aclint.write(0xBFF8, 8, CMP);
     assert!(
         sink.level(mti_irq),
         "MTI should be high when mtime >= mtimecmp"
     );
 
-    // Raise mtimecmp to 200 -> MTI low.
-    aclint.write(0x4000, 8, 200);
+    // Raise mtimecmp to HIGH -> MTI low.
+    aclint.write(0x4000, 8, HIGH);
     assert!(
         !sink.level(mti_irq),
         "MTI should go low after raising mtimecmp"
