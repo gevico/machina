@@ -30,7 +30,9 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Install cargo tools
-        run: cargo install cargo-binutils
+        run: |
+          cargo install cargo-clone
+          cargo install cargo-binutils
 
       - name: Clone tg-rcore-tutorial
         run: git clone https://github.com/rcore-os/tg-rcore-tutorial.git ../tg-rcore-tutorial
