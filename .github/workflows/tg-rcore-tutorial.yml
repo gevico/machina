@@ -1,0 +1,99 @@
+name: tg-rcore-tutorial
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  tg-rcore-tutorial:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+
+    steps:
+      - name: Checkout machina
+        uses: actions/checkout@v4
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential git
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: riscv64gc-unknown-none-elf
+          components: llvm-tools-preview
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install cargo tools
+        run: |
+          cargo install cargo-clone
+          cargo install cargo-binutils
+
+      - name: Clone tg-rcore-tutorial
+        run: git clone https://github.com/rcore-os/tg-rcore-tutorial.git ../tg-rcore-tutorial
+
+      - name: Build machina
+        run: cargo build --release
+
+      - name: Build tg-rcore-tutorial ch1-ch8
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          for ch in 1 2 3 4; do
+            pushd "../tg-rcore-tutorial/tg-rcore-tutorial-ch${ch}"
+            cargo build
+            popd
+          done
+
+          for ch in 5 6 7 8; do
+            pushd "../tg-rcore-tutorial/tg-rcore-tutorial-ch${ch}"
+            cargo clean
+            rm -rf tg-rcore-tutorial-user/target
+            CHAPTER=-${ch} cargo build
+            popd
+          done
+
+      - name: Run ch1 on machina
+        run: ./target/release/machina -nographic -bios none -kernel ../tg-rcore-tutorial/tg-rcore-tutorial-ch1/target/riscv64gc-unknown-none-elf/debug/tg-rcore-tutorial-ch1
+
+      - name: Run ch2 on machina
+        run: ./target/release/machina -nographic -bios none -kernel ../tg-rcore-tutorial/tg-rcore-tutorial-ch2/target/riscv64gc-unknown-none-elf/debug/tg-rcore-tutorial-ch2
+
+      - name: Run ch3 on machina
+        run: ./target/release/machina -nographic -bios none -kernel ../tg-rcore-tutorial/tg-rcore-tutorial-ch3/target/riscv64gc-unknown-none-elf/debug/tg-rcore-tutorial-ch3
+
+      - name: Run ch4 on machina
+        run: ./target/release/machina -nographic -bios none -kernel ../tg-rcore-tutorial/tg-rcore-tutorial-ch4/target/riscv64gc-unknown-none-elf/debug/tg-rcore-tutorial-ch4
+
+      - name: Run ch5 on machina
+        run: ./target/release/machina -nographic -bios none -kernel ../tg-rcore-tutorial/tg-rcore-tutorial-ch5/target/riscv64gc-unknown-none-elf/debug/tg-rcore-tutorial-ch5
+
+      - name: Run ch6 on machina
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./target/release/machina -nographic -bios none \
+            -kernel ../tg-rcore-tutorial/tg-rcore-tutorial-ch6/target/riscv64gc-unknown-none-elf/debug/tg-rcore-tutorial-ch6 \
+            -drive file=../tg-rcore-tutorial/tg-rcore-tutorial-ch6/target/riscv64gc-unknown-none-elf/debug/fs.img
+
+      - name: Run ch7 on machina
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./target/release/machina -nographic -bios none \
+            -kernel ../tg-rcore-tutorial/tg-rcore-tutorial-ch7/target/riscv64gc-unknown-none-elf/debug/tg-rcore-tutorial-ch7 \
+            -drive file=../tg-rcore-tutorial/tg-rcore-tutorial-ch7/target/riscv64gc-unknown-none-elf/debug/fs.img
+
+      - name: Run ch8 on machina
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./target/release/machina -nographic -bios none \
+            -kernel ../tg-rcore-tutorial/tg-rcore-tutorial-ch8/target/riscv64gc-unknown-none-elf/debug/tg-rcore-tutorial-ch8 \
+            -drive file=../tg-rcore-tutorial/tg-rcore-tutorial-ch8/target/riscv64gc-unknown-none-elf/debug/fs.img
