@@ -94,9 +94,7 @@ fn parse_elf_header(data: &[u8]) -> Result<ElfHeader, String> {
     let e_phnum = u16::from_le_bytes(data[56..58].try_into().unwrap()) as usize;
 
     if e_phentsize < ELF64_PHDR_SIZE {
-        return Err(format!(
-            "phentsize {e_phentsize} < {ELF64_PHDR_SIZE}"
-        ));
+        return Err(format!("phentsize {e_phentsize} < {ELF64_PHDR_SIZE}"));
     }
 
     Ok(ElfHeader {
@@ -152,11 +150,7 @@ pub fn load_elf(
 
         // For ET_DYN: load address = base_addr + p_vaddr.
         // For ET_EXEC: load address = p_paddr (absolute).
-        let load_addr = if is_dyn {
-            base_addr + p_vaddr
-        } else {
-            p_paddr
-        };
+        let load_addr = if is_dyn { base_addr + p_vaddr } else { p_paddr };
 
         if p_offset + p_filesz > data.len() {
             return Err(format!(

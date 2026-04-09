@@ -129,17 +129,15 @@ where
                     per_cpu.stats.hint_used += 1;
                     idx
                 }
-                None => {
-                    match tb_find(shared, per_cpu, cpu, pc, flags) {
-                        Some(idx) => idx,
-                        None => {
-                            if cpu.check_mem_fault() {
-                                continue;
-                            }
-                            return ExitReason::BufferFull;
+                None => match tb_find(shared, per_cpu, cpu, pc, flags) {
+                    Some(idx) => idx,
+                    None => {
+                        if cpu.check_mem_fault() {
+                            continue;
                         }
+                        return ExitReason::BufferFull;
                     }
-                }
+                },
             };
 
             // GDB breakpoint within TB: if the found TB
@@ -149,14 +147,9 @@ where
             // boundary. The original TB stays in cache for
             // non-debug execution (QEMU cflags approach).
             let tb = shared.tb_store.get(idx);
-            if cpu.gdb_breakpoint_in_tb(
-                tb.pc,
-                tb.size as u64,
-            ) {
+            if cpu.gdb_breakpoint_in_tb(tb.pc, tb.size as u64) {
                 let cf = CF_SINGLE_STEP | 1;
-                match tb_gen_code_cflags(
-                    shared, per_cpu, cpu, pc, flags, cf,
-                ) {
+                match tb_gen_code_cflags(shared, per_cpu, cpu, pc, flags, cf) {
                     Some(ss_idx) => ss_idx,
                     None => {
                         if cpu.check_mem_fault() {
@@ -318,8 +311,7 @@ where
                     // Illegal: TSR trap or U-mode sret.
                     // PC points to next insn; rewind to
                     // the sret itself for mepc.
-                    let cur =
-                        cpu.get_pc().wrapping_sub(4);
+                    let cur = cpu.get_pc().wrapping_sub(4);
                     cpu.set_pc(cur);
                     cpu.handle_exception(2, 0);
                 }
@@ -341,10 +333,7 @@ where
                     cpu.tlb_flush();
                     shared
                         .tb_store
-                        .invalidate_all(
-                            shared.code_buf(),
-                            &shared.backend,
-                        );
+                        .invalidate_all(shared.code_buf(), &shared.backend);
                     per_cpu.jump_cache.invalidate();
                     next_tb_hint = None;
                 }
@@ -498,8 +487,7 @@ where
     if let Some(idx) = per_cpu.jump_cache.lookup(pc) {
         let tb = shared.tb_store.get(idx);
         if !tb.invalid.load(Ordering::Acquire)
-            && tb.gen.load(Ordering::Acquire)
-                == shared.tb_store.global_gen()
+            && tb.gen.load(Ordering::Acquire) == shared.tb_store.global_gen()
             && tb.pc == pc
             && tb.flags == flags
             && (cur_phys == u64::MAX || tb.phys_pc == cur_phys)

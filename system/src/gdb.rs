@@ -427,11 +427,7 @@ impl GdbState {
     /// Check if any breakpoint falls within (start, end).
     /// Used by the exec loop to detect TBs that span a
     /// breakpoint and need single-step replacement.
-    pub fn breakpoint_in_range(
-        &self,
-        start: u64,
-        end: u64,
-    ) -> bool {
+    pub fn breakpoint_in_range(&self, start: u64, end: u64) -> bool {
         let inner = self.inner.lock().unwrap();
         inner
             .breakpoints

@@ -225,10 +225,9 @@ pub fn boot_ref_machine(
                 let data = std::fs::read(&path)?;
                 let as_ = machine.address_space();
                 if is_elf(&data) {
-                    let info = loader::load_elf(&data, RAM_BASE, as_)
-                        .map_err(|e| -> Box<dyn std::error::Error> {
-                            e.into()
-                        })?;
+                    let info = loader::load_elf(&data, RAM_BASE, as_).map_err(
+                        |e| -> Box<dyn std::error::Error> { e.into() },
+                    )?;
                     fw_entry = Some(info.entry.0);
                 } else {
                     loader::load_binary(&data, GPA::new(RAM_BASE), as_)
@@ -294,8 +293,7 @@ pub fn boot_ref_machine(
     // Leave 64 KB margin at top of RAM for OpenSBI
     // scratch/workspace so it doesn't access beyond RAM.
     let margin = 0x10000u64; // 64 KB
-    let fdt_offset =
-        (ram_size - margin - fdt_len) & !0x7;
+    let fdt_offset = (ram_size - margin - fdt_len) & !0x7;
     let fdt_addr = RAM_BASE + fdt_offset;
     let as_ = machine.address_space();
     loader::load_binary(&fdt, GPA::new(fdt_addr), as_)

@@ -34,12 +34,7 @@ impl RiscvDisasContext {
 
     // sh{1,2,3}add.uw: rd = (zext32(rs1) << N) + rs2
 
-    fn gen_shadd_uw(
-        &self,
-        ir: &mut Context,
-        a: &ArgsR,
-        shift: u64,
-    ) -> bool {
+    fn gen_shadd_uw(&self, ir: &mut Context, a: &ArgsR, shift: u64) -> bool {
         let s1 = self.gpr_or_zero(ir, a.rs1);
         let s2 = self.gpr_or_zero(ir, a.rs2);
         let lo = ir.new_temp(Type::I32);
@@ -55,27 +50,15 @@ impl RiscvDisasContext {
         true
     }
 
-    pub(super) fn gen_sh1add_uw(
-        &self,
-        ir: &mut Context,
-        a: &ArgsR,
-    ) -> bool {
+    pub(super) fn gen_sh1add_uw(&self, ir: &mut Context, a: &ArgsR) -> bool {
         self.gen_shadd_uw(ir, a, 1)
     }
 
-    pub(super) fn gen_sh2add_uw(
-        &self,
-        ir: &mut Context,
-        a: &ArgsR,
-    ) -> bool {
+    pub(super) fn gen_sh2add_uw(&self, ir: &mut Context, a: &ArgsR) -> bool {
         self.gen_shadd_uw(ir, a, 2)
     }
 
-    pub(super) fn gen_sh3add_uw(
-        &self,
-        ir: &mut Context,
-        a: &ArgsR,
-    ) -> bool {
+    pub(super) fn gen_sh3add_uw(&self, ir: &mut Context, a: &ArgsR) -> bool {
         self.gen_shadd_uw(ir, a, 3)
     }
 

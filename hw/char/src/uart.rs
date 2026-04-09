@@ -295,8 +295,7 @@ impl Uart16550 {
             *self.chardev.borrow() = Some(fe);
             *self.resolved_chardev_path.lock() = path;
             // Set modem status lines when chardev present.
-            self.regs.borrow().msr =
-                MSR_CTS | MSR_DSR | MSR_DCD;
+            self.regs.borrow().msr = MSR_CTS | MSR_DSR | MSR_DCD;
         }
 
         Ok(())
@@ -515,8 +514,7 @@ impl Uart16550 {
                 regs.rx_fifo.push_back(val);
             }
             regs.lsr |= LSR_DR;
-        } else if let Some(ref mut fe) = *self.chardev.borrow()
-        {
+        } else if let Some(ref mut fe) = *self.chardev.borrow() {
             fe.write(&[val]);
         }
         self.update_irq();

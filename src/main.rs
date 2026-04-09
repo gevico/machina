@@ -123,9 +123,7 @@ fn parse_args() -> Result<CliArgs, String> {
             "-append" => {
                 i += 1;
                 cli.append = Some(
-                    args.get(i)
-                        .ok_or("-append requires argument")?
-                        .clone(),
+                    args.get(i).ok_or("-append requires argument")?.clone(),
                 );
             }
             "--difftest" => {

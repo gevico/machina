@@ -435,8 +435,7 @@ impl GuestCpu for FullSystemCpu {
         // (AC-10). Limit avail to remaining bytes in
         // the current 4K page.
         let page_remain = 4096 - (phys_pc & 0xFFF);
-        let avail_bytes =
-            page_remain.min(region_size - phys_offset);
+        let avail_bytes = page_remain.min(region_size - phys_offset);
         // Allow 2-byte (compressed) instructions.
         let avail = avail_bytes / 2;
         let limit = max_insns.min(avail as u32);
@@ -657,12 +656,9 @@ impl GuestCpu for FullSystemCpu {
         // Precise mirror of hardware-controlled mip bits
         // from shared_mip. Software bits (STIP=5, SSIP=1)
         // are left untouched.
-        let hw_mask: u64 =
-            (1 << 3) | (1 << 7) | (1 << 9) | (1 << 11);
-        let shared =
-            self.shared_mip.load(Ordering::SeqCst);
-        self.cpu.csr.mip =
-            (self.cpu.csr.mip & !hw_mask) | (shared & hw_mask);
+        let hw_mask: u64 = (1 << 3) | (1 << 7) | (1 << 9) | (1 << 11);
+        let shared = self.shared_mip.load(Ordering::SeqCst);
+        self.cpu.csr.mip = (self.cpu.csr.mip & !hw_mask) | (shared & hw_mask);
         self.cpu.handle_interrupt();
     }
 
@@ -906,16 +902,10 @@ impl GuestCpu for FullSystemCpu {
         false
     }
 
-    fn gdb_breakpoint_in_tb(
-        &self,
-        tb_pc: u64,
-        tb_size: u64,
-    ) -> bool {
+    fn gdb_breakpoint_in_tb(&self, tb_pc: u64, tb_size: u64) -> bool {
         if let Some(ref gs) = self.gdb_state {
             if gs.is_connected() && gs.has_breakpoints() {
-                return gs.breakpoint_in_range(
-                    tb_pc, tb_pc + tb_size,
-                );
+                return gs.breakpoint_in_range(tb_pc, tb_pc + tb_size);
             }
         }
         false
@@ -1407,9 +1397,7 @@ fn gdb_read_phys(
     len: usize,
 ) -> Vec<u8> {
     if pa >= ram_base
-        && pa
-            .checked_add(len as u64)
-            .is_some_and(|end| end <= ram_end)
+        && pa.checked_add(len as u64).is_some_and(|end| end <= ram_end)
     {
         let off = pa.wrapping_sub(ram_base);
         let ptr = unsafe { ram_ptr.add(off as usize) };

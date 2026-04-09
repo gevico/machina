@@ -158,11 +158,7 @@ pub trait GuestCpu {
     /// decide whether to replace a cached multi-insn TB
     /// with a 1-insn ephemeral TB for breakpoint
     /// precision.
-    fn gdb_breakpoint_in_tb(
-        &self,
-        _tb_pc: u64,
-        _tb_size: u64,
-    ) -> bool {
+    fn gdb_breakpoint_in_tb(&self, _tb_pc: u64, _tb_size: u64) -> bool {
         false
     }
 }

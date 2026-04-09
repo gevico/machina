@@ -128,12 +128,10 @@ unsafe fn run_with_retry(
                     cpu.cpu.pc,
                     per_cpu.stats.loop_iters,
                 );
-                let _g =
-                    env.shared.translate_lock.lock().unwrap();
-                env.shared.tb_store.invalidate_all(
-                    env.shared.code_buf(),
-                    &env.shared.backend,
-                );
+                let _g = env.shared.translate_lock.lock().unwrap();
+                env.shared
+                    .tb_store
+                    .invalidate_all(env.shared.code_buf(), &env.shared.backend);
                 env.shared.tb_store.flush();
                 unsafe {
                     env.shared

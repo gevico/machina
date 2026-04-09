@@ -143,26 +143,26 @@ fn test_load_elf_dyn_pie() {
     // at base 0x100_0000 and verify relocation bias.
     let as_ = make_ram_as(0x1000_0000);
 
-    let entry_rel: u64 = 0x1100;  // entry relative to vaddr 0
-    let p_vaddr: u64 = 0x1000;    // segment vaddr
-    let base: u64 = 0x100_0000;   // load base
+    let entry_rel: u64 = 0x1100; // entry relative to vaddr 0
+    let p_vaddr: u64 = 0x1000; // segment vaddr
+    let base: u64 = 0x100_0000; // load base
     let payload: [u8; 8] = [0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88];
 
     // -- ELF header (64 bytes) --
     let mut elf = vec![0u8; 64 + 56];
 
     elf[0..4].copy_from_slice(&[0x7f, b'E', b'L', b'F']);
-    elf[4] = 2;  // ELFCLASS64
-    elf[5] = 1;  // ELFDATA2LSB
-    elf[6] = 1;  // EV_CURRENT
-    // e_type = ET_DYN (3)
+    elf[4] = 2; // ELFCLASS64
+    elf[5] = 1; // ELFDATA2LSB
+    elf[6] = 1; // EV_CURRENT
+                // e_type = ET_DYN (3)
     elf[16..18].copy_from_slice(&3u16.to_le_bytes());
     elf[20..24].copy_from_slice(&1u32.to_le_bytes());
     elf[24..32].copy_from_slice(&entry_rel.to_le_bytes());
     elf[32..40].copy_from_slice(&64u64.to_le_bytes()); // e_phoff
-    elf[52..54].copy_from_slice(&64u16.to_le_bytes());  // e_ehsize
-    elf[54..56].copy_from_slice(&56u16.to_le_bytes());  // e_phentsize
-    elf[56..58].copy_from_slice(&1u16.to_le_bytes());   // e_phnum
+    elf[52..54].copy_from_slice(&64u16.to_le_bytes()); // e_ehsize
+    elf[54..56].copy_from_slice(&56u16.to_le_bytes()); // e_phentsize
+    elf[56..58].copy_from_slice(&1u16.to_le_bytes()); // e_phnum
 
     // -- Program header (56 bytes at offset 64) --
     let ph = 64usize;
