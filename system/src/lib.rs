@@ -82,12 +82,11 @@ impl CpuManager {
         let mut per_cpu = PerCpuState::new();
         loop {
             let r = cpu_exec_loop(shared, &mut per_cpu, cpu);
+            if !running.load(Ordering::SeqCst) {
+                return ExitReason::Halted;
+            }
             match r {
-                ExitReason::Halted => {
-                    if !running.load(Ordering::SeqCst) {
-                        return r;
-                    }
-                }
+                ExitReason::Halted => {}
                 ExitReason::BufferFull => {
                     let _guard = shared.translate_lock.lock().unwrap();
                     shared

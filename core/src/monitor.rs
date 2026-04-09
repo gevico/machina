@@ -3,7 +3,7 @@
 // Used by the exec loop (system crate) and monitor
 // console (monitor crate) to coordinate vCPU pausing.
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 
 /// vCPU execution state as seen by the monitor.
@@ -33,6 +33,8 @@ pub struct MonitorState {
     snapshot: Mutex<Option<CpuSnapshot>>,
     /// CpuManager running flag — cleared on quit.
     stop_flag: Mutex<Option<Arc<AtomicBool>>>,
+    /// Raw pointer to CPU neg_align.
+    neg_align_ptr: Mutex<u64>,
 }
 
 impl MonitorState {
@@ -45,6 +47,7 @@ impl MonitorState {
             wfi_waker: Mutex::new(None),
             snapshot: Mutex::new(None),
             stop_flag: Mutex::new(None),
+            neg_align_ptr: Mutex::new(0),
         }
     }
 
@@ -79,6 +82,13 @@ impl MonitorState {
         if needs_wake {
             wk.monitor_wake();
         }
+    }
+
+    /// Set the neg_align pointer for breaking goto_tb
+    /// chains on quit. Must be called after the CPU is
+    /// added to CpuManager (address stabilises).
+    pub fn set_neg_align_ptr(&self, ptr: u64) {
+        *self.neg_align_ptr.lock().unwrap() = ptr;
     }
 
     /// Request vCPU to pause. Blocks until the exec
@@ -135,6 +145,12 @@ impl MonitorState {
         // Wake WFI if halted.
         if let Some(ref wk) = *self.wfi_waker.lock().unwrap() {
             wk.stop();
+        }
+        // Break goto_tb chain so the exec loop can exit.
+        let neg_align_ptr = *self.neg_align_ptr.lock().unwrap();
+        if neg_align_ptr != 0 {
+            let neg_align = unsafe { &*(neg_align_ptr as *const AtomicI32) };
+            neg_align.store(-1, Ordering::Release);
         }
     }
 

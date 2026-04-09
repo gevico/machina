@@ -375,6 +375,11 @@ fn run_machine_cycle(
     {
         let ptr = cpu_mgr.cpu(0).neg_align_ptr();
         machine.aclint().connect_neg_align(0, ptr);
+        // Also give the pointer to MonitorState so
+        // request_quit can break goto_tb chains.
+        if let Some(ref ms) = monitor_state {
+            ms.set_neg_align_ptr(ptr);
+        }
     }
 
     // Wire SiFive Test to execution control.
