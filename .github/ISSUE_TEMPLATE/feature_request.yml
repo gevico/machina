@@ -1,0 +1,101 @@
+name: Feature Request
+description: Propose a new feature or enhancement
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for your suggestion. Please fill out the sections below.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem / Motivation
+      description: |
+        What problem does this feature solve?
+        Is your feature request related to an existing issue?
+    validations:
+      required: true
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed Solution
+      description: |
+        Describe the desired behavior or interface.
+        Include diagrams, pseudocode, or references if helpful.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives Considered
+      description: What other approaches have you considered?
+    validations:
+      required: false
+  - type: textarea
+    id: scope
+    attributes:
+      label: Affected Components
+      description: |
+        Which crates or subsystems does this touch?
+        (e.g. accel, memory, hw, core, decode, etc.)
+      placeholder: |
+        - accel/jit
+        - hw/riscv
+        - memory
+    validations:
+      required: true
+  - type: textarea
+    id: test-plan
+    attributes:
+      label: Test Plan
+      description: |
+        How should this feature be tested?
+        Describe expected-path, edge-case, and failure-case tests.
+      placeholder: |
+        - Unit test for new API in machina-tests
+        - Integration: boot rCore chX with new feature enabled
+        - Failure: verify graceful error when <condition>
+    validations:
+      required: false
+
+  # --- Agent collaboration checklist ---
+  - type: markdown
+    attributes:
+      value: |
+        ---
+
+        ## Agent Collaboration Checklist
+
+        If this feature request was prepared with the help of
+        an AI agent (Claude, Codex, Cursor, etc.), please answer
+        the following.
+  - type: checkboxes
+    id: agent-docs
+    attributes:
+      label: Agent Documentation Awareness
+      options:
+        - label: >
+            I confirmed the agent has fully read the relevant
+            `docs/` content (design, coding-style, testing,
+            backend-specific docs, etc.) before preparing
+            this feature request.
+          required: false
+  - type: checkboxes
+    id: agent-tests
+    attributes:
+      label: Test Coverage Plan
+      options:
+        - label: >
+            I have outlined test cases (expected path, edge cases,
+            failure cases) in the "Test Plan" section above.
+          required: false
+  - type: checkboxes
+    id: agent-human-review
+    attributes:
+      label: Human Review
+      options:
+        - label: >
+            I have manually reviewed the agent's analysis and
+            confirmed the proposed solution and scope are
+            reasonable.
+          required: false

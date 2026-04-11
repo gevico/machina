@@ -1,0 +1,123 @@
+name: Bug Report
+description: Report a bug or unexpected behavior
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for reporting a bug. Please fill out the sections below.
+  - type: textarea
+    id: description
+    attributes:
+      label: Bug Description
+      description: A clear description of what went wrong.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to Reproduce
+      description: |
+        Minimal steps to trigger the bug.
+        Include the command you ran, the guest image/firmware used,
+        and any relevant configuration.
+      placeholder: |
+        1. Build with `cargo build --release`
+        2. Run `./machina run -b rcore-ch4`
+        3. ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected Behavior
+      description: What did you expect to happen?
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual Behavior
+      description: |
+        What happened instead?
+        Include logs, panics, or error output.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Machina Version
+      description: Commit hash or release tag.
+      placeholder: e.g. a1b2c3d or v0.3.0
+    validations:
+      required: true
+  - type: dropdown
+    id: guest
+    attributes:
+      label: Guest
+      description: Which guest OS / firmware were you running?
+      options:
+        - rCore-Tutorial (ch1–3)
+        - rCore-Tutorial (ch4, Sv39)
+        - rCore-Tutorial (ch5+, process/filesystem)
+        - Other / custom firmware
+    validations:
+      required: true
+  - type: textarea
+    id: env
+    attributes:
+      label: Host Environment
+      description: OS, CPU arch, Rust toolchain version (`rustc --version`).
+      placeholder: |
+        OS: Ubuntu 24.04, x86_64
+        rustc: 1.85.0
+  - type: textarea
+    id: fix-idea
+    attributes:
+      label: Possible Fix / Root Cause
+      description: If you have investigated, share your findings here.
+    validations:
+      required: false
+
+  # --- Agent collaboration checklist ---
+  - type: markdown
+    attributes:
+      value: |
+        ---
+
+        ## Agent Collaboration Checklist
+
+        If this issue was prepared or investigated with the help of
+        an AI agent (Claude, Codex, Cursor, etc.), please answer
+        the following.
+  - type: checkboxes
+    id: agent-docs
+    attributes:
+      label: Agent Documentation Awareness
+      options:
+        - label: >
+            I confirmed the agent has fully read the relevant
+            `docs/` content (design, coding-style, testing,
+            backend-specific docs, etc.) before preparing
+            this issue.
+          required: false
+  - type: checkboxes
+    id: agent-tests
+    attributes:
+      label: Regression Test Plan
+      options:
+        - label: >
+            I have identified or drafted a regression test
+            that reproduces this bug (describe in
+            "Possible Fix / Root Cause" above).
+          required: false
+  - type: checkboxes
+    id: agent-human-review
+    attributes:
+      label: Human Review
+      options:
+        - label: >
+            I have manually reviewed the agent's analysis
+            and confirmed the root cause and reproduction
+            steps are accurate.
+          required: false
