@@ -12,3 +12,6 @@ path = "src/main.rs"
 machina-accel = { workspace = true }
 machina-disas = { workspace = true }
 machina-guest-riscv = { workspace = true }
+
+[lints]
+workspace = true

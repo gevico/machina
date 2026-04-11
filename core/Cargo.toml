@@ -11,3 +11,6 @@ categories = ["emulators"]
 
 [dependencies]
 parking_lot = { workspace = true }
+
+[lints]
+workspace = true

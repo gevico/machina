@@ -90,3 +90,11 @@ machina-monitor  = { workspace = true }
 machina-hw-core  = { workspace = true }
 machina-gdbstub  = { workspace = true }
 libc             = { workspace = true }
+
+[workspace.lints.clippy]
+all      = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+nursery  = { level = "warn", priority = -1 }
+
+[lints]
+workspace = true

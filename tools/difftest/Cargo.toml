@@ -8,3 +8,6 @@ repository.workspace = true
 authors.workspace = true
 keywords = ["riscv", "testing", "emulator"]
 categories = ["emulators", "development-tools::testing"]
+
+[lints]
+workspace = true

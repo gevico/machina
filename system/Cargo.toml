@@ -15,3 +15,6 @@ machina-accel = { workspace = true }
 machina-guest-riscv = { workspace = true }
 machina-memory = { workspace = true }
 machina-gdbstub = { workspace = true }
+
+[lints]
+workspace = true

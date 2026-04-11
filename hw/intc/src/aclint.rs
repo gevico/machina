@@ -201,9 +201,9 @@ impl Aclint {
 
     /// Set mtimecmp[hart] directly (for SBI SET_TIMER).
     ///
-    /// Equivalent to a guest write at ACLINT_BASE + 0x4000
-    /// + hart * 8; used by the host SBI backend in builtin
-    /// mode so it does not need to go through MMIO decode.
+    /// Equivalent to a guest write at ACLINT_BASE + 0x4000 +
+    /// hart * 8; used by the host SBI backend in builtin mode
+    /// so it does not need to go through MMIO decode.
     pub fn set_mtimecmp(&self, hart: usize, val: u64) {
         const MTIMECMP_OFF: u64 = 0x4000;
         self.write(MTIMECMP_OFF + hart as u64 * 8, 8, val);

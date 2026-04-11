@@ -6,3 +6,6 @@ publish = false
 
 [dependencies]
 machina-core = { workspace = true }
+
+[lints]
+workspace = true

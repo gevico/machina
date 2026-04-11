@@ -6,3 +6,6 @@ description = "Pure software IEEE 754 floating-point library"
 license.workspace = true
 
 [dependencies]
+
+[lints]
+workspace = true

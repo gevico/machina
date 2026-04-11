@@ -12,3 +12,6 @@ categories = ["emulators", "development-tools::debugging"]
 [dependencies]
 machina-core = { workspace = true }
 serde_json = { workspace = true }
+
+[lints]
+workspace = true

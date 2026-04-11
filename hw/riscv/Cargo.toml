@@ -21,3 +21,6 @@ machina-memory = { workspace = true }
 machina-guest-riscv = { workspace = true }
 machina-hw-virtio = { workspace = true }
 sbi-spec = { workspace = true }
+
+[lints]
+workspace = true
