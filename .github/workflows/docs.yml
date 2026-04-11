@@ -1,4 +1,4 @@
-name: machina-tests
+name: docs
 
 on:
   push:
@@ -6,9 +6,8 @@ on:
   workflow_dispatch:
 
 jobs:
-  test:
+  build-docs:
     runs-on: ubuntu-latest
-    timeout-minutes: 90
     env:
       CARGO_TERM_COLOR: always
     steps:
@@ -21,13 +20,11 @@ jobs:
       - name: Cache Cargo
         uses: Swatinem/rust-cache@v2
 
-      - name: Install test dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            build-essential \
-            gcc-riscv64-linux-gnu \
-            qemu-user
+      - name: Build documentation
+        run: make docs
 
-      - name: Run all tests
-        run: make test
+      - name: Upload docs artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: rustdocs
+          path: target/doc

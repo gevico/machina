@@ -14,5 +14,11 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@v2
+
       - name: Check code formatting
-        run: cargo fmt --all --check
+        run: make fmt-check
+
+      - name: Run Clippy
+        run: make clippy
