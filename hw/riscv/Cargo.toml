@@ -20,3 +20,4 @@ machina-hw-char = { workspace = true }
 machina-memory = { workspace = true }
 machina-guest-riscv = { workspace = true }
 machina-hw-virtio = { workspace = true }
+sbi-spec = { workspace = true }

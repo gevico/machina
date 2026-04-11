@@ -13,11 +13,12 @@ use machina_accel::x86_64::emitter::SoftMmuConfig;
 use machina_accel::X86_64CodeGen;
 use machina_core::machine::{Machine, MachineOpts};
 use machina_hw_riscv::ref_machine::RefMachine;
+use machina_hw_riscv::sbi::SbiBackend;
 use machina_hw_riscv::sifive_test::ShutdownReason;
 use machina_system::cpus::{
     machina_mem_read, machina_mem_write, FullSystemCpu, LAST_TB_PC,
 };
-use machina_system::CpuManager;
+use machina_system::{CpuManager, FirmwareCallFn};
 
 fn usage() {
     eprintln!("Usage: machina [options]");
@@ -28,6 +29,10 @@ fn usage() {
     );
     eprintln!("  -m size       RAM size in MiB (default: 128)");
     eprintln!("  -bios path    BIOS/firmware binary");
+    eprintln!(
+        "  -bios builtin Boot directly in S-mode \
+         with host-side SBI"
+    );
     eprintln!("  -kernel path  Kernel binary");
     eprintln!("  -nographic    Disable graphical output");
     eprintln!("  -append args  Kernel command line arguments");
@@ -50,6 +55,7 @@ struct CliArgs {
     machine: String,
     ram_mib: u64,
     bios: Option<PathBuf>,
+    bios_builtin: bool,
     kernel: Option<PathBuf>,
     append: Option<String>,
     nographic: bool,
@@ -67,6 +73,7 @@ impl Default for CliArgs {
             machine: "riscv64-ref".to_string(),
             ram_mib: 128,
             bios: None,
+            bios_builtin: false,
             kernel: None,
             append: None,
             nographic: false,
@@ -101,12 +108,12 @@ fn parse_args() -> Result<CliArgs, String> {
             }
             "-bios" => {
                 i += 1;
-                cli.bios = Some(
-                    args.get(i)
-                        .ok_or("-bios requires argument")?
-                        .clone()
-                        .into(),
-                );
+                let arg = args.get(i).ok_or("-bios requires argument")?.clone();
+                if arg == "builtin" {
+                    cli.bios_builtin = true;
+                } else {
+                    cli.bios = Some(arg.into());
+                }
             }
             "-kernel" => {
                 i += 1;
@@ -380,6 +387,24 @@ fn run_machine_cycle(
         }
     }
 
+    // Wire builtin SBI backend (-bios builtin).
+    if opts.bios_builtin {
+        let uart = machine.uart().clone();
+        let aclint = machine.aclint().clone();
+        let sbi_stop = Arc::clone(&stop_flag);
+        let sbi_wk = machine.wfi_waker();
+        let shutdown_cb: Arc<dyn Fn(u32) + Send + Sync> =
+            Arc::new(move |_reset_type| {
+                sbi_stop.store(false, Ordering::SeqCst);
+                sbi_wk.stop();
+            });
+        let backend = Arc::new(SbiBackend::new(uart, aclint, shutdown_cb));
+        let fw_fn: FirmwareCallFn =
+            Arc::new(move |cpu| backend.handle_call(cpu));
+        cpu_mgr.set_firmware_handler(fw_fn);
+        cpu_mgr.cpu_mut(0).builtin_mode = true;
+    }
+
     // Wire SiFive Test to execution control.
     let shutdown_reason: Arc<std::sync::Mutex<Option<ShutdownReason>>> =
         Arc::new(std::sync::Mutex::new(None));
@@ -445,6 +470,7 @@ fn main() {
         cpu_count: 1,
         kernel: cli.kernel.clone(),
         bios: cli.bios.clone(),
+        bios_builtin: cli.bios_builtin,
         append: cli.append.clone(),
         nographic: cli.nographic,
         drive: cli.drive.clone(),

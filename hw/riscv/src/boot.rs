@@ -325,3 +325,129 @@ pub fn boot_ref_machine(
 
     Ok(())
 }
+
+/// Boot in builtin mode: skip M-mode firmware and start the
+/// kernel directly in S-mode.
+///
+/// The host provides SBI services; on entry the CPU sees:
+///   priv_level = Supervisor
+///   pc         = kernel ELF entry point
+///   a0         = hartid (0)
+///   a1         = FDT physical address
+///   mideleg    = 0x0222  (SSI / STI / SEI delegated)
+///   medeleg    = 0xB1FF  (common exceptions delegated)
+///   mie        = 0x0080  (MTIE so timer IRQs flow)
+///
+/// This mirrors what M-mode firmware (OpenSBI / RustSBI) does
+/// before handing off to the S-mode kernel.
+pub fn boot_builtin(
+    machine: &mut RefMachine,
+) -> Result<(), Box<dyn std::error::Error>> {
+    // Load kernel at RAM_BASE (no firmware offset).
+    let mut kernel_entry: Option<u64> = None;
+    if let Some(ref kpath) = machine.kernel_path.clone() {
+        let data = std::fs::read(kpath)?;
+        let as_ = machine.address_space();
+        if is_elf(&data) {
+            let info = loader::load_elf(&data, RAM_BASE, as_)
+                .map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
+            // Some linker scripts omit ENTRY(), leaving ELF
+            // entry at 0.  Fall back to well-known symbols
+            // or RAM_BASE.
+            let entry = if info.entry.0 != 0 {
+                info.entry.0
+            } else {
+                loader::elf_find_symbol(&data, "_start")
+                    .or_else(|| loader::elf_find_symbol(&data, "__start"))
+                    .unwrap_or(RAM_BASE)
+            };
+            kernel_entry = Some(entry);
+        } else {
+            loader::load_binary(&data, GPA::new(RAM_BASE), as_)
+                .map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
+            kernel_entry = Some(RAM_BASE);
+        }
+    }
+
+    let entry = kernel_entry.ok_or("builtin mode requires -kernel")?;
+
+    // Load initrd if provided (32 MiB above kernel base).
+    let mut initrd_range: Option<(u64, u64)> = None;
+    if let Some(ref ipath) = machine.initrd_path.clone() {
+        let data = std::fs::read(ipath)?;
+        let initrd_start = RAM_BASE + 0x200_0000;
+        let initrd_end = initrd_start + data.len() as u64;
+        let as_ = machine.address_space();
+        loader::load_binary(&data, GPA::new(initrd_start), as_)
+            .map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
+        initrd_range = Some((initrd_start, initrd_end));
+    }
+
+    // Generate FDT (with initrd / cmdline if present).
+    let fdt = machine
+        .generate_fdt_with(initrd_range, machine.kernel_cmdline.as_deref());
+
+    // Place FDT near the top of RAM (64 KiB margin).
+    let fdt_len = fdt.len() as u64;
+    let ram_size = machine.ram_size();
+    if fdt_len > ram_size {
+        return Err("FDT blob larger than available RAM".into());
+    }
+    let margin = 0x10000u64;
+    let fdt_offset = (ram_size - margin - fdt_len) & !0x7;
+    let fdt_addr = RAM_BASE + fdt_offset;
+    let as_ = machine.address_space();
+    loader::load_binary(&fdt, GPA::new(fdt_addr), as_)
+        .map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
+
+    // Write an infinite-loop halt to MROM as a safety net
+    // (should never be reached in builtin mode).
+    {
+        let mrom = machine.mrom_block();
+        let halt: u32 = 0x0000_006F; // jal x0, 0
+        unsafe {
+            // SAFETY: mrom is backed by mmap'd memory with
+            // the same lifetime as RefMachine.
+            std::ptr::copy_nonoverlapping(
+                halt.to_le_bytes().as_ptr(),
+                mrom.as_ptr(),
+                4,
+            );
+        }
+    }
+
+    // Initialise CPU0 in Supervisor mode at kernel entry.
+    {
+        let mut cpus = machine.cpus_lock();
+        if let Some(Some(cpu)) = cpus.get_mut(0) {
+            cpu.pc = entry;
+            cpu.set_priv(PrivLevel::Supervisor);
+
+            // SBI boot convention: a0 = hartid, a1 = DTB.
+            cpu.gpr[10] = 0;
+            cpu.gpr[11] = fdt_addr;
+
+            // Delegate SSI (1), STI (5), SEI (9) to S-mode.
+            cpu.csr.mideleg = 0x0222;
+
+            // Delegate common exceptions to S-mode.
+            // Bit 9 (EcallFromS) is NOT delegated — those
+            // are SBI calls handled by the host.
+            cpu.csr.medeleg = 0xB1FF;
+
+            // Enable MTIE so the ACLINT timer thread can
+            // set MTIP; handle_interrupt converts MTI to
+            // STIP for S-mode.
+            cpu.csr.mie = 1 << 7; // MTIE
+
+            // PMP: grant S/U-mode full R+W+X access.
+            // pmpcfg0[0] = A=NAPOT(3<<3) | R | W | X = 0x1F
+            // pmpaddr0   = u64::MAX → NAPOT all memory.
+            cpu.csr.pmpaddr[0] = u64::MAX;
+            cpu.csr.pmpcfg[0] = 0x1F;
+            cpu.pmp.sync_from_csr(&cpu.csr.pmpcfg, &cpu.csr.pmpaddr);
+        }
+    }
+
+    Ok(())
+}

@@ -123,6 +123,10 @@ pub struct FullSystemCpu {
     // HTIF tohost: offset within RAM to poll for exit.
     htif_tohost_off: Option<u64>,
     htif_exit_code: Arc<AtomicU64>,
+    /// When true, MTI from the timer is converted to STIP
+    /// in handle_interrupt so S-mode sees STI instead of
+    /// a raw M-mode timer interrupt.  Set by builtin mode.
+    pub builtin_mode: bool,
 }
 
 // SAFETY: ram_ptr points to mmap'd memory owned by
@@ -167,6 +171,7 @@ impl FullSystemCpu {
             gdb_state: None,
             htif_tohost_off: None,
             htif_exit_code: Arc::new(AtomicU64::new(0)),
+            builtin_mode: false,
         }
     }
 
@@ -657,7 +662,17 @@ impl GuestCpu for FullSystemCpu {
         // from shared_mip. Software bits (STIP=5, SSIP=1)
         // are left untouched.
         let hw_mask: u64 = (1 << 3) | (1 << 7) | (1 << 9) | (1 << 11);
-        let shared = self.shared_mip.load(Ordering::SeqCst);
+        let mut shared = self.shared_mip.load(Ordering::SeqCst);
+
+        // In builtin mode emulate what M-mode firmware does
+        // when MTIP fires: consume the M-mode timer interrupt
+        // and raise STIP so S-mode handles it as STI (cause 5).
+        if self.builtin_mode && shared & (1 << 7) != 0 {
+            self.shared_mip.fetch_and(!(1u64 << 7), Ordering::SeqCst);
+            shared &= !(1u64 << 7);
+            self.cpu.csr.mip |= 1 << 5; // set STIP
+        }
+
         self.cpu.csr.mip = (self.cpu.csr.mip & !hw_mask) | (shared & hw_mask);
         self.cpu.handle_interrupt();
     }

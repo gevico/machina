@@ -12,6 +12,9 @@ pub struct MachineOpts {
     pub cpu_count: u32,
     pub kernel: Option<PathBuf>,
     pub bios: Option<PathBuf>,
+    /// Boot directly in post-firmware mode (e.g. S-mode on
+    /// RISC-V) with firmware services provided by the host.
+    pub bios_builtin: bool,
     pub append: Option<String>,
     pub nographic: bool,
     pub drive: Option<PathBuf>,

@@ -1,9 +1,11 @@
 // machina-system: CPU management and GuestCpu bridge.
 
+pub mod builtin;
 pub mod cpus;
 pub mod gdb;
 pub mod gdb_csr;
 
+pub use builtin::FirmwareCallFn;
 pub use cpus::FullSystemCpu;
 
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -19,6 +21,10 @@ pub struct CpuManager {
     running: Arc<AtomicBool>,
     wfi_waker: Option<Arc<WfiWaker>>,
     cpus: Vec<FullSystemCpu>,
+    /// Optional firmware call handler for builtin mode.
+    /// When set, S-mode ecalls are dispatched here instead
+    /// of being delivered as CPU trap exceptions.
+    firmware_handler: Option<FirmwareCallFn>,
 }
 
 impl CpuManager {
@@ -27,7 +33,15 @@ impl CpuManager {
             running: Arc::new(AtomicBool::new(true)),
             wfi_waker: None,
             cpus: Vec::new(),
+            firmware_handler: None,
         }
+    }
+
+    /// Install a firmware call handler for builtin mode.
+    /// S-mode ecalls will be dispatched to this handler
+    /// instead of being raised as exceptions.
+    pub fn set_firmware_handler(&mut self, handler: FirmwareCallFn) {
+        self.firmware_handler = Some(handler);
     }
 
     pub fn set_wfi_waker(&mut self, wk: Arc<WfiWaker>) {
@@ -47,6 +61,11 @@ impl CpuManager {
     /// Access a managed CPU by index.
     pub fn cpu(&self, idx: usize) -> &FullSystemCpu {
         &self.cpus[idx]
+    }
+
+    /// Access a managed CPU mutably by index.
+    pub fn cpu_mut(&mut self, idx: usize) -> &mut FullSystemCpu {
+        &mut self.cpus[idx]
     }
 
     pub fn stop(&self) {
@@ -97,6 +116,15 @@ impl CpuManager {
                     per_cpu.jump_cache.invalidate();
                 }
                 ExitReason::Ecall { priv_level } => {
+                    // In builtin mode, S-mode ecalls (priv 1)
+                    // are dispatched to the host firmware
+                    // handler instead of being raised as traps.
+                    if priv_level == 1 {
+                        if let Some(ref fw) = self.firmware_handler {
+                            fw(&mut cpu.cpu);
+                            continue;
+                        }
+                    }
                     // Route ECALL as trap exception.
                     // 8=EcallFromU, 9=EcallFromS,
                     // 11=EcallFromM.

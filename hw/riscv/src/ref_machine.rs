@@ -205,6 +205,7 @@ pub struct RefMachine {
     pub(crate) wfi_waker: Arc<WfiWaker>,
     // Stored boot options (bios / kernel paths).
     pub(crate) bios_path: Option<PathBuf>,
+    pub(crate) bios_builtin: bool,
     pub(crate) kernel_path: Option<PathBuf>,
     pub(crate) initrd_path: Option<PathBuf>,
     pub(crate) kernel_cmdline: Option<String>,
@@ -238,6 +239,7 @@ impl RefMachine {
             shared_mip: Arc::new(AtomicU64::new(0)),
             wfi_waker: Arc::new(WfiWaker::new()),
             bios_path: None,
+            bios_builtin: false,
             kernel_path: None,
             initrd_path: None,
             kernel_cmdline: None,
@@ -694,6 +696,7 @@ impl Machine for RefMachine {
         self.ram_size = opts.ram_size;
         self.cpu_count = opts.cpu_count;
         self.bios_path = opts.bios.clone();
+        self.bios_builtin = opts.bios_builtin;
         self.kernel_path = opts.kernel.clone();
         self.initrd_path = opts.initrd.clone();
         self.kernel_cmdline = opts.append.clone();
@@ -959,8 +962,13 @@ impl Machine for RefMachine {
     }
 
     fn boot(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-        use crate::boot::boot_ref_machine;
-        boot_ref_machine(self)
+        if self.bios_builtin {
+            use crate::boot::boot_builtin;
+            boot_builtin(self)
+        } else {
+            use crate::boot::boot_ref_machine;
+            boot_ref_machine(self)
+        }
     }
 
     fn cpu_count(&self) -> usize {

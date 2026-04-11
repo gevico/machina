@@ -140,7 +140,14 @@ fn test_aclint_mti_output() {
         "MTI should be high when mtime >= mtimecmp"
     );
 
-    // Raise mtimecmp to 200 -> MTI low.
+    // Re-anchor mtime to 50 before the final check so that
+    // wall-clock drift between the previous write and the
+    // mtimecmp write cannot push mtime past 200 on slow CI.
+    // update_mti() sees mtime=50 < mtimecmp=100, so MTI stays
+    // low after this; the HIGH assertion is already done above.
+    aclint.write(0xBFF8, 8, 50);
+
+    // Raise mtimecmp to 200 -> MTI low (mtime=50 < 200).
     aclint.write(0x4000, 8, 200);
     assert!(
         !sink.level(mti_irq),

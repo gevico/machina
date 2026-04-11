@@ -60,6 +60,7 @@ libc        = "0.2"
 serde_json  = "1"
 tempfile    = "3"
 parking_lot = "0.12"
+sbi-spec    = { version = "0.0.8", features = ["legacy"] }
 
 [package]
 name = "machina-emu"

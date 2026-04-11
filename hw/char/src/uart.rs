@@ -486,6 +486,17 @@ impl Uart16550 {
         }
     }
 
+    /// Non-blocking RX read for SBI CONSOLE_GETCHAR.
+    /// Returns Some(byte) if data is ready, None if not.
+    pub fn read_rbr_nonblocking(&self) -> Option<u8> {
+        let mut regs = self.regs.borrow();
+        if regs.lsr & LSR_DR != 0 {
+            Some(Self::read_rbr(&mut regs))
+        } else {
+            None
+        }
+    }
+
     fn read_rbr(regs: &mut parking_lot::MutexGuard<'_, Uart16550Regs>) -> u8 {
         if let Some(ch) = regs.rx_fifo.pop_front() {
             regs.rbr = ch;
