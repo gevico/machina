@@ -465,6 +465,12 @@ fn run_machine_cycle(
 
     let _exit = unsafe { cpu_mgr.run(&shared) };
 
+    // Invalidate the CPU pointer in MonitorState so
+    // a late quit does not dereference freed memory.
+    if let Some(ref ms) = monitor_state {
+        ms.set_neg_align_ptr(0);
+    }
+
     // Check SiFive Test first.
     let result = shutdown_reason.lock().unwrap().take();
     if result.is_some() {

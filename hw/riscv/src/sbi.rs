@@ -204,9 +204,7 @@ impl SbiBackend {
 
     /// Transmit one byte through the emulated UART.
     fn sbi_putchar(&self, ch: u8) {
-        // Write to UART THR (offset 0) bypasses DLAB check
-        // because the UART emulation resets DLAB=0 on init.
-        self.uart.write(0, ch);
+        self.uart.write_thr(ch);
     }
 
     /// Read one byte from the emulated UART.
