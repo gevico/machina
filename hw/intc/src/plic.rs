@@ -103,8 +103,6 @@ impl Plic {
         }
     }
 
-    // ---- Setup methods (delegate to locked state) ----
-
     pub fn attach_to_bus(&self, bus: &mut SysBus) -> Result<(), SysBusError> {
         self.state.lock().attach_to_bus(bus)
     }
@@ -304,8 +302,6 @@ impl Plic {
         }
         self.update_outputs();
     }
-
-    // ---- MMIO interface ----
 
     pub fn read(&self, offset: u64, size: u32) -> u64 {
         let _ = size;

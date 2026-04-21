@@ -46,8 +46,6 @@ fn write_bytes(as_: &AddressSpace, base: GPA, data: &[u8]) {
     }
 }
 
-// ---- minimal ELF-64 constants ----
-
 const EI_MAG: [u8; 4] = [0x7f, b'E', b'L', b'F'];
 const ELFCLASS64: u8 = 2;
 const ET_EXEC: u16 = 2;

@@ -127,8 +127,6 @@ impl FdtBuilder {
         blob
     }
 
-    // ---- internal helpers ----
-
     fn push_u32(&mut self, val: u32) {
         self.struct_buf.extend_from_slice(&val.to_be_bytes());
     }

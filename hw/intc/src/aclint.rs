@@ -101,8 +101,6 @@ impl Aclint {
         }
     }
 
-    // ---- Setup methods (delegate to locked state) ----
-
     pub fn attach_to_bus(&self, bus: &mut SysBus) -> Result<(), SysBusError> {
         self.state.lock().attach_to_bus(bus)
     }

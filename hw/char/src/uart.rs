@@ -414,74 +414,55 @@ impl Uart16550 {
 
     pub fn read(&self, offset: u64) -> u8 {
         let mut regs = self.regs.borrow();
-        match offset & 0x7 {
-            0 => {
-                if regs.lcr & LCR_DLAB != 0 {
-                    regs.dll
-                } else {
-                    let ch = Self::read_rbr(&mut regs);
-                    drop(regs);
-                    self.update_irq();
-                    ch
-                }
+        let dlab = regs.lcr & LCR_DLAB != 0;
+        match (offset & 0x7, dlab) {
+            (0, true) => regs.dll,
+            (0, false) => {
+                let ch = Self::read_rbr(&mut regs);
+                drop(regs);
+                self.update_irq();
+                ch
             }
-            1 => {
-                if regs.lcr & LCR_DLAB != 0 {
-                    regs.dlm
-                } else {
-                    regs.ier
-                }
-            }
-            2 => regs.iir,
-            3 => regs.lcr,
-            4 => regs.mcr,
-            5 => regs.lsr,
-            6 => regs.msr,
-            7 => regs.scr,
+            (1, true) => regs.dlm,
+            (1, false) => regs.ier,
+            (2, _) => regs.iir,
+            (3, _) => regs.lcr,
+            (4, _) => regs.mcr,
+            (5, _) => regs.lsr,
+            (6, _) => regs.msr,
+            (7, _) => regs.scr,
             _ => 0,
         }
     }
 
     pub fn write(&self, offset: u64, val: u8) {
-        match offset & 0x7 {
-            0 => {
-                let dlab = self.regs.borrow().lcr & LCR_DLAB != 0;
-                if dlab {
-                    self.regs.borrow().dll = val;
-                } else {
-                    self.write_thr(val);
-                }
+        let dlab = self.regs.borrow().lcr & LCR_DLAB != 0;
+        match (offset & 0x7, dlab) {
+            (0, true) => self.regs.borrow().dll = val,
+            (0, false) => self.write_thr(val),
+            (1, true) => self.regs.borrow().dlm = val,
+            (1, false) => {
+                self.regs.borrow().ier = val & 0x0F;
+                self.update_irq();
             }
-            1 => {
-                let dlab = self.regs.borrow().lcr & LCR_DLAB != 0;
-                if dlab {
-                    self.regs.borrow().dlm = val;
-                } else {
-                    self.regs.borrow().ier = val & 0x0F;
-                    self.update_irq();
-                }
-            }
-            2 => {
+            (2, _) => {
                 let mut regs = self.regs.borrow();
                 regs.fcr = val;
                 if val & 0x02 != 0 {
-                    // Clear RX FIFO.
                     regs.rx_fifo.clear();
                     regs.lsr &= !LSR_DR;
                     drop(regs);
                     self.update_irq();
                 }
             }
-            3 => self.regs.borrow().lcr = val,
-            4 => {
+            (3, _) => self.regs.borrow().lcr = val,
+            (4, _) => {
                 let has_cd = self.chardev.borrow().is_some();
                 let mut regs = self.regs.borrow();
                 regs.mcr = val;
                 regs.update_msr(has_cd);
             }
-            5 => {} // LSR is read-only
-            6 => {} // MSR is read-only
-            7 => self.regs.borrow().scr = val,
+            (7, _) => self.regs.borrow().scr = val,
             _ => {}
         }
     }

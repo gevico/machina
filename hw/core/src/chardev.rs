@@ -29,8 +29,6 @@ pub trait Chardev: Send + Sync {
     fn start_input(&mut self, _cb: ByteCb) {}
 }
 
-// -- CharFrontend ------------------------------------------------
-
 /// Bridges a device (frontend) to a chardev backend.
 pub struct CharFrontend {
     backend: Box<dyn Chardev>,
@@ -155,8 +153,6 @@ impl MObject for ChardevObject {
     }
 }
 
-// -- NullChardev -------------------------------------------------
-
 /// Discards all output and never produces input.
 pub struct NullChardev;
 
@@ -171,8 +167,6 @@ impl Chardev for NullChardev {
         false
     }
 }
-
-// -- StdioChardev ------------------------------------------------
 
 /// Wraps host stdin/stdout with QEMU-compatible escape
 /// sequences (Ctrl+A prefix):
@@ -383,8 +377,6 @@ fn restore_termios(orig: &libc::termios) {
         libc::tcsetattr(0, libc::TCSANOW, orig);
     }
 }
-
-// -- SocketChardev -----------------------------------------------
 
 /// Unix-socket backed chardev (for integration testing).
 pub struct SocketChardev {

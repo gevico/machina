@@ -29,8 +29,6 @@ use crate::sifive_test::SifiveTest;
 
 type MonitorCallback = Arc<Mutex<dyn FnMut(u8) + Send>>;
 
-// ---- Centralized memory map (QEMU virt style) ----
-
 #[derive(Clone, Copy)]
 pub struct MemMapEntry {
     pub base: u64,
@@ -116,8 +114,6 @@ pub const VIRTIO_SLOT_COUNT: usize = 8;
 // PLIC context count is 2 * cpu_count (M-mode + S-mode per
 // hart), computed dynamically in init().
 
-// ---- CPU IRQ sink ----
-
 /// Per-hart IRQ sink that updates the real CPU mip bits.
 ///
 /// IRQ numbering (matches RISC-V privilege spec):
@@ -164,8 +160,6 @@ const IRQ_MTI: u32 = 7;
 const IRQ_MEI: u32 = 11;
 const IRQ_SEI: u32 = 9;
 
-// ---- MMIO adapter: SiFive Test ----
-
 struct SifiveTestMmio(Arc<SifiveTest>);
 
 impl MmioOps for SifiveTestMmio {
@@ -177,8 +171,6 @@ impl MmioOps for SifiveTestMmio {
         self.0.write(offset, size, val);
     }
 }
-
-// ---- RefMachine ----
 
 pub struct RefMachine {
     name: String,
@@ -421,16 +413,6 @@ impl RefMachine {
     pub fn take_cpu(&self, idx: usize) -> Option<RiscvCpu> {
         let mut lock = self.cpus.lock().unwrap();
         lock.get_mut(idx).and_then(|slot| slot.take())
-    }
-
-    /// Get a clone of the shared CPU vector Arc.
-    pub fn cpus_arc(&self) -> Arc<Mutex<Vec<Option<RiscvCpu>>>> {
-        Arc::clone(&self.cpus)
-    }
-
-    /// Expose the CPU vector for CpuManager integration.
-    pub fn cpus_shared(&self) -> Arc<Mutex<Vec<Option<RiscvCpu>>>> {
-        self.cpus.clone()
     }
 
     /// Shared mip for device IRQ delivery.
@@ -812,9 +794,6 @@ impl Machine for RefMachine {
             self.virtio_mmio = Some(virtio_mmio);
         }
 
-        // ---- IRQ wiring ----
-        // Per-hart CPU IRQ sinks update real csr.mip bits.
-
         // UART IRQ source -> PLIC.
         let plic_as_sink =
             Arc::new(PlicIrqSink(Arc::clone(self.plic.as_ref().unwrap())));
@@ -827,7 +806,6 @@ impl Machine for RefMachine {
             REF_IRQMAP.uart0,
         ));
 
-        // ---- Connect PLIC context outputs ----
         // All IRQ sinks write to shared_mip which is
         // read by FullSystemCpu::pending_interrupt().
         {
@@ -852,7 +830,6 @@ impl Machine for RefMachine {
             }
         }
 
-        // ---- Connect ACLINT MTI/MSI outputs ----
         {
             let mip = &self.shared_mip;
             let wk = &self.wfi_waker;
@@ -893,7 +870,6 @@ impl Machine for RefMachine {
             }
         }
 
-        // ---- Attach IRQ + chardev to UART ----
         {
             let backend: Box<dyn Chardev + Send> = if opts.nographic {
                 let mut sc = StdioChardev::new();
