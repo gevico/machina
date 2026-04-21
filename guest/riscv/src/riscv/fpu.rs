@@ -92,6 +92,13 @@ fn commit_flags(cpu: &mut RiscvCpu, fe: &FloatEnv) {
     cpu.fflags = (cpu.fflags | rv) & FFLAGS_MASK;
 }
 
+/// Comparison / min-max environment: RNE + default-NaN.
+fn make_cmp_env() -> FloatEnv {
+    let mut env = FloatEnv::new(RoundMode::NearEven);
+    env.set_default_nan(true);
+    env
+}
+
 // ---------------------------------------------------------------
 // NaN boxing (f32 in 64-bit FP register)
 // ---------------------------------------------------------------
@@ -382,8 +389,7 @@ pub extern "C" fn helper_fsgnjx_s(env: *mut RiscvCpu, a: u64, b: u64) -> u64 {
 #[no_mangle]
 pub extern "C" fn helper_fmin_s(env: *mut RiscvCpu, a: u64, b: u64) -> u64 {
     let cpu = unsafe { &mut *env };
-    let mut fe = FloatEnv::new(RoundMode::NearEven);
-    fe.set_default_nan(true);
+    let mut fe = make_cmp_env();
     let res = minmax::min(unbox_f32(a), unbox_f32(b), &mut fe);
     commit_flags(cpu, &fe);
     nanbox(res.to_bits())
@@ -392,8 +398,7 @@ pub extern "C" fn helper_fmin_s(env: *mut RiscvCpu, a: u64, b: u64) -> u64 {
 #[no_mangle]
 pub extern "C" fn helper_fmax_s(env: *mut RiscvCpu, a: u64, b: u64) -> u64 {
     let cpu = unsafe { &mut *env };
-    let mut fe = FloatEnv::new(RoundMode::NearEven);
-    fe.set_default_nan(true);
+    let mut fe = make_cmp_env();
     let res = minmax::max(unbox_f32(a), unbox_f32(b), &mut fe);
     commit_flags(cpu, &fe);
     nanbox(res.to_bits())
@@ -406,8 +411,7 @@ pub extern "C" fn helper_fmax_s(env: *mut RiscvCpu, a: u64, b: u64) -> u64 {
 #[no_mangle]
 pub extern "C" fn helper_feq_s(env: *mut RiscvCpu, a: u64, b: u64) -> u64 {
     let cpu = unsafe { &mut *env };
-    let mut fe = FloatEnv::new(RoundMode::NearEven);
-    fe.set_default_nan(true);
+    let mut fe = make_cmp_env();
     let res = compare::eq(unbox_f32(a), unbox_f32(b), &mut fe);
     commit_flags(cpu, &fe);
     res as u64
@@ -416,8 +420,7 @@ pub extern "C" fn helper_feq_s(env: *mut RiscvCpu, a: u64, b: u64) -> u64 {
 #[no_mangle]
 pub extern "C" fn helper_flt_s(env: *mut RiscvCpu, a: u64, b: u64) -> u64 {
     let cpu = unsafe { &mut *env };
-    let mut fe = FloatEnv::new(RoundMode::NearEven);
-    fe.set_default_nan(true);
+    let mut fe = make_cmp_env();
     let res = compare::lt(unbox_f32(a), unbox_f32(b), &mut fe);
     commit_flags(cpu, &fe);
     res as u64
@@ -426,8 +429,7 @@ pub extern "C" fn helper_flt_s(env: *mut RiscvCpu, a: u64, b: u64) -> u64 {
 #[no_mangle]
 pub extern "C" fn helper_fle_s(env: *mut RiscvCpu, a: u64, b: u64) -> u64 {
     let cpu = unsafe { &mut *env };
-    let mut fe = FloatEnv::new(RoundMode::NearEven);
-    fe.set_default_nan(true);
+    let mut fe = make_cmp_env();
     let res = compare::le(unbox_f32(a), unbox_f32(b), &mut fe);
     commit_flags(cpu, &fe);
     res as u64
@@ -709,8 +711,7 @@ pub extern "C" fn helper_fsgnjx_d(_env: *mut RiscvCpu, a: u64, b: u64) -> u64 {
 #[no_mangle]
 pub extern "C" fn helper_fmin_d(env: *mut RiscvCpu, a: u64, b: u64) -> u64 {
     let cpu = unsafe { &mut *env };
-    let mut fe = FloatEnv::new(RoundMode::NearEven);
-    fe.set_default_nan(true);
+    let mut fe = make_cmp_env();
     let af = Float64::from_bits(a);
     let bf = Float64::from_bits(b);
     let res = minmax::min(af, bf, &mut fe);
@@ -721,8 +722,7 @@ pub extern "C" fn helper_fmin_d(env: *mut RiscvCpu, a: u64, b: u64) -> u64 {
 #[no_mangle]
 pub extern "C" fn helper_fmax_d(env: *mut RiscvCpu, a: u64, b: u64) -> u64 {
     let cpu = unsafe { &mut *env };
-    let mut fe = FloatEnv::new(RoundMode::NearEven);
-    fe.set_default_nan(true);
+    let mut fe = make_cmp_env();
     let af = Float64::from_bits(a);
     let bf = Float64::from_bits(b);
     let res = minmax::max(af, bf, &mut fe);
@@ -737,8 +737,7 @@ pub extern "C" fn helper_fmax_d(env: *mut RiscvCpu, a: u64, b: u64) -> u64 {
 #[no_mangle]
 pub extern "C" fn helper_feq_d(env: *mut RiscvCpu, a: u64, b: u64) -> u64 {
     let cpu = unsafe { &mut *env };
-    let mut fe = FloatEnv::new(RoundMode::NearEven);
-    fe.set_default_nan(true);
+    let mut fe = make_cmp_env();
     let af = Float64::from_bits(a);
     let bf = Float64::from_bits(b);
     let res = compare::eq(af, bf, &mut fe);
@@ -749,8 +748,7 @@ pub extern "C" fn helper_feq_d(env: *mut RiscvCpu, a: u64, b: u64) -> u64 {
 #[no_mangle]
 pub extern "C" fn helper_flt_d(env: *mut RiscvCpu, a: u64, b: u64) -> u64 {
     let cpu = unsafe { &mut *env };
-    let mut fe = FloatEnv::new(RoundMode::NearEven);
-    fe.set_default_nan(true);
+    let mut fe = make_cmp_env();
     let af = Float64::from_bits(a);
     let bf = Float64::from_bits(b);
     let res = compare::lt(af, bf, &mut fe);
@@ -761,8 +759,7 @@ pub extern "C" fn helper_flt_d(env: *mut RiscvCpu, a: u64, b: u64) -> u64 {
 #[no_mangle]
 pub extern "C" fn helper_fle_d(env: *mut RiscvCpu, a: u64, b: u64) -> u64 {
     let cpu = unsafe { &mut *env };
-    let mut fe = FloatEnv::new(RoundMode::NearEven);
-    fe.set_default_nan(true);
+    let mut fe = make_cmp_env();
     let af = Float64::from_bits(a);
     let bf = Float64::from_bits(b);
     let res = compare::le(af, bf, &mut fe);

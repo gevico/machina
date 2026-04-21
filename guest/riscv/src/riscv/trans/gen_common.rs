@@ -30,6 +30,22 @@ impl RiscvDisasContext {
         }
     }
 
+    /// Compute `base + imm`, eliding the add when imm == 0.
+    pub(super) fn addr_with_imm(
+        &self,
+        ir: &mut Context,
+        base: TempIdx,
+        imm: i64,
+    ) -> TempIdx {
+        if imm != 0 {
+            let c = ir.new_const(Type::I64, imm as u64);
+            let t = ir.new_temp(Type::I64);
+            ir.gen_add(Type::I64, t, base, c)
+        } else {
+            base
+        }
+    }
+
     /// Write `val` into GPR `rd`; writes to x0 discarded.
     pub(super) fn gen_set_gpr(&self, ir: &mut Context, rd: i64, val: TempIdx) {
         if rd != 0 {
@@ -122,13 +138,7 @@ impl RiscvDisasContext {
         self.gen_fp_check(ir);
         self.gen_set_fs_dirty(ir);
         let base = self.gpr_or_zero(ir, a.rs1);
-        let addr = if a.imm != 0 {
-            let imm = ir.new_const(Type::I64, a.imm as u64);
-            let t = ir.new_temp(Type::I64);
-            ir.gen_add(Type::I64, t, base, imm)
-        } else {
-            base
-        };
+        let addr = self.addr_with_imm(ir, base, a.imm);
         self.sync_pc(ir);
         let val = ir.new_temp(Type::I64);
         ir.gen_qemu_ld(Type::I64, val, addr, memop.bits() as u32);
@@ -195,13 +205,7 @@ impl RiscvDisasContext {
     ) -> bool {
         self.gen_fp_check(ir);
         let base = self.gpr_or_zero(ir, a.rs1);
-        let addr = if a.imm != 0 {
-            let imm = ir.new_const(Type::I64, a.imm as u64);
-            let t = ir.new_temp(Type::I64);
-            ir.gen_add(Type::I64, t, base, imm)
-        } else {
-            base
-        };
+        let addr = self.addr_with_imm(ir, base, a.imm);
         let val = self.fpr_load(ir, a.rs2);
         let store_val = if is_single {
             let lo32 = ir.new_temp(Type::I32);

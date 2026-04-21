@@ -19,13 +19,7 @@ impl RiscvDisasContext {
         memop: MemOp,
     ) -> bool {
         let base = self.gpr_or_zero(ir, a.rs1);
-        let addr = if a.imm != 0 {
-            let imm = ir.new_const(Type::I64, a.imm as u64);
-            let t = ir.new_temp(Type::I64);
-            ir.gen_add(Type::I64, t, base, imm)
-        } else {
-            base
-        };
+        let addr = self.addr_with_imm(ir, base, a.imm);
         self.sync_pc(ir);
         let dst = ir.new_temp(Type::I64);
         ir.gen_qemu_ld(Type::I64, dst, addr, memop.bits() as u32);
@@ -41,13 +35,7 @@ impl RiscvDisasContext {
         memop: MemOp,
     ) -> bool {
         let base = self.gpr_or_zero(ir, a.rs1);
-        let addr = if a.imm != 0 {
-            let imm = ir.new_const(Type::I64, a.imm as u64);
-            let t = ir.new_temp(Type::I64);
-            ir.gen_add(Type::I64, t, base, imm)
-        } else {
-            base
-        };
+        let addr = self.addr_with_imm(ir, base, a.imm);
         let val = self.gpr_or_zero(ir, a.rs2);
         self.sync_pc(ir);
         ir.gen_qemu_st(Type::I64, val, addr, memop.bits() as u32);
