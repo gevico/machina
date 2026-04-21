@@ -1015,3 +1015,39 @@ fn test_fullsys_priv_csr_execution() {
     // (just verify it was written, not a specific value).
     // mcycle is typically 0 in our emulator.
 }
+
+/// AC-6: verify that handle_priv_csr emits a CSR trace
+/// record when tracing is enabled.
+#[test]
+fn test_csr_trace_integration() {
+    use std::io::Read;
+
+    let dir = tempfile::tempdir().unwrap();
+    let trace_path = dir.path().join("csr.log");
+    machina_util::trace::init_trace(trace_path.to_str().unwrap()).unwrap();
+
+    // CSRRW x1, mscratch, x0: writes x0 to mscratch.
+    // funct3=1, rs1=0 → do_write=true for CSRRW.
+    let code = encode(&[
+        addi(3, 0, 77),     // x3 = 77
+        csrrw(1, 0x340, 3), // mscratch = x3
+        ecall(),
+    ]);
+
+    let (mut env, mut cpu, _as, _ram) = setup_fullsys(1024 * 1024, &code);
+    cpu.cpu.pc = RAM_BASE;
+
+    let _r = unsafe { cpu_exec_loop_env(&mut env, &mut cpu) };
+
+    // Read trace file and assert CSR record present.
+    let mut content = String::new();
+    std::fs::File::open(&trace_path)
+        .unwrap()
+        .read_to_string(&mut content)
+        .unwrap();
+    assert!(
+        content.contains("CSR 0x340"),
+        "trace file should contain CSR 0x340 \
+         record, got: {content}"
+    );
+}

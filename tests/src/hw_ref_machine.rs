@@ -16,6 +16,7 @@ fn default_opts() -> MachineOpts {
         nographic: false,
         drive: None,
         initrd: None,
+        netdev: None,
     }
 }
 
@@ -225,6 +226,7 @@ fn test_ref_machine_zero_ram_fails() {
         nographic: false,
         drive: None,
         initrd: None,
+        netdev: None,
     };
     let result = m.init(&opts);
     assert!(result.is_err(), "init with 0 RAM should fail");
@@ -261,6 +263,7 @@ fn test_ref_machine_plic_contexts_multi_hart() {
         nographic: false,
         drive: None,
         initrd: None,
+        netdev: None,
     };
     m.init(&opts).expect("init failed");
 
@@ -570,4 +573,132 @@ fn test_sifive_test_pass_triggers_shutdown() {
         st.is_triggered(),
         "device must be triggered after PASS write"
     );
+}
+
+// ── VirtIO net integration (AC-4) ────────────────────
+
+#[test]
+fn test_ref_machine_no_net_device_without_netdev() {
+    let mut m = RefMachine::new();
+    m.init(&default_opts()).expect("init failed");
+    let as_ = m.address_space();
+    // 0x10002000 should be unmapped (no net device).
+    assert!(
+        !as_.is_mapped(GPA::new(0x1000_2000), 4),
+        "net MMIO region should not be mapped \
+         without -netdev"
+    );
+}
+
+#[test]
+fn test_ref_machine_blk_device_unaffected() {
+    let dir = tempfile::tempdir().unwrap();
+    let disk = dir.path().join("disk.raw");
+    {
+        let mut f = fs::File::create(&disk).unwrap();
+        f.write_all(&[0u8; 512]).unwrap();
+    }
+    let mut m = RefMachine::new();
+    let opts = MachineOpts {
+        drive: Some(disk),
+        ..default_opts()
+    };
+    m.init(&opts).expect("init failed");
+    let as_ = m.address_space();
+    // Block device at 0x10001000 should still work.
+    assert!(as_.is_mapped(GPA::new(0x1000_1000), 4),);
+    let magic = as_.read(GPA::new(0x1000_1000), 4);
+    assert_eq!(magic, 0x74726976); // "virt"
+}
+
+#[test]
+fn test_ref_machine_net_via_pipe_backend() {
+    use machina_hw_virtio::net::{PipeBackend, VirtioNet};
+    use std::sync::Arc;
+
+    let mut m = RefMachine::new();
+    m.init(&default_opts()).expect("init failed");
+
+    let pipe = PipeBackend::new().unwrap();
+    let net = VirtioNet::new_default(Arc::new(pipe));
+    m.add_virtio_net(net).expect("add_virtio_net failed");
+
+    let as_ = m.address_space();
+    assert!(
+        as_.is_mapped(GPA::new(0x1000_2000), 4),
+        "net MMIO should be mapped at 0x10002000"
+    );
+    let magic = as_.read(GPA::new(0x1000_2000), 4);
+    assert_eq!(magic, 0x74726976);
+    let dev_id = as_.read(GPA::new(0x1000_2000 + 0x008), 4);
+    assert_eq!(dev_id, 1); // net device
+
+    assert!(m
+        .sysbus()
+        .mappings()
+        .iter()
+        .any(|m| m.owner == "virtio-mmio1"));
+}
+
+#[test]
+fn test_ref_machine_net_fdt_node() {
+    use machina_hw_virtio::net::{PipeBackend, VirtioNet};
+    use std::sync::Arc;
+
+    let mut m = RefMachine::new();
+    m.init(&default_opts()).expect("init failed");
+
+    let pipe = PipeBackend::new().unwrap();
+    let net = VirtioNet::new_default(Arc::new(pipe));
+    m.add_virtio_net(net).expect("add_virtio_net failed");
+
+    let fdt = m.fdt_blob();
+    let node = b"virtio_mmio@10002000";
+    assert!(
+        fdt.windows(node.len()).any(|w| w == node),
+        "FDT should contain virtio_mmio@10002000"
+    );
+
+    // Verify IRQ 12 is present in the FDT (u32 BE).
+    let irq12_be = 12u32.to_be_bytes();
+    assert!(
+        fdt.windows(4).any(|w| w == irq12_be),
+        "FDT net node should contain IRQ 12"
+    );
+}
+
+#[test]
+fn test_ref_machine_blk_and_net_coexist() {
+    use machina_hw_virtio::net::{PipeBackend, VirtioNet};
+    use std::sync::Arc;
+
+    let dir = tempfile::tempdir().unwrap();
+    let disk = dir.path().join("disk.raw");
+    {
+        let mut f = fs::File::create(&disk).unwrap();
+        f.write_all(&[0u8; 512]).unwrap();
+    }
+    let mut m = RefMachine::new();
+    let opts = MachineOpts {
+        drive: Some(disk),
+        ..default_opts()
+    };
+    m.init(&opts).expect("init failed");
+
+    let pipe = PipeBackend::new().unwrap();
+    let net = VirtioNet::new_default(Arc::new(pipe));
+    m.add_virtio_net(net).expect("add_virtio_net failed");
+
+    let as_ = m.address_space();
+    // Block device at 0x10001000 still works.
+    assert!(as_.is_mapped(GPA::new(0x1000_1000), 4));
+    assert_eq!(as_.read(GPA::new(0x1000_1000), 4), 0x74726976);
+    // Net device at 0x10002000 also works.
+    assert!(as_.is_mapped(GPA::new(0x1000_2000), 4));
+    assert_eq!(as_.read(GPA::new(0x1000_2000), 4), 0x74726976);
+    // Different device IDs.
+    let blk_id = as_.read(GPA::new(0x1000_1000 + 8), 4);
+    let net_id = as_.read(GPA::new(0x1000_2000 + 8), 4);
+    assert_eq!(blk_id, 2); // block
+    assert_eq!(net_id, 1); // net
 }

@@ -122,6 +122,9 @@ impl CpuManager {
                     if priv_level == 1 {
                         if let Some(ref fw) = self.firmware_handler {
                             fw(&mut cpu.cpu);
+                            if !running.load(Ordering::Relaxed) {
+                                return ExitReason::Halted;
+                            }
                             continue;
                         }
                     }

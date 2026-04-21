@@ -20,6 +20,7 @@ machina-disas = { workspace = true }
 machina-monitor = { workspace = true }
 machina-gdbstub = { workspace = true }
 machina-softfloat = { workspace = true }
+machina-util = { workspace = true }
 libc = { workspace = true }
 serde_json = { workspace = true }
 tempfile = { workspace = true }

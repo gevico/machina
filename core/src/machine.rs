@@ -7,6 +7,67 @@ use crate::mobject::{MObject, MObjectState};
 // TODO: use GPA in Machine trait methods (e.g. ram_base)
 // use crate::address::GPA;
 
+#[derive(Clone, Debug)]
+pub struct NetdevOpts {
+    pub id: String,
+    pub ifname: String,
+    pub mac: Option<String>,
+}
+
+impl NetdevOpts {
+    /// Parse `-netdev` and optional `-device
+    /// virtio-net-device` into NetdevOpts.
+    pub fn parse(
+        netdev_raw: &str,
+        device_raw: Option<&str>,
+    ) -> Result<Self, String> {
+        if !netdev_raw.starts_with("tap,") {
+            return Err(format!(
+                "-netdev: unsupported type \
+                 (expected tap): {}",
+                netdev_raw
+            ));
+        }
+        let mut id = None;
+        let mut ifname = None;
+        for part in netdev_raw.split(',').skip(1) {
+            if let Some(v) = part.strip_prefix("id=") {
+                id = Some(v.to_string());
+            } else if let Some(v) = part.strip_prefix("ifname=") {
+                ifname = Some(v.to_string());
+            }
+        }
+        let id = id.ok_or("-netdev: missing id= parameter".to_string())?;
+        let ifname =
+            ifname.ok_or("-netdev: missing ifname= parameter".to_string())?;
+
+        let mut mac = None;
+        if let Some(dev) = device_raw {
+            let mut dev_netdev = None;
+            for part in dev.split(',').skip(1) {
+                if let Some(v) = part.strip_prefix("netdev=") {
+                    dev_netdev = Some(v.to_string());
+                } else if let Some(v) = part.strip_prefix("mac=") {
+                    mac = Some(v.to_string());
+                }
+            }
+            let dev_netdev = dev_netdev.ok_or(
+                "-device virtio-net-device: \
+                 missing netdev= parameter"
+                    .to_string(),
+            )?;
+            if dev_netdev != id {
+                return Err(format!(
+                    "-device: netdev={} does not \
+                     match -netdev id={}",
+                    dev_netdev, id
+                ));
+            }
+        }
+        Ok(Self { id, ifname, mac })
+    }
+}
+
 pub struct MachineOpts {
     pub ram_size: u64,
     pub cpu_count: u32,
@@ -19,6 +80,7 @@ pub struct MachineOpts {
     pub nographic: bool,
     pub drive: Option<PathBuf>,
     pub initrd: Option<PathBuf>,
+    pub netdev: Option<NetdevOpts>,
 }
 
 pub struct MachineState {

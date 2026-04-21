@@ -611,7 +611,12 @@ impl GuestCpu for FullSystemCpu {
     // -- Full-system hooks --
 
     fn pending_interrupt(&self) -> bool {
-        let dev_mip = self.shared_mip.load(Ordering::Relaxed);
+        let mut dev_mip = self.shared_mip.load(Ordering::Relaxed);
+        // In builtin mode, treat MTIP (bit 7) as STIP
+        // (bit 5) so the mie gate opens for S-mode guests.
+        if self.builtin_mode && dev_mip & (1 << 7) != 0 {
+            dev_mip = (dev_mip & !(1u64 << 7)) | (1u64 << 5);
+        }
         let pending = (self.cpu.csr.mip | dev_mip) & self.cpu.csr.mie;
         if pending == 0 {
             return false;
@@ -641,7 +646,10 @@ impl GuestCpu for FullSystemCpu {
     }
 
     fn pending_wfi_wakeup(&self) -> bool {
-        let dev_mip = self.shared_mip.load(Ordering::Relaxed);
+        let mut dev_mip = self.shared_mip.load(Ordering::Relaxed);
+        if self.builtin_mode && dev_mip & (1 << 7) != 0 {
+            dev_mip = (dev_mip & !(1u64 << 7)) | (1u64 << 5);
+        }
         ((self.cpu.csr.mip | dev_mip) & self.cpu.csr.mie) != 0
     }
 
@@ -678,6 +686,7 @@ impl GuestCpu for FullSystemCpu {
     }
 
     fn handle_exception(&mut self, excp: u64, tval: u64) {
+        machina_util::trace::trace_exception(excp, self.cpu.pc);
         let e = match excp {
             0 => Exception::InstructionMisaligned,
             1 => Exception::InstructionAccessFault,
@@ -734,7 +743,10 @@ impl GuestCpu for FullSystemCpu {
     }
 
     fn has_pending_irq(&self) -> bool {
-        let dev_mip = self.shared_mip.load(Ordering::Relaxed);
+        let mut dev_mip = self.shared_mip.load(Ordering::Relaxed);
+        if self.builtin_mode && dev_mip & (1 << 7) != 0 {
+            dev_mip = (dev_mip & !(1u64 << 7)) | (1u64 << 5);
+        }
         ((self.cpu.csr.mip | dev_mip) & self.cpu.csr.mie) != 0
     }
 
@@ -1005,6 +1017,13 @@ impl GuestCpu for FullSystemCpu {
             && self.cpu.csr.write(csr_addr, new_val, priv_level).is_err()
         {
             return false;
+        }
+
+        if do_write {
+            machina_util::trace::trace_csr(
+                &format!("0x{:03x}", csr_addr),
+                new_val,
+            );
         }
 
         // Sync runtime state after privileged CSR writes.

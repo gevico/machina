@@ -264,6 +264,7 @@ pub fn boot_ref_machine(
     };
 
     // Load kernel.
+    let mut kernel_high = RAM_BASE;
     let kernel_entry = if let Some(ref kp) = machine.kernel_path {
         let data = std::fs::read(kp)?;
         let as_ = machine.address_space();
@@ -272,7 +273,15 @@ pub fn boot_ref_machine(
         } else {
             RAM_BASE
         };
-        Some(load_image(&data, load_addr, as_)?.unwrap_or(load_addr))
+        if is_elf(&data) {
+            let info = loader::load_elf(&data, load_addr, as_)?;
+            kernel_high = info.high_addr;
+            Some(info.entry.0)
+        } else {
+            let info = loader::load_binary(&data, GPA::new(load_addr), as_)?;
+            kernel_high = info.high_addr;
+            Some(load_addr)
+        }
     } else {
         None
     };
@@ -280,8 +289,23 @@ pub fn boot_ref_machine(
     // Load initrd (if provided) after the kernel.
     let initrd_range = if let Some(ref ip) = machine.initrd_path {
         let data = std::fs::read(ip)?;
-        let start = RAM_BASE + KERNEL_OFFSET + 0x200_0000;
+        let min_start = RAM_BASE + KERNEL_OFFSET + 0x200_0000;
+        let after_kernel = (kernel_high + 0xFFF) & !0xFFF;
+        let start = min_start.max(after_kernel);
         let end = start + data.len() as u64;
+        let fdt_reserve = 128 * 1024;
+        let ram_end = RAM_BASE + machine.ram_size();
+        let usable_end = ram_end.saturating_sub(fdt_reserve);
+        if end > usable_end {
+            return Err(format!(
+                "initrd ({} bytes) exceeds usable \
+                 RAM (end {:#x} > {:#x})",
+                data.len(),
+                end,
+                usable_end
+            )
+            .into());
+        }
         let as_ = machine.address_space();
         loader::load_binary(&data, GPA::new(start), as_)?;
         Some((start, end))
@@ -344,38 +368,60 @@ pub fn boot_builtin(
 ) -> Result<(), Box<dyn std::error::Error>> {
     // Load kernel at RAM_BASE (no firmware offset).
     let mut kernel_entry: Option<u64> = None;
+    let mut kernel_end = RAM_BASE;
     if let Some(ref kpath) = machine.kernel_path.clone() {
         let data = std::fs::read(kpath)?;
         let as_ = machine.address_space();
         if is_elf(&data) {
             let info = loader::load_elf(&data, RAM_BASE, as_)
                 .map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
-            // Some linker scripts omit ENTRY(), leaving ELF
-            // entry at 0.  Fall back to well-known symbols
-            // or RAM_BASE.
-            let entry = if info.entry.0 != 0 {
+            kernel_end = info.high_addr;
+            let raw_entry = info.entry.0 - info.bias.unwrap_or(0);
+            let bias = info.bias.unwrap_or(0);
+            let entry = if raw_entry != 0 {
                 info.entry.0
             } else {
-                loader::elf_find_symbol(&data, "_start")
-                    .or_else(|| loader::elf_find_symbol(&data, "__start"))
-                    .unwrap_or(RAM_BASE)
+                let sym = loader::elf_find_symbol(&data, "_start")
+                    .or_else(|| loader::elf_find_symbol(&data, "__start"));
+                match sym {
+                    Some(addr) => addr + bias,
+                    None => RAM_BASE,
+                }
             };
             kernel_entry = Some(entry);
         } else {
-            loader::load_binary(&data, GPA::new(RAM_BASE), as_)
+            let info = loader::load_binary(&data, GPA::new(RAM_BASE), as_)
                 .map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
+            kernel_end = info.high_addr;
             kernel_entry = Some(RAM_BASE);
         }
     }
 
     let entry = kernel_entry.ok_or("builtin mode requires -kernel")?;
 
-    // Load initrd if provided (32 MiB above kernel base).
     let mut initrd_range: Option<(u64, u64)> = None;
     if let Some(ref ipath) = machine.initrd_path.clone() {
         let data = std::fs::read(ipath)?;
-        let initrd_start = RAM_BASE + 0x200_0000;
+        // Place initrd after kernel, page-aligned, with
+        // a minimum of 32 MiB above RAM_BASE.
+        let min_start = RAM_BASE + 0x200_0000;
+        let after_kernel = (kernel_end + 0xFFF) & !0xFFF;
+        let initrd_start = min_start.max(after_kernel);
         let initrd_end = initrd_start + data.len() as u64;
+        // Reserve 128 KiB at top of RAM for FDT + margin.
+        let fdt_reserve = 128 * 1024;
+        let ram_end = RAM_BASE + machine.ram_size();
+        let usable_end = ram_end.saturating_sub(fdt_reserve);
+        if initrd_end > usable_end {
+            return Err(format!(
+                "initrd ({} bytes) exceeds usable \
+                 RAM (end {:#x} > {:#x}, FDT reserved)",
+                data.len(),
+                initrd_end,
+                usable_end
+            )
+            .into());
+        }
         let as_ = machine.address_space();
         loader::load_binary(&data, GPA::new(initrd_start), as_)
             .map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;

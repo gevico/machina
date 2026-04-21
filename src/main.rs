@@ -11,7 +11,7 @@ use std::sync::Arc;
 use machina_accel::exec::ExecEnv;
 use machina_accel::x86_64::emitter::SoftMmuConfig;
 use machina_accel::X86_64CodeGen;
-use machina_core::machine::{Machine, MachineOpts};
+use machina_core::machine::{Machine, MachineOpts, NetdevOpts};
 use machina_hw_riscv::ref_machine::RefMachine;
 use machina_hw_riscv::sbi::SbiBackend;
 use machina_hw_riscv::sifive_test::ShutdownReason;
@@ -48,6 +48,15 @@ fn usage() {
         "  -gdb dev      GDB server device \
          (e.g. tcp::1234)"
     );
+    eprintln!(
+        "  -netdev tap,id=<id>,ifname=<name>  \
+         TAP network backend"
+    );
+    eprintln!(
+        "  -device virtio-net-device,netdev=<id>\
+         [,mac=XX:XX:XX:XX:XX:XX]"
+    );
+    eprintln!("  --trace file  Trace output file");
     eprintln!("  -h, --help    Show this help");
 }
 
@@ -65,6 +74,9 @@ struct CliArgs {
     gdb: Option<String>,
     start_paused: bool,
     initrd: Option<PathBuf>,
+    netdev_raw: Option<String>,
+    device_net_raw: Option<String>,
+    trace: Option<PathBuf>,
 }
 
 impl Default for CliArgs {
@@ -83,6 +95,9 @@ impl Default for CliArgs {
             gdb: None,
             start_paused: false,
             initrd: None,
+            netdev_raw: None,
+            device_net_raw: None,
+            trace: None,
         }
     }
 }
@@ -111,7 +126,9 @@ fn parse_args() -> Result<CliArgs, String> {
                 let arg = args.get(i).ok_or("-bios requires argument")?.clone();
                 if arg == "builtin" {
                     cli.bios_builtin = true;
+                    cli.bios = None;
                 } else {
+                    cli.bios_builtin = false;
                     cli.bios = Some(arg.into());
                 }
             }
@@ -152,9 +169,24 @@ fn parse_args() -> Result<CliArgs, String> {
                     return Err("-drive: missing file=<path>".to_string());
                 }
             }
-            "-device" => {
-                // Accept and skip for QEMU compat.
+            "-netdev" => {
                 i += 1;
+                cli.netdev_raw = Some(
+                    args.get(i).ok_or("-netdev requires argument")?.clone(),
+                );
+            }
+            "-device" => {
+                i += 1;
+                let val = args.get(i).ok_or("-device requires argument")?;
+                if val.starts_with("virtio-net-device,") {
+                    cli.device_net_raw = Some(val.clone());
+                }
+                // Other -device values accepted for compat.
+            }
+            "--trace" => {
+                i += 1;
+                let s = args.get(i).ok_or("--trace requires argument")?;
+                cli.trace = Some(PathBuf::from(s));
             }
             "-initrd" => {
                 i += 1;
@@ -198,6 +230,9 @@ fn parse_args() -> Result<CliArgs, String> {
     }
     Ok(cli)
 }
+
+// parse_netdev_opts moved to NetdevOpts::parse() in
+// core/src/machine.rs for testability.
 
 fn install_crash_handler() {
     unsafe {
@@ -387,14 +422,25 @@ fn run_machine_cycle(
         }
     }
 
+    // Shared shutdown reason slot (used by both SBI
+    // and SiFive Test).
+    let shutdown_reason: Arc<std::sync::Mutex<Option<ShutdownReason>>> =
+        Arc::new(std::sync::Mutex::new(None));
+
     // Wire builtin SBI backend (-bios builtin).
     if opts.bios_builtin {
         let uart = machine.uart().clone();
         let aclint = machine.aclint().clone();
         let sbi_stop = Arc::clone(&stop_flag);
         let sbi_wk = machine.wfi_waker();
+        let sbi_reason = Arc::clone(&shutdown_reason);
         let shutdown_cb: Arc<dyn Fn(u32) + Send + Sync> =
-            Arc::new(move |_reset_type| {
+            Arc::new(move |reset_type| {
+                let reason = match reset_type {
+                    1 | 2 => ShutdownReason::Reset,
+                    _ => ShutdownReason::Pass,
+                };
+                *sbi_reason.lock().unwrap() = Some(reason);
                 sbi_stop.store(false, Ordering::SeqCst);
                 sbi_wk.stop();
             });
@@ -406,8 +452,6 @@ fn run_machine_cycle(
     }
 
     // Wire SiFive Test to execution control.
-    let shutdown_reason: Arc<std::sync::Mutex<Option<ShutdownReason>>> =
-        Arc::new(std::sync::Mutex::new(None));
     {
         let reason_slot = Arc::clone(&shutdown_reason);
         let flag = Arc::clone(&stop_flag);
@@ -422,6 +466,12 @@ fn run_machine_cycle(
     }
 
     let _exit = unsafe { cpu_mgr.run(&shared) };
+
+    // Invalidate the CPU pointer in MonitorState so
+    // a late quit does not dereference freed memory.
+    if let Some(ref ms) = monitor_state {
+        ms.set_neg_align_ptr(0);
+    }
 
     // Check SiFive Test first.
     let result = shutdown_reason.lock().unwrap().take();
@@ -464,6 +514,39 @@ fn main() {
         process::exit(1);
     }
 
+    // Reject -device virtio-net-device without -netdev.
+    if cli.device_net_raw.is_some() && cli.netdev_raw.is_none() {
+        eprintln!(
+            "machina: -device virtio-net-device \
+             requires a matching -netdev"
+        );
+        machina_hw_core::chardev::restore_terminal();
+        process::exit(1);
+    }
+
+    // Parse netdev options if provided.
+    let netdev = if let Some(ref raw) = cli.netdev_raw {
+        match NetdevOpts::parse(raw, cli.device_net_raw.as_deref()) {
+            Ok(nd) => Some(nd),
+            Err(e) => {
+                eprintln!("machina: {}", e);
+                machina_hw_core::chardev::restore_terminal();
+                process::exit(1);
+            }
+        }
+    } else {
+        None
+    };
+
+    if let Some(ref trace_path) = cli.trace {
+        if let Err(e) =
+            machina_util::trace::init_trace(trace_path.to_str().unwrap_or(""))
+        {
+            eprintln!("machina: --trace: {}", e);
+            std::process::exit(1);
+        }
+    }
+
     let ram_size = cli.ram_mib * 1024 * 1024;
     let opts = MachineOpts {
         ram_size,
@@ -475,6 +558,7 @@ fn main() {
         nographic: cli.nographic,
         drive: cli.drive.clone(),
         initrd: cli.initrd.clone(),
+        netdev,
     };
 
     // Check -monitor stdio + -nographic conflict.
@@ -491,7 +575,23 @@ fn main() {
     // Find HTIF tohost symbol from kernel ELF.
     let htif_tohost: Option<u64> = cli.kernel.as_ref().and_then(|p| {
         let data = std::fs::read(p).ok()?;
-        machina_hw_core::loader::elf_find_symbol(&data, "tohost")
+        let addr = machina_hw_core::loader::elf_find_symbol(&data, "tohost")?;
+        let bias = if machina_hw_core::loader::elf_is_dyn(&data) {
+            use machina_hw_riscv::boot::KERNEL_OFFSET;
+            let bios_none = cli
+                .bios
+                .as_ref()
+                .is_some_and(|p| p.to_str() == Some("none"));
+            let has_fw = !cli.bios_builtin && !bios_none;
+            if has_fw {
+                machina_hw_riscv::ref_machine::RAM_BASE + KERNEL_OFFSET
+            } else {
+                machina_hw_riscv::ref_machine::RAM_BASE
+            }
+        } else {
+            0
+        };
+        Some(addr + bias)
     });
 
     eprintln!("machina: riscv64-ref, {} MiB RAM", cli.ram_mib,);
@@ -500,6 +600,14 @@ fn main() {
     }
 
     if cli.difftest {
+        if cli.bios_builtin {
+            eprintln!(
+                "machina: --difftest is incompatible \
+                 with -bios builtin"
+            );
+            machina_hw_core::chardev::restore_terminal();
+            process::exit(1);
+        }
         difftest::run_difftest(&opts, cli.ram_mib);
         return;
     }

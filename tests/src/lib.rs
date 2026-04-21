@@ -3,6 +3,8 @@ mod accel_timer;
 #[cfg(test)]
 mod backend;
 #[cfg(test)]
+mod cli_netdev;
+#[cfg(test)]
 mod core;
 #[cfg(test)]
 mod core_address;
@@ -65,4 +67,8 @@ mod system_cpu_manager;
 #[cfg(test)]
 mod tools;
 #[cfg(test)]
+mod trace;
+#[cfg(test)]
 mod virtio;
+#[cfg(test)]
+mod virtio_net;
