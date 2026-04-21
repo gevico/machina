@@ -264,6 +264,7 @@ pub fn boot_ref_machine(
     };
 
     // Load kernel.
+    let mut kernel_high = RAM_BASE;
     let kernel_entry = if let Some(ref kp) = machine.kernel_path {
         let data = std::fs::read(kp)?;
         let as_ = machine.address_space();
@@ -272,7 +273,15 @@ pub fn boot_ref_machine(
         } else {
             RAM_BASE
         };
-        Some(load_image(&data, load_addr, as_)?.unwrap_or(load_addr))
+        if is_elf(&data) {
+            let info = loader::load_elf(&data, load_addr, as_)?;
+            kernel_high = info.high_addr;
+            Some(info.entry.0)
+        } else {
+            let info = loader::load_binary(&data, GPA::new(load_addr), as_)?;
+            kernel_high = info.high_addr;
+            Some(load_addr)
+        }
     } else {
         None
     };
@@ -280,7 +289,9 @@ pub fn boot_ref_machine(
     // Load initrd (if provided) after the kernel.
     let initrd_range = if let Some(ref ip) = machine.initrd_path {
         let data = std::fs::read(ip)?;
-        let start = RAM_BASE + KERNEL_OFFSET + 0x200_0000;
+        let min_start = RAM_BASE + KERNEL_OFFSET + 0x200_0000;
+        let after_kernel = (kernel_high + 0xFFF) & !0xFFF;
+        let start = min_start.max(after_kernel);
         let end = start + data.len() as u64;
         let fdt_reserve = 128 * 1024;
         let ram_end = RAM_BASE + machine.ram_size();

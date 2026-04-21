@@ -452,10 +452,11 @@ impl VirtioNet {
         let stop = Arc::clone(&self.stop_flag);
         let backend = Arc::clone(&self.backend);
 
+        let weak_mmio = Arc::downgrade(&mmio_state);
         let handle = std::thread::Builder::new()
             .name("virtio-net-rx".into())
             .spawn(move || {
-                rx_worker_loop(&stop, &*backend, &mmio_state);
+                rx_worker_loop(&stop, &*backend, weak_mmio);
             })
             .expect("failed to spawn rx thread");
 
@@ -476,7 +477,7 @@ impl VirtioNet {
 fn rx_worker_loop(
     stop: &AtomicBool,
     backend: &dyn NetBackend,
-    mmio_state: &Arc<Mutex<VirtioMmioState>>,
+    mmio_weak: Weak<Mutex<VirtioMmioState>>,
 ) {
     let mut buf = vec![0u8; 65535];
 
@@ -505,14 +506,19 @@ fn rx_worker_loop(
         };
         let packet = &buf[..n];
 
+        // Upgrade weak ref; if MMIO was dropped, exit.
+        let mmio_arc = match mmio_weak.upgrade() {
+            Some(a) => a,
+            None => break,
+        };
         // Retry the lock briefly so transient MMIO
         // contention does not drop the frame.
         let mut state = loop {
-            match mmio_state.try_lock() {
+            match mmio_arc.try_lock() {
                 Ok(s) => break s,
                 Err(_) => {
                     if stop.load(Ordering::SeqCst) {
-                        break match mmio_state.try_lock() {
+                        break match mmio_arc.try_lock() {
                             Ok(s) => s,
                             Err(_) => continue 'outer,
                         };

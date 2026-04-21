@@ -577,7 +577,17 @@ fn main() {
         let data = std::fs::read(p).ok()?;
         let addr = machina_hw_core::loader::elf_find_symbol(&data, "tohost")?;
         let bias = if machina_hw_core::loader::elf_is_dyn(&data) {
-            machina_hw_riscv::ref_machine::RAM_BASE
+            use machina_hw_riscv::boot::KERNEL_OFFSET;
+            let bios_none = cli
+                .bios
+                .as_ref()
+                .is_some_and(|p| p.to_str() == Some("none"));
+            let has_fw = !cli.bios_builtin && !bios_none;
+            if has_fw {
+                machina_hw_riscv::ref_machine::RAM_BASE + KERNEL_OFFSET
+            } else {
+                machina_hw_riscv::ref_machine::RAM_BASE
+            }
         } else {
             0
         };
