@@ -350,10 +350,12 @@ pub fn boot_builtin(
         if is_elf(&data) {
             let info = loader::load_elf(&data, RAM_BASE, as_)
                 .map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
-            // Some linker scripts omit ENTRY(), leaving ELF
-            // entry at 0.  Fall back to well-known symbols
-            // or RAM_BASE.
-            let entry = if info.entry.0 != 0 {
+            // Some linker scripts omit ENTRY(), leaving
+            // the raw ELF e_entry at 0. For ET_DYN the
+            // returned entry is already biased, so check
+            // the pre-bias value.
+            let raw_entry = info.entry.0 - info.bias.unwrap_or(0);
+            let entry = if raw_entry != 0 {
                 info.entry.0
             } else {
                 loader::elf_find_symbol(&data, "_start")

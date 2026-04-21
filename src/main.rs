@@ -420,14 +420,26 @@ fn run_machine_cycle(
         }
     }
 
+    // Shared shutdown reason slot (used by both SBI
+    // and SiFive Test).
+    let shutdown_reason: Arc<std::sync::Mutex<Option<ShutdownReason>>> =
+        Arc::new(std::sync::Mutex::new(None));
+
     // Wire builtin SBI backend (-bios builtin).
     if opts.bios_builtin {
         let uart = machine.uart().clone();
         let aclint = machine.aclint().clone();
         let sbi_stop = Arc::clone(&stop_flag);
         let sbi_wk = machine.wfi_waker();
+        let sbi_reason = Arc::clone(&shutdown_reason);
         let shutdown_cb: Arc<dyn Fn(u32) + Send + Sync> =
-            Arc::new(move |_reset_type| {
+            Arc::new(move |reset_type| {
+                let reason = if reset_type == 1 {
+                    ShutdownReason::Reset
+                } else {
+                    ShutdownReason::Pass
+                };
+                *sbi_reason.lock().unwrap() = Some(reason);
                 sbi_stop.store(false, Ordering::SeqCst);
                 sbi_wk.stop();
             });
@@ -439,8 +451,6 @@ fn run_machine_cycle(
     }
 
     // Wire SiFive Test to execution control.
-    let shutdown_reason: Arc<std::sync::Mutex<Option<ShutdownReason>>> =
-        Arc::new(std::sync::Mutex::new(None));
     {
         let reason_slot = Arc::clone(&shutdown_reason);
         let flag = Arc::clone(&stop_flag);
