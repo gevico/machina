@@ -18,6 +18,14 @@ pub trait VirtioDevice: Send {
     fn config_read(&self, offset: u64, size: u32) -> u64;
     fn config_write(&mut self, _offset: u64, _size: u32, _val: u64) {}
     fn reset(&mut self) {}
+    /// Called after the MMIO transport is fully constructed.
+    /// Devices that need the shared transport state (e.g.
+    /// for background I/O threads) implement this.
+    fn start_io(
+        &mut self,
+        _mmio: std::sync::Arc<std::sync::Mutex<crate::mmio::VirtioMmioState>>,
+    ) {
+    }
     /// Process pending requests in the given queue.
     ///
     /// # Safety

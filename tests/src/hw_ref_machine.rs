@@ -574,3 +574,39 @@ fn test_sifive_test_pass_triggers_shutdown() {
         "device must be triggered after PASS write"
     );
 }
+
+// ── VirtIO net integration (AC-4) ────────────────────
+
+#[test]
+fn test_ref_machine_no_net_device_without_netdev() {
+    let mut m = RefMachine::new();
+    m.init(&default_opts()).expect("init failed");
+    let as_ = m.address_space();
+    // 0x10002000 should be unmapped (no net device).
+    assert!(
+        !as_.is_mapped(GPA::new(0x1000_2000), 4),
+        "net MMIO region should not be mapped \
+         without -netdev"
+    );
+}
+
+#[test]
+fn test_ref_machine_blk_device_unaffected() {
+    let dir = tempfile::tempdir().unwrap();
+    let disk = dir.path().join("disk.raw");
+    {
+        let mut f = fs::File::create(&disk).unwrap();
+        f.write_all(&[0u8; 512]).unwrap();
+    }
+    let mut m = RefMachine::new();
+    let opts = MachineOpts {
+        drive: Some(disk),
+        ..default_opts()
+    };
+    m.init(&opts).expect("init failed");
+    let as_ = m.address_space();
+    // Block device at 0x10001000 should still work.
+    assert!(as_.is_mapped(GPA::new(0x1000_1000), 4),);
+    let magic = as_.read(GPA::new(0x1000_1000), 4);
+    assert_eq!(magic, 0x74726976); // "virt"
+}

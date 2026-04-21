@@ -116,6 +116,10 @@ impl VirtioMmioState {
         (self.ram_ptr, self.ram_base, self.ram_size)
     }
 
+    pub fn negotiated_features(&self) -> u64 {
+        self.driver_features
+    }
+
     fn process_notify(&mut self) {
         let sel = self.queue_sel as usize;
         if sel >= self.queues.len() {
@@ -175,23 +179,29 @@ impl VirtioMmio {
                  must succeed at creation",
         );
         let nq = device.num_queues().max(1);
+        let mmio_state = Arc::new(Mutex::new(VirtioMmioState {
+            device,
+            irq,
+            status: 0,
+            device_features_sel: 0,
+            driver_features_sel: 0,
+            driver_features: 0,
+            queue_sel: 0,
+            queues: (0..nq).map(|_| VirtQueue::new()).collect(),
+            interrupt_status: 0,
+            guest_page_size: 0,
+            ram_ptr,
+            ram_base,
+            ram_size,
+        }));
+        mmio_state
+            .lock()
+            .unwrap()
+            .device
+            .start_io(Arc::clone(&mmio_state));
         Self {
             device: state,
-            state: Arc::new(Mutex::new(VirtioMmioState {
-                device,
-                irq,
-                status: 0,
-                device_features_sel: 0,
-                driver_features_sel: 0,
-                driver_features: 0,
-                queue_sel: 0,
-                queues: (0..nq).map(|_| VirtQueue::new()).collect(),
-                interrupt_status: 0,
-                guest_page_size: 0,
-                ram_ptr,
-                ram_base,
-                ram_size,
-            })),
+            state: mmio_state,
         }
     }
 

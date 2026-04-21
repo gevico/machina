@@ -241,6 +241,7 @@ pub struct VirtioNet {
     pub acked_features: u64,
     stop_flag: Arc<AtomicBool>,
     rx_handle: Option<std::thread::JoinHandle<()>>,
+    mmio_state: Option<Arc<Mutex<VirtioMmioState>>>,
 }
 
 impl VirtioNet {
@@ -255,6 +256,7 @@ impl VirtioNet {
             acked_features: 0,
             stop_flag: Arc::new(AtomicBool::new(false)),
             rx_handle: None,
+            mmio_state: None,
         }
     }
 
@@ -304,18 +306,17 @@ impl VirtioDevice for VirtioNet {
     }
 
     fn reset(&mut self) {
-        // Stop any running RX worker.
-        let was_running = self.rx_handle.is_some();
+        let mmio = self.mmio_state.take();
         self.stop_rx_worker();
-
         self.acked_features = 0;
-
-        // Restart the RX worker if it was running.
-        // The caller must call start_rx_worker() again
-        // with the mmio_state to re-attach.
-        if was_running {
-            self.stop_flag = Arc::new(AtomicBool::new(false));
+        self.stop_flag = Arc::new(AtomicBool::new(false));
+        if let Some(ms) = mmio {
+            self.start_rx_worker(ms);
         }
+    }
+
+    fn start_io(&mut self, mmio: Arc<Mutex<VirtioMmioState>>) {
+        self.start_rx_worker(mmio);
     }
 
     /// Process a virtqueue notification.
@@ -434,8 +435,8 @@ impl VirtioNet {
     /// Spawn the RX worker thread that polls the backend
     /// fd and injects received packets into the RX queue.
     pub fn start_rx_worker(&mut self, mmio_state: Arc<Mutex<VirtioMmioState>>) {
-        // Stop any previous worker first.
         self.stop_rx_worker();
+        self.mmio_state = Some(Arc::clone(&mmio_state));
 
         self.stop_flag.store(false, Ordering::SeqCst);
         let stop = Arc::clone(&self.stop_flag);
@@ -446,7 +447,7 @@ impl VirtioNet {
             .spawn(move || {
                 rx_worker_loop(&stop, &*backend, &mmio_state);
             })
-            .expect("failed to spawn virtio-net-rx thread");
+            .expect("failed to spawn rx thread");
 
         self.rx_handle = Some(handle);
     }
@@ -497,11 +498,16 @@ fn rx_worker_loop(
         // Lock briefly to inject the packet.
         let mut state = mmio_state.lock().unwrap();
         let (ram, ram_base, ram_size) = state.ram_info();
+        let feats = state.negotiated_features();
+        let hdr_size = if feats & VIRTIO_NET_F_MRG_RXBUF != 0 {
+            VIRTIO_NET_HDR_SIZE_MRG
+        } else {
+            VIRTIO_NET_HDR_SIZE_BASE
+        };
         let queue = match state.queue_mut(0) {
             Some(q) if q.ready && q.num > 0 => q,
             _ => continue,
         };
-        let hdr_size = VIRTIO_NET_HDR_SIZE_BASE;
         let total_len = hdr_size + packet.len();
         let used = unsafe {
             fill_rx_queue_raw(

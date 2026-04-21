@@ -204,3 +204,15 @@ fn test_multiqueue_blk_still_one_queue() {
     dev.write(0x030, 4, 1);
     assert_eq!(dev.read(0x034, 4), 0); // only 1 queue
 }
+
+#[test]
+fn test_multiqueue_notify_queue1_with_driver_ok() {
+    let (dev, _) = make_net_device();
+    // Set STATUS = DRIVER_OK (0x0f).
+    dev.write(0x070, 4, 0x0f);
+    // QUEUE_NOTIFY for queue 1 (TX) should dispatch
+    // to handle_queue(1, ...) without crashing, even
+    // with no descriptors set up. No IRQ asserted
+    // because TX queue has no pending work.
+    dev.write(0x050, 4, 1);
+}

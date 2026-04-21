@@ -133,3 +133,93 @@ fn test_net_reset_clears_features() {
     net.reset();
     assert_eq!(net.acked_features, 0);
 }
+
+// ── TX path (via MMIO transport) ─────────────────────
+
+use std::sync::atomic::{AtomicBool, Ordering};
+
+use machina_hw_core::irq::{IrqLine, IrqSink};
+use machina_hw_virtio::mmio::VirtioMmio;
+use machina_memory::region::MmioOps;
+
+struct DummySink {
+    level: AtomicBool,
+}
+
+impl IrqSink for DummySink {
+    fn set_irq(&self, _irq: u32, level: bool) {
+        self.level.store(level, Ordering::SeqCst);
+    }
+}
+
+fn make_net_mmio() -> (VirtioMmio, Arc<DummySink>) {
+    let pipe = PipeBackend::new().unwrap();
+    let net = VirtioNet::new_default(Arc::new(pipe));
+    let sink = Arc::new(DummySink {
+        level: AtomicBool::new(false),
+    });
+    let irq = IrqLine::new(sink.clone() as Arc<dyn IrqSink>, 1);
+    let mmio = VirtioMmio::new(
+        Box::new(net),
+        irq,
+        std::ptr::null_mut(),
+        0x8000_0000,
+        128 * 1024 * 1024,
+    );
+    (mmio, sink)
+}
+
+#[test]
+fn test_net_queue0_notify_is_noop() {
+    let (dev, sink) = make_net_mmio();
+    dev.write(0x070, 4, 0x0f); // DRIVER_OK
+    dev.write(0x050, 4, 0); // QUEUE_NOTIFY queue 0 (RX)
+    assert!(!sink.level.load(Ordering::SeqCst));
+}
+
+#[test]
+fn test_net_rx_worker_starts_on_create() {
+    let pipe = PipeBackend::new().unwrap();
+    let net = VirtioNet::new_default(Arc::new(pipe));
+    let sink = Arc::new(DummySink {
+        level: AtomicBool::new(false),
+    });
+    let irq = IrqLine::new(sink.clone() as Arc<dyn IrqSink>, 1);
+    let mmio = VirtioMmio::new(
+        Box::new(net),
+        irq,
+        std::ptr::null_mut(),
+        0x8000_0000,
+        128 * 1024 * 1024,
+    );
+    // The RX worker should be running. Dropping
+    // the VirtioMmio should join the worker thread
+    // without hanging.
+    std::thread::sleep(std::time::Duration::from_millis(50));
+    drop(mmio);
+}
+
+#[test]
+fn test_net_drop_joins_rx_thread() {
+    let pipe = PipeBackend::new().unwrap();
+    let net = VirtioNet::new_default(Arc::new(pipe));
+    let sink = Arc::new(DummySink {
+        level: AtomicBool::new(false),
+    });
+    let irq = IrqLine::new(sink.clone() as Arc<dyn IrqSink>, 1);
+    let mmio = VirtioMmio::new(
+        Box::new(net),
+        irq,
+        std::ptr::null_mut(),
+        0x8000_0000,
+        128 * 1024 * 1024,
+    );
+    let start = std::time::Instant::now();
+    drop(mmio);
+    let elapsed = start.elapsed();
+    assert!(
+        elapsed < std::time::Duration::from_millis(500),
+        "drop took too long: {:?}",
+        elapsed
+    );
+}
