@@ -484,7 +484,7 @@ fn rx_worker_loop(
 ) {
     let mut buf = vec![0u8; 65535];
 
-    while !stop.load(Ordering::SeqCst) {
+    'outer: while !stop.load(Ordering::SeqCst) {
         // Poll the backend fd with a 100ms timeout so
         // we can check the stop flag frequently.
         let mut pfd = libc::pollfd {
@@ -509,11 +509,21 @@ fn rx_worker_loop(
         };
         let packet = &buf[..n];
 
-        // Non-blocking lock: if the transport is
-        // resetting, drop the packet and retry.
-        let mut state = match mmio_state.try_lock() {
-            Ok(s) => s,
-            Err(_) => continue,
+        // Retry the lock briefly so transient MMIO
+        // contention does not drop the frame.
+        let mut state = loop {
+            match mmio_state.try_lock() {
+                Ok(s) => break s,
+                Err(_) => {
+                    if stop.load(Ordering::SeqCst) {
+                        break match mmio_state.try_lock() {
+                            Ok(s) => s,
+                            Err(_) => continue 'outer,
+                        };
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(1));
+                }
+            }
         };
         if !state.is_driver_ok() {
             continue;

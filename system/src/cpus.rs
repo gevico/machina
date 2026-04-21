@@ -743,7 +743,10 @@ impl GuestCpu for FullSystemCpu {
     }
 
     fn has_pending_irq(&self) -> bool {
-        let dev_mip = self.shared_mip.load(Ordering::Relaxed);
+        let mut dev_mip = self.shared_mip.load(Ordering::Relaxed);
+        if self.builtin_mode && dev_mip & (1 << 7) != 0 {
+            dev_mip = (dev_mip & !(1u64 << 7)) | (1u64 << 5);
+        }
         ((self.cpu.csr.mip | dev_mip) & self.cpu.csr.mie) != 0
     }
 
