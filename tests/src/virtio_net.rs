@@ -443,3 +443,215 @@ fn test_net_tx_strips_header_and_sends() {
         libc::munmap(ram as *mut libc::c_void, RAM_SIZE);
     }
 }
+
+// ── AC-2: descriptor-backed RX test ──────────────────
+
+fn setup_rx_queue(
+    ram: *mut u8,
+    desc_off: u64,
+    avail_off: u64,
+    used_off: u64,
+    buf_off: u64,
+    buf_len: u32,
+) {
+    // One writable descriptor pointing to receive buffer.
+    let dp = unsafe { ram.add(desc_off as usize) };
+    unsafe {
+        (dp as *mut u64).write_unaligned(RAM_BASE + buf_off);
+        (dp.add(8) as *mut u32).write_unaligned(buf_len);
+        // WRITE flag
+        (dp.add(12) as *mut u16).write_unaligned(0x0002);
+        (dp.add(14) as *mut u16).write_unaligned(0);
+    }
+
+    // Avail ring: flags=0, idx=1, ring[0]=0.
+    let ap = unsafe { ram.add(avail_off as usize) };
+    unsafe {
+        (ap as *mut u16).write_unaligned(0);
+        (ap.add(2) as *mut u16).write_unaligned(1);
+        (ap.add(4) as *mut u16).write_unaligned(0);
+    }
+
+    // Used ring: flags=0, idx=0.
+    let up = unsafe { ram.add(used_off as usize) };
+    unsafe {
+        (up as *mut u16).write_unaligned(0);
+        (up.add(2) as *mut u16).write_unaligned(0);
+    }
+}
+
+fn read_used_idx(ram: *mut u8, used_off: u64) -> u16 {
+    unsafe { (ram.add((used_off + 2) as usize) as *const u16).read_unaligned() }
+}
+
+fn read_used_len(ram: *mut u8, used_off: u64, idx: u16) -> u32 {
+    let entry_off = used_off + 4 + (idx as u64) * 8 + 4;
+    unsafe { (ram.add(entry_off as usize) as *const u32).read_unaligned() }
+}
+
+#[test]
+fn test_net_rx_descriptor_payload() {
+    let ram = alloc_guest_ram(RAM_SIZE);
+    let pipe = PipeBackend::new().unwrap();
+    let backend = Arc::new(pipe);
+    let nb: Arc<dyn NetBackend> = Arc::clone(&backend) as _;
+    let net = VirtioNet::new_default(nb);
+    let sink = Arc::new(DummySink {
+        level: AtomicBool::new(false),
+    });
+    let irq = IrqLine::new(sink.clone() as Arc<dyn IrqSink>, 1);
+    let dev =
+        VirtioMmio::new(Box::new(net), irq, ram, RAM_BASE, RAM_SIZE as u64);
+
+    let desc_off: u64 = 0x10000;
+    let avail_off: u64 = 0x11000;
+    let used_off: u64 = 0x12000;
+    let buf_off: u64 = 0x13000;
+    let buf_len: u32 = 4096;
+
+    setup_rx_queue(ram, desc_off, avail_off, used_off, buf_off, buf_len);
+
+    // Configure RX queue (queue 0).
+    dev.write(0x030, 4, 0); // QUEUE_SEL = 0
+    dev.write(0x038, 4, 16); // QUEUE_NUM = 16
+    dev.write(0x080, 4, (RAM_BASE + desc_off) & 0xFFFF_FFFF);
+    dev.write(0x084, 4, (RAM_BASE + desc_off) >> 32);
+    dev.write(0x090, 4, (RAM_BASE + avail_off) & 0xFFFF_FFFF);
+    dev.write(0x094, 4, (RAM_BASE + avail_off) >> 32);
+    dev.write(0x0a0, 4, (RAM_BASE + used_off) & 0xFFFF_FFFF);
+    dev.write(0x0a4, 4, (RAM_BASE + used_off) >> 32);
+    dev.write(0x044, 4, 1); // QUEUE_READY
+    dev.write(0x070, 4, 0x0f); // DRIVER_OK
+
+    let payload = b"RX_TEST_PAYLOAD";
+    backend.inject_packet(payload).unwrap();
+
+    // Wait for the RX worker to consume the packet.
+    let mut used = 0u16;
+    for _ in 0..50 {
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        used = read_used_idx(ram, used_off);
+        if used > 0 {
+            break;
+        }
+    }
+    assert!(used > 0, "RX worker did not consume packet");
+
+    // Verify used length = header + payload.
+    let hdr = VIRTIO_NET_HDR_SIZE_BASE;
+    let used_len = read_used_len(ram, used_off, 0) as usize;
+    assert_eq!(used_len, hdr + payload.len(), "used length mismatch");
+
+    // Verify guest memory: header zeros then payload.
+    let buf_ptr = unsafe { ram.add(buf_off as usize) };
+    let header_bytes = unsafe { std::slice::from_raw_parts(buf_ptr, hdr) };
+    assert!(
+        header_bytes.iter().all(|&b| b == 0),
+        "vnet header should be zeros"
+    );
+    let payload_bytes =
+        unsafe { std::slice::from_raw_parts(buf_ptr.add(hdr), payload.len()) };
+    assert_eq!(payload_bytes, payload, "payload mismatch in guest RAM");
+
+    drop(dev);
+    unsafe {
+        libc::munmap(ram as *mut libc::c_void, RAM_SIZE);
+    }
+}
+
+// ── AC-3: restart-after-reset ────────────────────────
+
+#[test]
+fn test_net_restart_after_reset_consumes_packet() {
+    let ram = alloc_guest_ram(RAM_SIZE);
+    let pipe = PipeBackend::new().unwrap();
+    let backend = Arc::new(pipe);
+    let nb: Arc<dyn NetBackend> = Arc::clone(&backend) as _;
+    let net = VirtioNet::new_default(nb);
+    let sink = Arc::new(DummySink {
+        level: AtomicBool::new(false),
+    });
+    let irq = IrqLine::new(sink.clone() as Arc<dyn IrqSink>, 1);
+    let dev =
+        VirtioMmio::new(Box::new(net), irq, ram, RAM_BASE, RAM_SIZE as u64);
+
+    let desc_off: u64 = 0x20000;
+    let avail_off: u64 = 0x21000;
+    let used_off: u64 = 0x22000;
+    let buf_off: u64 = 0x23000;
+
+    // First packet before reset.
+    setup_rx_queue(ram, desc_off, avail_off, used_off, buf_off, 4096);
+    dev.write(0x030, 4, 0);
+    dev.write(0x038, 4, 16);
+    dev.write(0x080, 4, (RAM_BASE + desc_off) & 0xFFFF_FFFF);
+    dev.write(0x084, 4, (RAM_BASE + desc_off) >> 32);
+    dev.write(0x090, 4, (RAM_BASE + avail_off) & 0xFFFF_FFFF);
+    dev.write(0x094, 4, (RAM_BASE + avail_off) >> 32);
+    dev.write(0x0a0, 4, (RAM_BASE + used_off) & 0xFFFF_FFFF);
+    dev.write(0x0a4, 4, (RAM_BASE + used_off) >> 32);
+    dev.write(0x044, 4, 1);
+    dev.write(0x070, 4, 0x0f);
+
+    backend.inject_packet(b"pkt1").unwrap();
+    for _ in 0..50 {
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        if read_used_idx(ram, used_off) > 0 {
+            break;
+        }
+    }
+    assert!(
+        read_used_idx(ram, used_off) > 0,
+        "first packet not consumed"
+    );
+
+    // Reset device.
+    dev.write(0x070, 4, 0);
+    std::thread::sleep(std::time::Duration::from_millis(50));
+
+    // Re-setup RX queue after reset (uses new offsets
+    // to avoid stale data).
+    let desc2: u64 = 0x30000;
+    let avail2: u64 = 0x31000;
+    let used2: u64 = 0x32000;
+    let buf2: u64 = 0x33000;
+    setup_rx_queue(ram, desc2, avail2, used2, buf2, 4096);
+    dev.write(0x030, 4, 0);
+    dev.write(0x038, 4, 16);
+    dev.write(0x080, 4, (RAM_BASE + desc2) & 0xFFFF_FFFF);
+    dev.write(0x084, 4, (RAM_BASE + desc2) >> 32);
+    dev.write(0x090, 4, (RAM_BASE + avail2) & 0xFFFF_FFFF);
+    dev.write(0x094, 4, (RAM_BASE + avail2) >> 32);
+    dev.write(0x0a0, 4, (RAM_BASE + used2) & 0xFFFF_FFFF);
+    dev.write(0x0a4, 4, (RAM_BASE + used2) >> 32);
+    dev.write(0x044, 4, 1);
+    dev.write(0x070, 4, 0x0f);
+
+    // Second packet after reset.
+    backend.inject_packet(b"pkt2").unwrap();
+    let mut consumed = false;
+    for _ in 0..50 {
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        if read_used_idx(ram, used2) > 0 {
+            consumed = true;
+            break;
+        }
+    }
+    assert!(
+        consumed,
+        "restarted worker did not consume \
+         post-reset packet"
+    );
+
+    // Verify payload landed in second buffer.
+    let hdr = VIRTIO_NET_HDR_SIZE_BASE;
+    let p = unsafe {
+        std::slice::from_raw_parts(ram.add((buf2 + hdr as u64) as usize), 4)
+    };
+    assert_eq!(p, b"pkt2");
+
+    drop(dev);
+    unsafe {
+        libc::munmap(ram as *mut libc::c_void, RAM_SIZE);
+    }
+}

@@ -3,8 +3,15 @@ use std::io::Read;
 use machina_util::trace;
 
 #[test]
-fn test_trace_disabled_by_default() {
-    assert!(!trace::trace_enabled());
+fn test_trace_no_output_without_thread_init() {
+    // Without calling init_trace on THIS thread,
+    // trace calls should produce no output even if
+    // the global ENABLED flag is set by another test.
+    let dir = tempfile::tempdir().unwrap();
+    let check = dir.path().join("no_output.log");
+    // Do NOT call init_trace here.
+    trace::trace_csr("test", 0);
+    assert!(!check.exists());
 }
 
 #[test]
