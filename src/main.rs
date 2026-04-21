@@ -126,7 +126,9 @@ fn parse_args() -> Result<CliArgs, String> {
                 let arg = args.get(i).ok_or("-bios requires argument")?.clone();
                 if arg == "builtin" {
                     cli.bios_builtin = true;
+                    cli.bios = None;
                 } else {
+                    cli.bios_builtin = false;
                     cli.bios = Some(arg.into());
                 }
             }

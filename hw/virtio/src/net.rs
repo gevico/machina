@@ -651,13 +651,13 @@ unsafe fn fill_rx_queue_raw(
         remaining = &remaining[copy_len..];
     }
 
-    // If the frame didn't fit, drop the packet rather
-    // than completing a truncated frame.
-    if !remaining.is_empty() {
-        return 0;
-    }
-
-    let written = total_len as u32;
+    // If the frame didn't fit, skip the descriptor with
+    // a zero-length used entry so the queue doesn't wedge.
+    let written = if !remaining.is_empty() {
+        0u32
+    } else {
+        total_len as u32
+    };
     unsafe {
         queue.write_used(
             used_idx,

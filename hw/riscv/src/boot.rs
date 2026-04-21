@@ -384,14 +384,17 @@ pub fn boot_builtin(
         let after_kernel = (kernel_end + 0xFFF) & !0xFFF;
         let initrd_start = min_start.max(after_kernel);
         let initrd_end = initrd_start + data.len() as u64;
+        // Reserve 128 KiB at top of RAM for FDT + margin.
+        let fdt_reserve = 128 * 1024;
         let ram_end = RAM_BASE + machine.ram_size();
-        if initrd_end > ram_end {
+        let usable_end = ram_end.saturating_sub(fdt_reserve);
+        if initrd_end > usable_end {
             return Err(format!(
-                "initrd ({} bytes) exceeds RAM \
-                 (end {:#x} > {:#x})",
+                "initrd ({} bytes) exceeds usable \
+                 RAM (end {:#x} > {:#x}, FDT reserved)",
                 data.len(),
                 initrd_end,
-                ram_end
+                usable_end
             )
             .into());
         }
