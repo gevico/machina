@@ -7,6 +7,10 @@ use machina_gdbstub::handler::{GdbHandler, GdbTarget, StopReason};
 use machina_gdbstub::protocol;
 use machina_system::gdb::{GdbRunState, GdbState};
 
+fn tcp_bind_available() -> bool {
+    std::net::TcpListener::bind("127.0.0.1:0").is_ok()
+}
+
 // ── Protocol tests ──────────────────────────────────
 
 #[test]
@@ -777,6 +781,10 @@ fn u8hex_to_u64(hex: &str) -> u64 {
 
 #[test]
 fn test_serve_integration_full_path() {
+    if !tcp_bind_available() {
+        eprintln!("skipping: TCP bind not permitted");
+        return;
+    }
     // Allocate RAM for memory tests.
     let ram_size: u64 = 1024 * 1024; // 1 MiB
     let mut ram = vec![0u8; ram_size as usize];
@@ -983,6 +991,10 @@ fn wait_process(child: &mut Child, timeout: Duration) {
 /// (stop replies).
 #[test]
 fn test_gdb_production_integration() {
+    if !tcp_bind_available() {
+        eprintln!("skipping: TCP bind not permitted");
+        return;
+    }
     ensure_machina_built();
 
     // Allocate a random port for GDB.
