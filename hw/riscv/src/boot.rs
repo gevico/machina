@@ -12,6 +12,7 @@ use machina_core::address::GPA;
 use machina_core::machine::Machine;
 use machina_guest_riscv::riscv::csr::PrivLevel;
 use machina_hw_core::loader;
+use machina_memory::AddressSpace;
 
 use crate::ref_machine::{RefMachine, MROM_BASE, RAM_BASE};
 
@@ -77,6 +78,40 @@ enum BiosSource {
 
 fn is_elf(data: &[u8]) -> bool {
     data.len() >= 4 && data[0..4] == [0x7f, b'E', b'L', b'F']
+}
+
+/// Load an image (ELF or raw binary) into the address
+/// space.  Returns `Some(entry)` for ELF, `None` for raw.
+fn load_image(
+    data: &[u8],
+    base: u64,
+    as_: &AddressSpace,
+) -> Result<Option<u64>, Box<dyn std::error::Error>> {
+    if is_elf(data) {
+        let info = loader::load_elf(data, base, as_)?;
+        Ok(Some(info.entry.0))
+    } else {
+        loader::load_binary(data, GPA::new(base), as_)?;
+        Ok(None)
+    }
+}
+
+/// Place FDT near the top of RAM, aligned to 8 bytes,
+/// with a 64 KB margin for OpenSBI scratch/workspace.
+fn place_fdt(
+    fdt: &[u8],
+    ram_size: u64,
+    as_: &AddressSpace,
+) -> Result<u64, Box<dyn std::error::Error>> {
+    let fdt_len = fdt.len() as u64;
+    if fdt_len > ram_size {
+        return Err("FDT blob larger than available RAM".into());
+    }
+    let margin = 0x10000u64;
+    let offset = (ram_size - margin - fdt_len) & !0x7;
+    let addr = RAM_BASE + offset;
+    loader::load_binary(fdt, GPA::new(addr), as_)?;
+    Ok(addr)
 }
 
 /// Search for firmware in standard data directories,
@@ -202,39 +237,21 @@ pub fn boot_ref_machine(
     let has_firmware = !matches!(bios_source, BiosSource::None);
 
     // Load firmware.
-    let mut fw_entry: Option<u64> = None;
-    match bios_source {
+    let fw_entry = match bios_source {
         BiosSource::File(path) => {
             let data = std::fs::read(path)?;
             let as_ = machine.address_space();
-            if is_elf(&data) {
-                let info = loader::load_elf(&data, RAM_BASE, as_)
-                    .map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
-                fw_entry = Some(info.entry.0);
-            } else {
-                loader::load_binary(&data, GPA::new(RAM_BASE), as_)
-                    .map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
-            }
+            load_image(&data, RAM_BASE, as_)?
         }
         BiosSource::Embedded => {
             if !EMBEDDED_FW.is_empty() {
                 let as_ = machine.address_space();
-                loader::load_binary(EMBEDDED_FW, GPA::new(RAM_BASE), as_)
-                    .map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
+                loader::load_binary(EMBEDDED_FW, GPA::new(RAM_BASE), as_)?;
+                None
             } else if let Some(path) = find_firmware(FW_FILENAME) {
                 let data = std::fs::read(&path)?;
                 let as_ = machine.address_space();
-                if is_elf(&data) {
-                    let info = loader::load_elf(&data, RAM_BASE, as_).map_err(
-                        |e| -> Box<dyn std::error::Error> { e.into() },
-                    )?;
-                    fw_entry = Some(info.entry.0);
-                } else {
-                    loader::load_binary(&data, GPA::new(RAM_BASE), as_)
-                        .map_err(|e| -> Box<dyn std::error::Error> {
-                            e.into()
-                        })?;
-                }
+                load_image(&data, RAM_BASE, as_)?
             } else {
                 return Err("no firmware found; use \
                      -bios <path>, set \
@@ -243,61 +260,43 @@ pub fn boot_ref_machine(
                     .into());
             }
         }
-        BiosSource::None => {}
-    }
+        BiosSource::None => None,
+    };
 
     // Load kernel.
-    let mut kernel_entry: Option<u64> = None;
-    if let Some(ref kernel_path) = machine.kernel_path {
-        let data = std::fs::read(kernel_path)?;
+    let kernel_entry = if let Some(ref kp) = machine.kernel_path {
+        let data = std::fs::read(kp)?;
         let as_ = machine.address_space();
         let load_addr = if has_firmware {
             RAM_BASE + KERNEL_OFFSET
         } else {
             RAM_BASE
         };
-        if is_elf(&data) {
-            let info = loader::load_elf(&data, load_addr, as_)
-                .map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
-            kernel_entry = Some(info.entry.0);
-        } else {
-            loader::load_binary(&data, GPA::new(load_addr), as_)
-                .map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
-            kernel_entry = Some(load_addr);
-        }
-    }
+        Some(load_image(&data, load_addr, as_)?.unwrap_or(load_addr))
+    } else {
+        None
+    };
 
     // Load initrd (if provided) after the kernel.
-    let mut initrd_range: Option<(u64, u64)> = None;
-    if let Some(ref initrd_path) = machine.initrd_path {
-        let data = std::fs::read(initrd_path)?;
-        // Place initrd 32 MiB after kernel start.
-        let initrd_start = RAM_BASE + KERNEL_OFFSET + 0x200_0000;
-        let initrd_end = initrd_start + data.len() as u64;
+    let initrd_range = if let Some(ref ip) = machine.initrd_path {
+        let data = std::fs::read(ip)?;
+        let start = RAM_BASE + KERNEL_OFFSET + 0x200_0000;
+        let end = start + data.len() as u64;
         let as_ = machine.address_space();
-        loader::load_binary(&data, GPA::new(initrd_start), as_)
-            .map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
-        initrd_range = Some((initrd_start, initrd_end));
-    }
+        loader::load_binary(&data, GPA::new(start), as_)?;
+        Some((start, end))
+    } else {
+        None
+    };
 
     // Regenerate FDT with initrd/bootargs info.
     let fdt = machine
         .generate_fdt_with(initrd_range, machine.kernel_cmdline.as_deref());
 
-    // Place FDT at top of RAM, aligned to 8 bytes.
-    let fdt_len = fdt.len() as u64;
+    // Place FDT near top of RAM.
     let ram_size = machine.ram_size();
-    if fdt_len > ram_size {
-        return Err("FDT blob larger than available RAM".into());
-    }
-    // Leave 64 KB margin at top of RAM for OpenSBI
-    // scratch/workspace so it doesn't access beyond RAM.
-    let margin = 0x10000u64; // 64 KB
-    let fdt_offset = (ram_size - margin - fdt_len) & !0x7;
-    let fdt_addr = RAM_BASE + fdt_offset;
     let as_ = machine.address_space();
-    loader::load_binary(&fdt, GPA::new(fdt_addr), as_)
-        .map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
+    let fdt_addr = place_fdt(&fdt, ram_size, as_)?;
 
     // Compute start_addr for reset vector jump target.
     let start_addr = if let Some(entry) = fw_entry {

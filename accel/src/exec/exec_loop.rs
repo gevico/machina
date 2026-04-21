@@ -80,7 +80,7 @@ where
     let jmp_ptr = &mut jmp_env as *mut SigJmpBuf;
     cpu.set_jmp_env(jmp_ptr as u64);
 
-    loop {
+    'dispatch: loop {
         if sigsetjmp(jmp_ptr, 0) != 0 {
             // Helper raised an exception via longjmp.
             next_tb_hint = None;
@@ -113,7 +113,7 @@ where
             // GDB single-step: translate a fresh 1-insn TB,
             // bypassing all caches (QEMU CF_SINGLE_STEP).
             let cf = CF_SINGLE_STEP | 1;
-            match tb_gen_code_cflags(shared, per_cpu, cpu, pc, flags, cf) {
+            match tb_gen_code(shared, per_cpu, cpu, pc, flags, cf) {
                 Some(idx) => idx,
                 None => {
                     if cpu.check_mem_fault() {
@@ -149,7 +149,7 @@ where
             let tb = shared.tb_store.get(idx);
             if cpu.gdb_breakpoint_in_tb(tb.pc, tb.size as u64) {
                 let cf = CF_SINGLE_STEP | 1;
-                match tb_gen_code_cflags(shared, per_cpu, cpu, pc, flags, cf) {
+                match tb_gen_code(shared, per_cpu, cpu, pc, flags, cf) {
                     Some(ss_idx) => ss_idx,
                     None => {
                         if cpu.check_mem_fault() {
@@ -243,56 +243,61 @@ where
             v if v == TB_EXIT_NOCHAIN as usize => {
                 per_cpu.stats.nochain_exit += 1;
                 if cpu.check_mem_fault() {
-                    continue;
+                    continue 'dispatch;
                 }
 
                 let pc = cpu.get_pc();
                 let flags = cpu.get_flags();
 
                 // Check exit_target cache for indirect
-                // jumps (goto_ptr / jalr). The last
-                // TB_EXIT_NOCHAIN target is cached per-TB.
-                let cached = shared
-                    .tb_store
-                    .get(src_tb)
-                    .exit_target
-                    .load(Ordering::Relaxed);
-                if cached != EXIT_TARGET_NONE {
+                // jumps (goto_ptr / jalr).
+                'cached_hit: {
+                    let cached = shared
+                        .tb_store
+                        .get(src_tb)
+                        .exit_target
+                        .load(Ordering::Relaxed);
+                    if cached == EXIT_TARGET_NONE {
+                        break 'cached_hit;
+                    }
                     let tb = shared.tb_store.get(cached);
-                    if !tb.invalid.load(Ordering::Acquire)
+                    let tb_valid = !tb.invalid.load(Ordering::Acquire)
                         && tb.gen.load(Ordering::Acquire)
                             == shared.tb_store.global_gen()
                         && tb.pc == pc
-                        && tb.flags == flags
-                    {
-                        if cpu.pending_interrupt() {
-                            cpu.handle_interrupt();
-                        } else if cpu.has_pending_irq() {
-                            cpu.set_exit_request();
-                        } else {
-                            // GDB breakpoint check:
-                            // exit_target cache bypasses
-                            // the main-loop breakpoint gate.
-                            // Must check here to catch
-                            // breakpoints at TB entry PCs
-                            // (AC-3).
-                            if cpu.gdb_check_breakpoint(pc) {
-                                if cpu.check_monitor_pause() {
-                                    return ExitReason::Halted;
-                                }
-                                continue;
-                            }
-                            next_tb_hint = Some(cached);
-                        }
-                        continue;
+                        && tb.flags == flags;
+                    if !tb_valid {
+                        break 'cached_hit;
                     }
+                    if cpu.pending_interrupt() {
+                        cpu.handle_interrupt();
+                        continue 'dispatch;
+                    }
+                    if cpu.has_pending_irq() {
+                        cpu.set_exit_request();
+                        continue 'dispatch;
+                    }
+                    // GDB breakpoint check:
+                    // exit_target cache bypasses
+                    // the main-loop breakpoint
+                    // gate. Must check here to
+                    // catch breakpoints at TB
+                    // entry PCs (AC-3).
+                    if cpu.gdb_check_breakpoint(pc) {
+                        if cpu.check_monitor_pause() {
+                            return ExitReason::Halted;
+                        }
+                        continue 'dispatch;
+                    }
+                    next_tb_hint = Some(cached);
+                    continue 'dispatch;
                 }
 
                 let dst = match tb_find(shared, per_cpu, cpu, pc, flags) {
                     Some(idx) => idx,
                     None => {
                         if cpu.check_mem_fault() {
-                            continue;
+                            continue 'dispatch;
                         }
                         return ExitReason::BufferFull;
                     }
@@ -366,31 +371,19 @@ where
             v if v == EXCP_WFI as usize => {
                 per_cpu.stats.real_exit += 1;
                 cpu.set_halted(true);
-                if cpu.pending_wfi_wakeup() {
-                    cpu.set_halted(false);
-                    if cpu.pending_interrupt() {
-                        cpu.handle_interrupt();
-                    }
-                } else {
-                    let woken = cpu.wait_for_interrupt();
-                    if !woken {
+                if !cpu.pending_wfi_wakeup() {
+                    if !cpu.wait_for_interrupt() {
                         cpu.set_halted(false);
                         return ExitReason::Halted;
                     }
-                    // Check monitor pause BEFORE clearing
-                    // halted, so snapshot captures WFI state.
                     if cpu.check_monitor_pause() {
                         cpu.set_halted(false);
                         return ExitReason::Halted;
                     }
-                    cpu.set_halted(false);
-                    // Woken by IRQ or timer. Check for
-                    // pending interrupt and handle if any;
-                    // otherwise resume (timer expired,
-                    // guest will re-read mtime).
-                    if cpu.pending_interrupt() {
-                        cpu.handle_interrupt();
-                    }
+                }
+                cpu.set_halted(false);
+                if cpu.pending_interrupt() {
+                    cpu.handle_interrupt();
                 }
             }
             v if v == EXCP_PRIV_CSR as usize => {
@@ -509,21 +502,28 @@ where
 
     // Miss: translate a new TB.
     per_cpu.stats.translate += 1;
-    tb_gen_code(shared, per_cpu, cpu, pc, flags)
+    tb_gen_code(shared, per_cpu, cpu, pc, flags, 0)
 }
 
 /// Translate guest code at `pc` into a new TB.
+///
+/// When `cflags == 0` (normal path), the TB is inserted
+/// into the hash table and jump cache.  When `cflags != 0`
+/// (ephemeral single-step), it is NOT inserted.
 fn tb_gen_code<B, C>(
     shared: &SharedState<B>,
     per_cpu: &mut PerCpuState,
     cpu: &mut C,
     pc: u64,
     flags: u32,
+    cflags: u32,
 ) -> Option<usize>
 where
     B: HostCodeGen,
     C: GuestCpu<IrContext = Context>,
 {
+    let ephemeral = cflags != 0;
+
     if shared.code_buf().remaining() < MIN_CODE_BUF_REMAINING {
         return None;
     }
@@ -533,16 +533,20 @@ where
 
     // Double-check: another thread may have translated this
     // PC while we waited for the lock.
-    if let Some(idx) = shared.tb_store.lookup(pc, flags) {
-        per_cpu.jump_cache.insert(pc, idx);
-        return Some(idx);
+    if !ephemeral {
+        if let Some(idx) = shared.tb_store.lookup(pc, flags) {
+            per_cpu.jump_cache.insert(pc, idx);
+            return Some(idx);
+        }
     }
 
-    // Translation with overflow retry (QEMU tcg_raise_tb_overflow
-    // equivalent).  If the backend emits more code than fits in
-    // the buffer, siglongjmp lands here with rc == -2 and we
-    // retry with halved max_insns.
-    let mut max_insns = TranslationBlock::max_insns(0);
+    // Translation with overflow retry (QEMU
+    // tcg_raise_tb_overflow equivalent).  If the backend
+    // emits more code than fits in the buffer, siglongjmp
+    // lands here with rc == -2 and we retry with halved
+    // max_insns.
+    let orig_max = TranslationBlock::max_insns(cflags);
+    let mut cur_max = orig_max;
     let mut jmp_buf: SigJmpBuf = unsafe { std::mem::zeroed() };
     let jmp_ptr = &mut jmp_buf as *mut SigJmpBuf;
     let saved_offset = shared.code_buf().offset();
@@ -556,10 +560,13 @@ where
                 shared.code_buf_mut().jmp_trans = std::ptr::null_mut();
                 shared.code_buf_mut().set_offset(saved_offset);
             }
-            max_insns = (max_insns / 2).max(1);
-            if max_insns == 1 {
-                // Single-instruction TB still overflows —
-                // treat as BufferFull.
+            cur_max = (cur_max / 2).max(1);
+            let give_up = if ephemeral {
+                cur_max == 1 && orig_max == 1
+            } else {
+                cur_max == 1
+            };
+            if give_up {
                 return None;
             }
             continue;
@@ -568,11 +575,11 @@ where
     }
 
     // SAFETY: we hold translate_lock.
-    let tb_idx = unsafe { shared.tb_store.alloc(pc, flags, 0) }?;
+    let tb_idx = unsafe { shared.tb_store.alloc(pc, flags, cflags) }?;
 
     guard.ir_ctx.reset();
     guard.ir_ctx.tb_idx = tb_idx as u32;
-    let guest_size = cpu.gen_code(&mut guard.ir_ctx, pc, max_insns);
+    let guest_size = cpu.gen_code(&mut guard.ir_ctx, pc, cur_max);
     if guest_size == 0 {
         unsafe {
             let tb = shared.tb_store.get_mut(tb_idx);
@@ -585,9 +592,9 @@ where
         let tb = shared.tb_store.get_mut(tb_idx);
         tb.size = guest_size;
         tb.phys_pc = phys_pc;
-        // Stamp TB with current global generation so that
-        // invalidate_all's O(1) generation bump correctly
-        // identifies stale TBs.
+        // Stamp TB with current global generation so
+        // that invalidate_all's O(1) generation bump
+        // correctly identifies stale TBs.
         tb.gen
             .store(shared.tb_store.global_gen(), Ordering::Release);
     }
@@ -629,111 +636,12 @@ where
         }
     }
 
-    shared.tb_store.insert(tb_idx);
-    per_cpu.jump_cache.insert(pc, tb_idx);
-
-    Some(tb_idx)
-}
-
-/// Translate a single-step TB with explicit cflags.
-/// The TB is allocated but NOT inserted into the hash
-/// table or jump cache (ephemeral, one-shot use).
-fn tb_gen_code_cflags<B, C>(
-    shared: &SharedState<B>,
-    per_cpu: &mut PerCpuState,
-    cpu: &mut C,
-    pc: u64,
-    flags: u32,
-    cflags: u32,
-) -> Option<usize>
-where
-    B: HostCodeGen,
-    C: GuestCpu<IrContext = Context>,
-{
-    if shared.code_buf().remaining() < MIN_CODE_BUF_REMAINING {
-        return None;
+    if ephemeral {
+        per_cpu.stats.translate += 1;
+    } else {
+        shared.tb_store.insert(tb_idx);
+        per_cpu.jump_cache.insert(pc, tb_idx);
     }
-
-    let mut guard = shared.translate_lock.lock().unwrap();
-
-    let max_insns = TranslationBlock::max_insns(cflags);
-
-    let mut jmp_buf: SigJmpBuf = unsafe { std::mem::zeroed() };
-    let jmp_ptr = &mut jmp_buf as *mut SigJmpBuf;
-    let saved_offset = shared.code_buf().offset();
-    let mut cur_max = max_insns;
-
-    loop {
-        let rc = unsafe { sigsetjmp(jmp_ptr, 0) };
-        if rc == -2 {
-            unsafe {
-                shared.code_buf_mut().jmp_trans = std::ptr::null_mut();
-                shared.code_buf_mut().set_offset(saved_offset);
-            }
-            cur_max = (cur_max / 2).max(1);
-            if cur_max == 1 && max_insns == 1 {
-                return None;
-            }
-            continue;
-        }
-        break;
-    }
-
-    let tb_idx = unsafe { shared.tb_store.alloc(pc, flags, cflags) }?;
-
-    guard.ir_ctx.reset();
-    guard.ir_ctx.tb_idx = tb_idx as u32;
-    let guest_size = cpu.gen_code(&mut guard.ir_ctx, pc, cur_max);
-    if guest_size == 0 {
-        unsafe {
-            let tb = shared.tb_store.get_mut(tb_idx);
-            tb.invalid.store(true, Ordering::Release);
-        }
-        return None;
-    }
-    let phys_pc = cpu.last_phys_pc();
-    unsafe {
-        let tb = shared.tb_store.get_mut(tb_idx);
-        tb.size = guest_size;
-        tb.phys_pc = phys_pc;
-        tb.gen
-            .store(shared.tb_store.global_gen(), Ordering::Release);
-    }
-    shared.tb_store.mark_code_page(phys_pc >> 12, tb_idx);
-
-    shared.backend.clear_goto_tb_offsets();
-    unsafe {
-        shared.code_buf_mut().jmp_trans = jmp_ptr as *mut u8;
-    }
-
-    let code_buf_mut = unsafe { shared.code_buf_mut() };
-    let host_offset =
-        translate(&mut guard.ir_ctx, &shared.backend, code_buf_mut);
-
-    unsafe {
-        shared.code_buf_mut().jmp_trans = std::ptr::null_mut();
-    }
-
-    let host_size = shared.code_buf().offset() - host_offset;
-    unsafe {
-        let tb = shared.tb_store.get_mut(tb_idx);
-        tb.host_offset = host_offset;
-        tb.host_size = host_size;
-        tb.contains_atomic = guard.ir_ctx.contains_atomic;
-    }
-
-    let offsets = shared.backend.goto_tb_offsets();
-    unsafe {
-        let tb = shared.tb_store.get_mut(tb_idx);
-        for (i, &(jmp, reset)) in offsets.iter().enumerate().take(2) {
-            tb.set_jmp_insn_offset(i, jmp as u32);
-            tb.set_jmp_reset_offset(i, reset as u32);
-        }
-    }
-
-    // Do NOT insert into hash table or jump cache.
-    // Single-step TBs are ephemeral.
-    per_cpu.stats.translate += 1;
 
     Some(tb_idx)
 }

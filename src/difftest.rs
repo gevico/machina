@@ -509,10 +509,8 @@ fn exec_one_insn<B: HostCodeGen>(
         v if v == EXCP_MRET as usize => {
             cpu.execute_mret();
         }
-        v if v == EXCP_SRET as usize => {
-            if !cpu.execute_sret() {
-                cpu.handle_exception(2, 0);
-            }
+        v if v == EXCP_SRET as usize && !cpu.execute_sret() => {
+            cpu.handle_exception(2, 0);
         }
         v if v == EXCP_SFENCE_VMA as usize => {
             cpu.tlb_flush();
