@@ -11,7 +11,7 @@ use std::sync::Arc;
 use machina_accel::exec::ExecEnv;
 use machina_accel::x86_64::emitter::SoftMmuConfig;
 use machina_accel::X86_64CodeGen;
-use machina_core::machine::{Machine, MachineOpts};
+use machina_core::machine::{Machine, MachineOpts, NetdevOpts};
 use machina_hw_riscv::ref_machine::RefMachine;
 use machina_hw_riscv::sbi::SbiBackend;
 use machina_hw_riscv::sifive_test::ShutdownReason;
@@ -48,6 +48,15 @@ fn usage() {
         "  -gdb dev      GDB server device \
          (e.g. tcp::1234)"
     );
+    eprintln!(
+        "  -netdev tap,id=<id>,ifname=<name>  \
+         TAP network backend"
+    );
+    eprintln!(
+        "  -device virtio-net-device,netdev=<id>\
+         [,mac=XX:XX:XX:XX:XX:XX]"
+    );
+    eprintln!("  --trace file  Trace output file");
     eprintln!("  -h, --help    Show this help");
 }
 
@@ -65,6 +74,9 @@ struct CliArgs {
     gdb: Option<String>,
     start_paused: bool,
     initrd: Option<PathBuf>,
+    netdev_raw: Option<String>,
+    device_net_raw: Option<String>,
+    trace: Option<PathBuf>,
 }
 
 impl Default for CliArgs {
@@ -83,6 +95,9 @@ impl Default for CliArgs {
             gdb: None,
             start_paused: false,
             initrd: None,
+            netdev_raw: None,
+            device_net_raw: None,
+            trace: None,
         }
     }
 }
@@ -152,9 +167,24 @@ fn parse_args() -> Result<CliArgs, String> {
                     return Err("-drive: missing file=<path>".to_string());
                 }
             }
-            "-device" => {
-                // Accept and skip for QEMU compat.
+            "-netdev" => {
                 i += 1;
+                cli.netdev_raw = Some(
+                    args.get(i).ok_or("-netdev requires argument")?.clone(),
+                );
+            }
+            "-device" => {
+                i += 1;
+                let val = args.get(i).ok_or("-device requires argument")?;
+                if val.starts_with("virtio-net-device,") {
+                    cli.device_net_raw = Some(val.clone());
+                }
+                // Other -device values accepted for compat.
+            }
+            "--trace" => {
+                i += 1;
+                let s = args.get(i).ok_or("--trace requires argument")?;
+                cli.trace = Some(PathBuf::from(s));
             }
             "-initrd" => {
                 i += 1;
@@ -197,6 +227,58 @@ fn parse_args() -> Result<CliArgs, String> {
         i += 1;
     }
     Ok(cli)
+}
+
+/// Parse `-netdev` and optional `-device virtio-net-device`
+/// into a `NetdevOpts`.
+fn parse_netdev_opts(
+    netdev_raw: &str,
+    device_raw: Option<&str>,
+) -> Result<NetdevOpts, String> {
+    // Expect "tap,id=<id>,ifname=<name>".
+    if !netdev_raw.starts_with("tap,") {
+        return Err(format!(
+            "-netdev: unsupported type (expected tap): {}",
+            netdev_raw
+        ));
+    }
+    let mut id = None;
+    let mut ifname = None;
+    for part in netdev_raw.split(',').skip(1) {
+        if let Some(v) = part.strip_prefix("id=") {
+            id = Some(v.to_string());
+        } else if let Some(v) = part.strip_prefix("ifname=") {
+            ifname = Some(v.to_string());
+        }
+    }
+    let id = id.ok_or("-netdev: missing id= parameter".to_string())?;
+    let ifname =
+        ifname.ok_or("-netdev: missing ifname= parameter".to_string())?;
+
+    // Parse optional mac from -device virtio-net-device.
+    let mut mac = None;
+    if let Some(dev) = device_raw {
+        let mut dev_netdev = None;
+        for part in dev.split(',').skip(1) {
+            if let Some(v) = part.strip_prefix("netdev=") {
+                dev_netdev = Some(v.to_string());
+            } else if let Some(v) = part.strip_prefix("mac=") {
+                mac = Some(v.to_string());
+            }
+        }
+        // Validate that device references the same netdev.
+        if let Some(ref dn) = dev_netdev {
+            if dn != &id {
+                return Err(format!(
+                    "-device: netdev={} does not match \
+                     -netdev id={}",
+                    dn, id
+                ));
+            }
+        }
+    }
+
+    Ok(NetdevOpts { id, ifname, mac })
 }
 
 fn install_crash_handler() {
@@ -464,6 +546,29 @@ fn main() {
         process::exit(1);
     }
 
+    // Parse netdev options if provided.
+    let netdev = if let Some(ref raw) = cli.netdev_raw {
+        match parse_netdev_opts(raw, cli.device_net_raw.as_deref()) {
+            Ok(nd) => Some(nd),
+            Err(e) => {
+                eprintln!("machina: {}", e);
+                machina_hw_core::chardev::restore_terminal();
+                process::exit(1);
+            }
+        }
+    } else {
+        None
+    };
+
+    if let Some(ref trace_path) = cli.trace {
+        if let Err(e) =
+            machina_util::trace::init_trace(trace_path.to_str().unwrap_or(""))
+        {
+            eprintln!("machina: --trace: {}", e);
+            std::process::exit(1);
+        }
+    }
+
     let ram_size = cli.ram_mib * 1024 * 1024;
     let opts = MachineOpts {
         ram_size,
@@ -475,6 +580,7 @@ fn main() {
         nographic: cli.nographic,
         drive: cli.drive.clone(),
         initrd: cli.initrd.clone(),
+        netdev,
     };
 
     // Check -monitor stdio + -nographic conflict.

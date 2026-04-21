@@ -55,10 +55,7 @@ const VIRTIO_MAGIC: u32 = 0x74726976;
 const VIRTIO_VENDOR: u32 = 0x554D4551;
 const VIRTIO_VERSION: u32 = 2;
 
-// Max number of queues per device.
-const NUM_QUEUES: usize = 1;
-
-struct VirtioMmioState {
+pub struct VirtioMmioState {
     device: Box<dyn VirtioDevice>,
     irq: IrqLine,
 
@@ -68,7 +65,7 @@ struct VirtioMmioState {
     driver_features_sel: u32,
     driver_features: u64,
     queue_sel: u32,
-    queues: [VirtQueue; NUM_QUEUES],
+    queues: Vec<VirtQueue>,
     interrupt_status: u32,
     // Legacy compat fields.
     guest_page_size: u32,
@@ -96,6 +93,7 @@ impl VirtioMmioState {
         self.interrupt_status = 0;
         self.guest_page_size = 0;
         self.irq.set(false);
+        self.device.reset();
     }
 
     fn current_queue(&mut self) -> Option<&mut VirtQueue> {
@@ -103,16 +101,30 @@ impl VirtioMmioState {
         self.queues.get_mut(sel)
     }
 
+    pub fn inject_rx(&mut self, _queue_idx: u32, used_count: u32) {
+        if used_count > 0 {
+            self.interrupt_status |= 1;
+            self.irq.set(true);
+        }
+    }
+
+    pub fn queue_mut(&mut self, idx: u32) -> Option<&mut VirtQueue> {
+        self.queues.get_mut(idx as usize)
+    }
+
+    pub fn ram_info(&self) -> (*mut u8, u64, u64) {
+        (self.ram_ptr, self.ram_base, self.ram_size)
+    }
+
     fn process_notify(&mut self) {
         let sel = self.queue_sel as usize;
-        if sel >= NUM_QUEUES {
+        if sel >= self.queues.len() {
             return;
         }
         let q = &mut self.queues[sel];
         if !q.ready || q.num == 0 {
             return;
         }
-        // Only process when DRIVER_OK (bit 2) is set.
         if self.status & 0x4 == 0 {
             return;
         }
@@ -158,9 +170,11 @@ impl VirtioMmio {
         ram_size: u64,
     ) -> Self {
         let mut state = SysBusDeviceState::new(local_id);
-        state
-            .register_irq(irq.clone())
-            .expect("virtio-mmio IRQ registration must succeed at creation");
+        state.register_irq(irq.clone()).expect(
+            "virtio-mmio IRQ registration \
+                 must succeed at creation",
+        );
+        let nq = device.num_queues().max(1);
         Self {
             device: state,
             state: Arc::new(Mutex::new(VirtioMmioState {
@@ -171,7 +185,7 @@ impl VirtioMmio {
                 driver_features_sel: 0,
                 driver_features: 0,
                 queue_sel: 0,
-                queues: std::array::from_fn(|_| VirtQueue::new()),
+                queues: (0..nq).map(|_| VirtQueue::new()).collect(),
                 interrupt_status: 0,
                 guest_page_size: 0,
                 ram_ptr,
@@ -179,6 +193,10 @@ impl VirtioMmio {
                 ram_size,
             })),
         }
+    }
+
+    pub fn shared_state(&self) -> Arc<Mutex<VirtioMmioState>> {
+        Arc::clone(&self.state)
     }
 
     pub fn attach_to_bus(
@@ -244,7 +262,14 @@ impl VirtioMmio {
                     (feat >> 32) & 0xFFFF_FFFF
                 }
             }
-            QUEUE_NUM_MAX => MAX_QUEUE_SIZE as u64,
+            QUEUE_NUM_MAX => {
+                let sel = state.queue_sel as usize;
+                if sel < state.queues.len() {
+                    MAX_QUEUE_SIZE as u64
+                } else {
+                    0
+                }
+            }
             QUEUE_READY => {
                 let sel = state.queue_sel as usize;
                 state
@@ -327,7 +352,11 @@ impl VirtioMmio {
                 if v32 == 0 {
                     state.reset();
                 } else {
+                    let old = state.status;
                     state.status = v32;
+                    if v32 & 0x8 != 0 && old & 0x8 == 0 {
+                        state.device.ack_features(state.driver_features);
+                    }
                 }
             }
             QUEUE_DESC_LOW => {
@@ -393,6 +422,9 @@ impl VirtioMmio {
                 }
             }
             LEGACY_QUEUE_ALIGN => {}
+            value if value >= CONFIG_BASE => {
+                state.device.config_write(value - CONFIG_BASE, 4, val);
+            }
             _ => {}
         }
     }

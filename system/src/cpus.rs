@@ -678,6 +678,7 @@ impl GuestCpu for FullSystemCpu {
     }
 
     fn handle_exception(&mut self, excp: u64, tval: u64) {
+        machina_util::trace::trace_exception(excp, self.cpu.pc);
         let e = match excp {
             0 => Exception::InstructionMisaligned,
             1 => Exception::InstructionAccessFault,

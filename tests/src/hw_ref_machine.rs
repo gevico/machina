@@ -16,6 +16,7 @@ fn default_opts() -> MachineOpts {
         nographic: false,
         drive: None,
         initrd: None,
+        netdev: None,
     }
 }
 
@@ -225,6 +226,7 @@ fn test_ref_machine_zero_ram_fails() {
         nographic: false,
         drive: None,
         initrd: None,
+        netdev: None,
     };
     let result = m.init(&opts);
     assert!(result.is_err(), "init with 0 RAM should fail");
@@ -261,6 +263,7 @@ fn test_ref_machine_plic_contexts_multi_hart() {
         nographic: false,
         drive: None,
         initrd: None,
+        netdev: None,
     };
     m.init(&opts).expect("init failed");
 

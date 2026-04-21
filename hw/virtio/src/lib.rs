@@ -1,5 +1,6 @@
 pub mod block;
 pub mod mmio;
+pub mod net;
 pub mod queue;
 
 use crate::queue::VirtQueue;

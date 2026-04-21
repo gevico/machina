@@ -66,3 +66,5 @@ mod system_cpu_manager;
 mod tools;
 #[cfg(test)]
 mod virtio;
+#[cfg(test)]
+mod virtio_net;
