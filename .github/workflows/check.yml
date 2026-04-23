@@ -6,10 +6,49 @@ on:
 
 jobs:
   style:
-    runs-on: ubuntu-latest
+    name: check (${{ matrix.name }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            name: linux
+            shell: bash
+          - os: windows-latest
+            name: msys2
+            shell: msys2 {0}
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: ${{ matrix.shell }}
+
     steps:
       - name: Checkout machina
         uses: actions/checkout@v4
+
+      - name: Set up MSYS2 (Windows)
+        if: matrix.name == 'msys2'
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          path-type: inherit
+          cache: true
+
+      # Disable certificate revocation checks on Windows
+      # to avoid CRYPT_E_REVOCATION_OFFLINE failures on
+      # GitHub-hosted runners without internet CRL access.
+      - name: Configure cargo (Windows)
+        if: matrix.name == 'msys2'
+        shell: pwsh
+        run: |
+          $dir = "$env:USERPROFILE\.cargo"
+          New-Item -ItemType Directory -Force -Path $dir | Out-Null
+          Add-Content -Path "$dir\config.toml" -Value @"
+
+          [http]
+          check-revoke = false
+          "@
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -17,8 +56,13 @@ jobs:
       - name: Cache Cargo
         uses: Swatinem/rust-cache@v2
 
+      # fmt output is platform-independent; run once on Linux.
       - name: Check code formatting
+        if: matrix.name == 'linux'
         run: make fmt-check
 
+      # Clippy runs on both platforms so that Windows-specific
+      # code paths (e.g. accel/src/plat.rs global_asm!) are linted
+      # under the correct cfg flags.
       - name: Run Clippy
         run: make clippy

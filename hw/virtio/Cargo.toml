@@ -13,6 +13,7 @@ categories = ["emulators", "hardware-support"]
 machina-core = { workspace = true }
 machina-hw-core = { workspace = true }
 machina-memory = { workspace = true }
+memmap2 = { workspace = true }
 libc = { workspace = true }
 
 [lints]

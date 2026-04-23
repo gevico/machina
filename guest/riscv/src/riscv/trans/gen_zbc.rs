@@ -12,7 +12,7 @@ impl RiscvDisasContext {
         &self,
         ir: &mut Context,
         a: &ArgsR,
-        helper: extern "C" fn(u64, u64) -> u64,
+        helper: extern "sysv64" fn(u64, u64) -> u64,
     ) -> bool {
         let s1 = self.gpr_or_zero(ir, a.rs1);
         let s2 = self.gpr_or_zero(ir, a.rs2);

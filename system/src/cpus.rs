@@ -1279,7 +1279,7 @@ fn is_phys_backed(cpu: &RiscvCpu, pa: u64, size: u32) -> bool {
 /// # Safety
 /// `env` must point to a valid `RiscvCpu`.
 #[no_mangle]
-pub unsafe extern "C" fn machina_mem_read(
+pub unsafe extern "sysv64" fn machina_mem_read(
     env: *mut u8,
     gva: u64,
     size: u32,
@@ -1303,7 +1303,7 @@ pub unsafe extern "C" fn machina_mem_read(
 /// # Safety
 /// `env` must point to a valid `RiscvCpu`.
 #[no_mangle]
-pub unsafe extern "C" fn machina_mem_write(
+pub unsafe extern "sysv64" fn machina_mem_write(
     env: *mut u8,
     gva: u64,
     val: u64,
@@ -1326,16 +1326,33 @@ pub unsafe extern "C" fn machina_mem_write(
 // longjmp. The caller must have already delivered the
 // exception via raise_exception() before calling this.
 //
-// SAFETY: cpu.jmp_env must point to a valid jmp_buf set
-// by the exec loop's setjmp.
+// SAFETY: cpu.jmp_env must point to a valid JmpBuf set
+// by the exec loop's do_setjmp call.
+#[cfg(unix)]
 unsafe extern "C" {
     fn siglongjmp(env: *mut u8, val: i32) -> !;
+}
+
+// On Windows, machina_longjmp is defined in machina-accel
+// via global_asm! and linked into the final binary.
+#[cfg(windows)]
+unsafe extern "C" {
+    fn machina_longjmp(env: *mut u8, val: i32);
 }
 
 unsafe fn cpu_loop_exit(cpu: &RiscvCpu) -> ! {
     let ptr = cpu.jmp_env;
     assert!(ptr != 0, "cpu_loop_exit: no jmp_env");
-    siglongjmp(ptr as *mut u8, 1);
+    #[cfg(unix)]
+    {
+        siglongjmp(ptr as *mut u8, 1)
+    }
+    #[cfg(windows)]
+    {
+        machina_longjmp(ptr as *mut u8, 1);
+        // SAFETY: machina_longjmp never returns.
+        unsafe { std::hint::unreachable_unchecked() }
+    }
 }
 
 // ---- CSR helper for JIT ----
@@ -1350,7 +1367,7 @@ unsafe fn cpu_loop_exit(cpu: &RiscvCpu) -> ! {
 /// Caller must ensure `env` is a valid pointer to a
 /// `RiscvCpu` instance.
 #[no_mangle]
-pub unsafe extern "C" fn machina_csr_op(
+pub unsafe extern "sysv64" fn machina_csr_op(
     env: *mut u8,
     csr: u64,
     rs1_val: u64,

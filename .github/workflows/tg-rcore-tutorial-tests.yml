@@ -1,0 +1,147 @@
+name: rcore-tutorial-smoke
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      rcore_ref:
+        description: "Optional tg-rcore-tutorial ref or commit"
+        required: false
+        default: ""
+        type: string
+
+env:
+  CARGO_TERM_COLOR: always
+  RCORE_REPO: https://github.com/rcore-os/tg-rcore-tutorial.git
+
+jobs:
+  rcore-smoke:
+    name: smoke (${{ matrix.name }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            name: linux
+            shell: bash
+          - os: windows-latest
+            name: msys2
+            shell: msys2 {0}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 180
+    env:
+      RCORE_REF: ${{ inputs.rcore_ref || '' }}
+    defaults:
+      run:
+        shell: ${{ matrix.shell }}
+
+    steps:
+      - name: Checkout machina
+        uses: actions/checkout@v4
+
+      - name: Set up MSYS2 (Windows)
+        if: matrix.name == 'msys2'
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          path-type: inherit
+          cache: true
+          install: >-
+            mingw-w64-x86_64-riscv64-unknown-elf-gcc
+
+      # Write cargo config before any cargo commands:
+      # - check-revoke = false  avoids CRYPT_E_REVOCATION_OFFLINE errors
+      # - rustflags -nostdlib   required when GCC is used as RISC-V linker
+      #   (rust-lld crashes on Windows for riscv64gc-unknown-none-elf)
+      - name: Configure cargo (Windows)
+        if: matrix.name == 'msys2'
+        shell: pwsh
+        run: |
+          $dir = "$env:USERPROFILE\.cargo"
+          New-Item -ItemType Directory -Force -Path $dir | Out-Null
+          Add-Content -Path "$dir\config.toml" -Value @"
+
+          [http]
+          check-revoke = false
+
+          [target.riscv64gc-unknown-none-elf]
+          rustflags = ["-C", "link-arg=-nostdlib"]
+          "@
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: riscv64gc-unknown-none-elf
+          components: llvm-tools-preview
+
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install cargo tools
+        run: |
+          cargo install cargo-clone
+          cargo install cargo-binutils
+          cargo install tg-rcore-tutorial-checker
+
+      - name: Set rCore directory (Linux)
+        if: matrix.name == 'linux'
+        run: echo "RCORE_DIR=/tmp/tg-rcore-tutorial" >> "$GITHUB_ENV"
+
+      - name: Set rCore directory (Windows)
+        if: matrix.name == 'msys2'
+        shell: pwsh
+        run: |
+          $dir = "$env:TEMP\tg-rcore-tutorial"
+          "RCORE_DIR=$dir" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: Clone tg-rcore-tutorial
+        run: |
+          git clone --recursive "${RCORE_REPO}" "${RCORE_DIR}"
+          if [ -n "${RCORE_REF}" ]; then
+            git -C "${RCORE_DIR}" fetch --depth 1 origin "${RCORE_REF}"
+            git -C "${RCORE_DIR}" checkout --detach FETCH_HEAD
+            git -C "${RCORE_DIR}" submodule update --init --recursive
+          fi
+          echo "rCore commit: $(git -C "${RCORE_DIR}" rev-parse HEAD)"
+
+      - name: Build machina
+        run: cargo build --release
+
+      - name: Run rCore smoke test
+        id: smoke-test
+        run: |
+          mkdir -p target/rcore-smoke
+          chmod +x ./scripts/run-rcore-tutorial-smoke.sh
+          ./scripts/run-rcore-tutorial-smoke.sh 2>&1 \
+            | tee target/rcore-smoke/run.log
+          echo "exit_code=${PIPESTATUS[0]}" >> "${GITHUB_OUTPUT}"
+
+      - name: Publish summary
+        if: always()
+        run: |
+          if [ -f target/rcore-smoke/run.log ]; then
+            {
+              echo "rCore-Tutorial Smoke Test Summary (${{ matrix.name }})"
+              echo ""
+              grep -E "^(ch[1-8] \.\.\. |SKIP ch|summary:)" \
+                target/rcore-smoke/run.log \
+                || echo "No test results found"
+            } | tee target/rcore-smoke/summary.txt >> "${GITHUB_STEP_SUMMARY}"
+          fi
+
+      - name: Upload rCore smoke test artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rcore-smoke-${{ matrix.name }}
+          path: |
+            target/rcore-smoke/*.log
+            target/rcore-smoke/*.txt
+
+      - name: Check test result
+        if: steps.smoke-test.outputs.exit_code != '0'
+        run: |
+          echo "rCore smoke test failed"
+          exit 1

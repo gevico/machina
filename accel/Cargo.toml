@@ -12,7 +12,15 @@ categories = ["emulators"]
 [dependencies]
 machina-core = { workspace = true }
 machina-memory = { workspace = true }
+
+[target.'cfg(unix)'.dependencies]
 libc = { workspace = true }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = [
+    "Win32_System_Memory",
+    "Win32_System_SystemInformation",
+] }
 
 [lints]
 workspace = true

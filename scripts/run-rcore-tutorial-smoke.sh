@@ -16,6 +16,10 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
 
 MACHINA_BIN="${MACHINA_BIN:-${REPO_ROOT}/target/release/machina}"
+# On Windows (MSYS2) cargo produces machina.exe; resolve the real path.
+if [ ! -x "${MACHINA_BIN}" ] && [ -x "${MACHINA_BIN}.exe" ]; then
+    MACHINA_BIN="${MACHINA_BIN}.exe"
+fi
 RCORE_DIR="${RCORE_DIR:-${REPO_ROOT}/../tg-rcore-tutorial}"
 LOG_DIR="${REPO_ROOT}/target/rcore-smoke"
 

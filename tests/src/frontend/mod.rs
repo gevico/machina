@@ -2,6 +2,7 @@
 //! run them through the full frontend→backend pipeline, and verify
 //! the resulting CPU state.
 
+#[cfg(unix)]
 mod difftest;
 mod riscv_zba;
 mod riscv_zbb;

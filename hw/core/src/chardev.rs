@@ -1,7 +1,6 @@
 // Character device backend framework.
 
 use std::io::Write as _;
-use std::os::unix::net::UnixStream;
 use std::sync::{Arc, Mutex};
 
 use machina_core::mobject::{MObject, MObjectState};
@@ -176,6 +175,9 @@ impl Chardev for NullChardev {
 ///   Ctrl+A, Ctrl+A — send literal Ctrl+A
 pub struct StdioChardev {
     _thread: Option<std::thread::JoinHandle<()>>,
+    /// Saved terminal state for raw-mode restore on drop.
+    /// Unix only: Windows has no termios.
+    #[cfg(unix)]
     saved_termios: Option<libc::termios>,
     /// Monitor line callback for Ctrl+A C toggle.
     monitor_cb: Option<ByteCb>,
@@ -187,12 +189,17 @@ const ESCAPE_CHAR: u8 = 0x01; // Ctrl+A
 
 impl StdioChardev {
     pub fn new() -> Self {
+        #[cfg(unix)]
         let saved = enable_raw_mode();
+        #[cfg(unix)]
         if saved.is_some() {
             eprintln!("machina: Ctrl+A H for help");
         }
+        #[cfg(not(unix))]
+        eprintln!("machina: Ctrl+A H for help");
         Self {
             _thread: None,
+            #[cfg(unix)]
             saved_termios: saved,
             monitor_cb: None,
             quit_cb: None,
@@ -219,6 +226,7 @@ impl Default for StdioChardev {
 
 impl Drop for StdioChardev {
     fn drop(&mut self) {
+        #[cfg(unix)]
         if let Some(ref t) = self.saved_termios {
             restore_termios(t);
         }
@@ -335,12 +343,14 @@ fn send_to(
 }
 
 /// Global saved termios for atexit restore.
+#[cfg(unix)]
 static SAVED_TERMIOS: std::sync::Mutex<Option<libc::termios>> =
     std::sync::Mutex::new(None);
 
 /// Restore terminal from raw mode. Safe to call
 /// multiple times or from signal handlers.
 pub fn restore_terminal() {
+    #[cfg(unix)]
     if let Ok(guard) = SAVED_TERMIOS.lock() {
         if let Some(ref t) = *guard {
             unsafe {
@@ -350,6 +360,7 @@ pub fn restore_terminal() {
     }
 }
 
+#[cfg(unix)]
 fn enable_raw_mode() -> Option<libc::termios> {
     unsafe {
         let mut orig: libc::termios = std::mem::zeroed();
@@ -372,6 +383,7 @@ fn enable_raw_mode() -> Option<libc::termios> {
     }
 }
 
+#[cfg(unix)]
 fn restore_termios(orig: &libc::termios) {
     unsafe {
         libc::tcsetattr(0, libc::TCSANOW, orig);
@@ -379,29 +391,33 @@ fn restore_termios(orig: &libc::termios) {
 }
 
 /// Unix-socket backed chardev (for integration testing).
+#[cfg(unix)]
 pub struct SocketChardev {
-    stream: Option<UnixStream>,
+    stream: Option<std::os::unix::net::UnixStream>,
 }
 
+#[cfg(unix)]
 impl SocketChardev {
     pub fn new() -> Self {
         Self { stream: None }
     }
 
     pub fn connect(&mut self, path: &str) -> std::io::Result<()> {
-        let s = UnixStream::connect(path)?;
+        let s = std::os::unix::net::UnixStream::connect(path)?;
         s.set_nonblocking(true)?;
         self.stream = Some(s);
         Ok(())
     }
 }
 
+#[cfg(unix)]
 impl Default for SocketChardev {
     fn default() -> Self {
         Self::new()
     }
 }
 
+#[cfg(unix)]
 impl Chardev for SocketChardev {
     fn read(&mut self) -> Option<u8> {
         use std::io::Read;

@@ -1,5 +1,6 @@
 // machina: QEMU-style full-system emulator entry point.
 
+#[cfg(unix)]
 mod difftest;
 
 use std::env;
@@ -11,12 +12,16 @@ use std::sync::Arc;
 use machina_accel::exec::ExecEnv;
 use machina_accel::x86_64::emitter::SoftMmuConfig;
 use machina_accel::X86_64CodeGen;
-use machina_core::machine::{Machine, MachineOpts, NetdevOpts};
+#[cfg(unix)]
+use machina_core::machine::NetdevOpts;
+use machina_core::machine::{Machine, MachineOpts};
 use machina_hw_riscv::ref_machine::RefMachine;
 use machina_hw_riscv::sbi::SbiBackend;
 use machina_hw_riscv::sifive_test::ShutdownReason;
+#[cfg(unix)]
+use machina_system::cpus::LAST_TB_PC;
 use machina_system::cpus::{
-    machina_mem_read, machina_mem_write, FullSystemCpu, LAST_TB_PC,
+    machina_mem_read, machina_mem_write, FullSystemCpu,
 };
 use machina_system::{CpuManager, FirmwareCallFn};
 
@@ -36,6 +41,7 @@ fn usage() {
     eprintln!("  -kernel path  Kernel binary");
     eprintln!("  -nographic    Disable graphical output");
     eprintln!("  -append args  Kernel command line arguments");
+    #[cfg(unix)]
     eprintln!(
         "  --difftest    Instruction-level difftest \
          vs QEMU"
@@ -68,13 +74,16 @@ struct CliArgs {
     kernel: Option<PathBuf>,
     append: Option<String>,
     nographic: bool,
+    #[cfg(unix)]
     difftest: bool,
     drive: Option<PathBuf>,
     monitor: Option<String>,
     gdb: Option<String>,
     start_paused: bool,
     initrd: Option<PathBuf>,
+    #[cfg(unix)]
     netdev_raw: Option<String>,
+    #[cfg(unix)]
     device_net_raw: Option<String>,
     trace: Option<PathBuf>,
 }
@@ -89,13 +98,16 @@ impl Default for CliArgs {
             kernel: None,
             append: None,
             nographic: false,
+            #[cfg(unix)]
             difftest: false,
             drive: None,
             monitor: None,
             gdb: None,
             start_paused: false,
             initrd: None,
+            #[cfg(unix)]
             netdev_raw: None,
+            #[cfg(unix)]
             device_net_raw: None,
             trace: None,
         }
@@ -150,6 +162,7 @@ fn parse_args() -> Result<CliArgs, String> {
                     args.get(i).ok_or("-append requires argument")?.clone(),
                 );
             }
+            #[cfg(unix)]
             "--difftest" => {
                 cli.difftest = true;
             }
@@ -169,6 +182,7 @@ fn parse_args() -> Result<CliArgs, String> {
                     return Err("-drive: missing file=<path>".to_string());
                 }
             }
+            #[cfg(unix)]
             "-netdev" => {
                 i += 1;
                 cli.netdev_raw = Some(
@@ -178,10 +192,14 @@ fn parse_args() -> Result<CliArgs, String> {
             "-device" => {
                 i += 1;
                 let val = args.get(i).ok_or("-device requires argument")?;
+                // virtio-net-device is Unix-only (TAP backend).
+                #[cfg(unix)]
                 if val.starts_with("virtio-net-device,") {
                     cli.device_net_raw = Some(val.clone());
                 }
-                // Other -device values accepted for compat.
+                // virtio-blk-device and other devices are
+                // handled via -drive; accept without error.
+                let _ = val;
             }
             "--trace" => {
                 i += 1;
@@ -234,6 +252,10 @@ fn parse_args() -> Result<CliArgs, String> {
 // parse_netdev_opts moved to NetdevOpts::parse() in
 // core/src/machine.rs for testability.
 
+/// Install a SIGSEGV handler that prints the last TB PC
+/// and host register state before exiting.
+/// On Windows there is no SIGSEGV; this is a no-op.
+#[cfg(unix)]
 fn install_crash_handler() {
     unsafe {
         let mut sa: libc::sigaction = std::mem::zeroed();
@@ -243,6 +265,12 @@ fn install_crash_handler() {
     }
 }
 
+#[cfg(not(unix))]
+fn install_crash_handler() {
+    // No POSIX signals on Windows; crash handler not installed.
+}
+
+#[cfg(unix)]
 extern "C" fn crash_handler(
     _sig: libc::c_int,
     info: *mut libc::siginfo_t,
@@ -467,6 +495,14 @@ fn run_machine_cycle(
 
     let _exit = unsafe { cpu_mgr.run(&shared) };
 
+    // Cancel all pending ACLINT timer threads immediately
+    // so they do not write through the neg_align pointer
+    // after cpu_mgr is dropped at function return.
+    // Any sleeping timer thread that wakes up after this
+    // point will see a bumped cancel generation and exit
+    // without touching the CPU's neg_align field.
+    machine.aclint().cancel_timers();
+
     // Invalidate the CPU pointer in MonitorState so
     // a late quit does not dereference freed memory.
     if let Some(ref ms) = monitor_state {
@@ -515,6 +551,7 @@ fn main() {
     }
 
     // Reject -device virtio-net-device without -netdev.
+    #[cfg(unix)]
     if cli.device_net_raw.is_some() && cli.netdev_raw.is_none() {
         eprintln!(
             "machina: -device virtio-net-device \
@@ -524,7 +561,9 @@ fn main() {
         process::exit(1);
     }
 
-    // Parse netdev options if provided.
+    // Parse netdev options if provided (Unix only: TAP is
+    // POSIX-specific).
+    #[cfg(unix)]
     let netdev = if let Some(ref raw) = cli.netdev_raw {
         match NetdevOpts::parse(raw, cli.device_net_raw.as_deref()) {
             Ok(nd) => Some(nd),
@@ -537,6 +576,8 @@ fn main() {
     } else {
         None
     };
+    #[cfg(not(unix))]
+    let netdev = None;
 
     if let Some(ref trace_path) = cli.trace {
         if let Err(e) =
@@ -599,6 +640,7 @@ fn main() {
         eprintln!("machina: HTIF tohost at {:#x}", addr);
     }
 
+    #[cfg(unix)]
     if cli.difftest {
         if cli.bios_builtin {
             eprintln!(

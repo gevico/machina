@@ -70,5 +70,5 @@ mod tools;
 mod trace;
 #[cfg(test)]
 mod virtio;
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod virtio_net;

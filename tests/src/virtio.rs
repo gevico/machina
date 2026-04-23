@@ -7,7 +7,9 @@ use machina_hw_core::bus::SysBus;
 use machina_hw_core::irq::{IrqLine, IrqSink};
 use machina_hw_virtio::block::VirtioBlk;
 use machina_hw_virtio::mmio::VirtioMmio;
+#[cfg(unix)]
 use machina_hw_virtio::net::PipeBackend;
+#[cfg(unix)]
 use machina_hw_virtio::net::VirtioNet;
 use machina_hw_virtio::queue::VirtQueue;
 use machina_memory::address_space::AddressSpace;
@@ -144,6 +146,7 @@ fn test_virtio_realize_via_sysbus_maps_mmio() {
 
 // ── Multi-queue transport tests (AC-1) ───────────────
 
+#[cfg(unix)]
 fn make_net_device() -> (VirtioMmio, Arc<DummySink>) {
     let pipe = PipeBackend::new().unwrap();
     let net = VirtioNet::new_default(Arc::new(pipe));
@@ -161,6 +164,7 @@ fn make_net_device() -> (VirtioMmio, Arc<DummySink>) {
     (mmio, sink)
 }
 
+#[cfg(unix)]
 #[test]
 fn test_multiqueue_num_max_queue0() {
     let (dev, _) = make_net_device();
@@ -168,6 +172,7 @@ fn test_multiqueue_num_max_queue0() {
     assert_ne!(dev.read(0x034, 4), 0); // QUEUE_NUM_MAX
 }
 
+#[cfg(unix)]
 #[test]
 fn test_multiqueue_num_max_queue1() {
     let (dev, _) = make_net_device();
@@ -175,6 +180,7 @@ fn test_multiqueue_num_max_queue1() {
     assert_ne!(dev.read(0x034, 4), 0); // QUEUE_NUM_MAX
 }
 
+#[cfg(unix)]
 #[test]
 fn test_multiqueue_invalid_queue_sel() {
     let (dev, _) = make_net_device();
@@ -182,6 +188,7 @@ fn test_multiqueue_invalid_queue_sel() {
     assert_eq!(dev.read(0x034, 4), 0); // 0 for invalid
 }
 
+#[cfg(unix)]
 #[test]
 fn test_multiqueue_notify_without_driver_ok() {
     let (dev, sink) = make_net_device();
@@ -190,6 +197,7 @@ fn test_multiqueue_notify_without_driver_ok() {
     assert!(!sink.level.load(Ordering::SeqCst));
 }
 
+#[cfg(unix)]
 #[test]
 fn test_multiqueue_net_device_id() {
     let (dev, _) = make_net_device();
@@ -205,6 +213,7 @@ fn test_multiqueue_blk_still_one_queue() {
     assert_eq!(dev.read(0x034, 4), 0); // only 1 queue
 }
 
+#[cfg(unix)]
 #[test]
 fn test_multiqueue_notify_queue1_with_driver_ok() {
     let (dev, _) = make_net_device();

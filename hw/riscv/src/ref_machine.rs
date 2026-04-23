@@ -262,6 +262,7 @@ impl RefMachine {
 
     /// Attach a pre-built VirtIO net device. Useful for
     /// tests that cannot create a TapBackend.
+    #[cfg(unix)]
     pub fn add_virtio_net(
         &mut self,
         net: machina_hw_virtio::net::VirtioNet,
@@ -283,6 +284,7 @@ impl RefMachine {
         Ok(())
     }
 
+    #[cfg(unix)]
     fn attach_net_device(
         net: machina_hw_virtio::net::VirtioNet,
         plic: &Arc<Plic>,
@@ -881,7 +883,9 @@ impl Machine for RefMachine {
             self.virtio_mmio = Some(virtio_mmio);
         }
 
-        // VirtIO net device (if -netdev configured).
+        // VirtIO net device (if -netdev configured,
+        // Unix only: TAP requires POSIX sockets).
+        #[cfg(unix)]
         if let Some(ref netdev) = opts.netdev {
             use machina_hw_virtio::net::{
                 parse_mac, TapBackend, VirtioNet, DEFAULT_MAC,

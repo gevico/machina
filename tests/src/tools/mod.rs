@@ -9,11 +9,21 @@ fn project_root() -> PathBuf {
 }
 
 fn bin_path(name: &str) -> PathBuf {
-    project_root().join("target").join("debug").join(name)
+    let base = project_root().join("target").join("debug").join(name);
+    // On Windows executables have an .exe extension.
+    if cfg!(windows) {
+        base.with_extension("exe")
+    } else {
+        base
+    }
 }
 
 fn guest_elf() -> PathBuf {
     project_root().join("tests/firmware/sbi_smoke.elf")
+}
+
+fn tmp_path(name: &str) -> PathBuf {
+    std::env::temp_dir().join(name)
 }
 
 /// Build both tools before running tests.
@@ -29,14 +39,14 @@ fn ensure_built() {
 #[test]
 fn irdump_emit_bin_produces_file() {
     ensure_built();
-    let tmp = "/tmp/tcg-test-irdump.tcgir";
-    let _ = fs::remove_file(tmp);
+    let tmp = tmp_path("tcg-test-irdump.tcgir");
+    let _ = fs::remove_file(&tmp);
 
     let status = Command::new(bin_path("machina-irdump"))
         .args([
             guest_elf().to_str().unwrap(),
             "--emit-bin",
-            tmp,
+            tmp.to_str().unwrap(),
             "--count",
             "2",
         ])
@@ -44,26 +54,26 @@ fn irdump_emit_bin_produces_file() {
         .expect("machina-irdump failed to run");
     assert!(status.success(), "machina-irdump exited with error");
 
-    let data = fs::read(tmp).expect("output file missing");
+    let data = fs::read(&tmp).expect("output file missing");
     // Verify magic header
     assert!(data.len() > 20, "file too small");
     assert_eq!(&data[..4], b"TCIR");
 
-    let _ = fs::remove_file(tmp);
+    let _ = fs::remove_file(&tmp);
 }
 
 #[test]
 fn irbackend_hex_dump() {
     ensure_built();
-    let tmp_ir = "/tmp/tcg-test-irbackend.tcgir";
-    let _ = fs::remove_file(tmp_ir);
+    let tmp_ir = tmp_path("tcg-test-irbackend.tcgir");
+    let _ = fs::remove_file(&tmp_ir);
 
     // Generate IR
     let status = Command::new(bin_path("machina-irdump"))
         .args([
             guest_elf().to_str().unwrap(),
             "--emit-bin",
-            tmp_ir,
+            tmp_ir.to_str().unwrap(),
             "--count",
             "1",
         ])
@@ -73,7 +83,7 @@ fn irbackend_hex_dump() {
 
     // Run backend
     let output = Command::new(bin_path("machina-irbackend"))
-        .arg(tmp_ir)
+        .arg(&tmp_ir)
         .output()
         .expect("machina-irbackend failed");
     assert!(
@@ -89,23 +99,23 @@ fn irbackend_hex_dump() {
         "expected hex dump output, got: {stdout}"
     );
 
-    let _ = fs::remove_file(tmp_ir);
+    let _ = fs::remove_file(&tmp_ir);
 }
 
 #[test]
 fn irbackend_raw_output() {
     ensure_built();
-    let tmp_ir = "/tmp/tcg-test-irbackend-raw.tcgir";
-    let tmp_bin = "/tmp/tcg-test-irbackend-raw.bin";
-    let _ = fs::remove_file(tmp_ir);
-    let _ = fs::remove_file(tmp_bin);
+    let tmp_ir = tmp_path("tcg-test-irbackend-raw.tcgir");
+    let tmp_bin = tmp_path("tcg-test-irbackend-raw.bin");
+    let _ = fs::remove_file(&tmp_ir);
+    let _ = fs::remove_file(&tmp_bin);
 
     // Generate IR
     let status = Command::new(bin_path("machina-irdump"))
         .args([
             guest_elf().to_str().unwrap(),
             "--emit-bin",
-            tmp_ir,
+            tmp_ir.to_str().unwrap(),
             "--count",
             "1",
         ])
@@ -115,30 +125,35 @@ fn irbackend_raw_output() {
 
     // Run backend with --raw -o
     let status = Command::new(bin_path("machina-irbackend"))
-        .args([tmp_ir, "--raw", "-o", tmp_bin])
+        .args([
+            tmp_ir.to_str().unwrap(),
+            "--raw",
+            "-o",
+            tmp_bin.to_str().unwrap(),
+        ])
         .status()
         .expect("machina-irbackend failed");
     assert!(status.success());
 
-    let data = fs::read(tmp_bin).expect("raw output missing");
+    let data = fs::read(&tmp_bin).expect("raw output missing");
     assert!(!data.is_empty(), "raw output should not be empty");
 
-    let _ = fs::remove_file(tmp_ir);
-    let _ = fs::remove_file(tmp_bin);
+    let _ = fs::remove_file(&tmp_ir);
+    let _ = fs::remove_file(&tmp_bin);
 }
 
 #[test]
 fn irbackend_multiple_tbs() {
     ensure_built();
-    let tmp_ir = "/tmp/tcg-test-irbackend-multi.tcgir";
-    let _ = fs::remove_file(tmp_ir);
+    let tmp_ir = tmp_path("tcg-test-irbackend-multi.tcgir");
+    let _ = fs::remove_file(&tmp_ir);
 
     // Generate 5 TBs
     let status = Command::new(bin_path("machina-irdump"))
         .args([
             guest_elf().to_str().unwrap(),
             "--emit-bin",
-            tmp_ir,
+            tmp_ir.to_str().unwrap(),
             "--count",
             "5",
         ])
@@ -147,7 +162,7 @@ fn irbackend_multiple_tbs() {
     assert!(status.success());
 
     let output = Command::new(bin_path("machina-irbackend"))
-        .arg(tmp_ir)
+        .arg(&tmp_ir)
         .output()
         .expect("machina-irbackend failed");
     assert!(
@@ -163,10 +178,16 @@ fn irbackend_multiple_tbs() {
         "expected 5 TBs loaded, got: {stderr}"
     );
 
-    let _ = fs::remove_file(tmp_ir);
+    let _ = fs::remove_file(&tmp_ir);
 }
 
 fn ensure_machina_built() {
+    // Serialise concurrent builds: on Windows multiple linkers
+    // cannot write the same .exe simultaneously.
+    use std::sync::{Mutex, OnceLock};
+    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    let _guard = LOCK.get_or_init(Mutex::default).lock().unwrap();
+
     let status = Command::new("cargo")
         .args(["build", "-p", "machina-emu"])
         .current_dir(project_root())
@@ -286,7 +307,7 @@ fn sifive_test_pass_clean_exit() {
 #[test]
 fn sifive_test_reset_reboots() {
     ensure_machina_built();
-    let child = Command::new(bin_path("machina"))
+    let mut child = Command::new(bin_path("machina"))
         .args([
             "-M",
             "riscv64-ref",
@@ -307,10 +328,7 @@ fn sifive_test_reset_reboots() {
     std::thread::sleep(std::time::Duration::from_secs(3));
 
     // Kill the process (it will loop forever).
-    #[cfg(unix)]
-    unsafe {
-        libc::kill(child.id() as libc::pid_t, libc::SIGTERM);
-    }
+    let _ = child.kill();
 
     let output = child.wait_with_output().expect("wait failed");
     let combined = format!(

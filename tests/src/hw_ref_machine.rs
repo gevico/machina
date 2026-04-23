@@ -611,6 +611,7 @@ fn test_ref_machine_blk_device_unaffected() {
     assert_eq!(magic, 0x74726976); // "virt"
 }
 
+#[cfg(unix)]
 #[test]
 fn test_ref_machine_net_via_pipe_backend() {
     use machina_hw_virtio::net::{PipeBackend, VirtioNet};
@@ -640,6 +641,7 @@ fn test_ref_machine_net_via_pipe_backend() {
         .any(|m| m.owner == "virtio-mmio1"));
 }
 
+#[cfg(unix)]
 #[test]
 fn test_ref_machine_net_fdt_node() {
     use machina_hw_virtio::net::{PipeBackend, VirtioNet};
@@ -667,6 +669,7 @@ fn test_ref_machine_net_fdt_node() {
     );
 }
 
+#[cfg(unix)]
 #[test]
 fn test_ref_machine_blk_and_net_coexist() {
     use machina_hw_virtio::net::{PipeBackend, VirtioNet};

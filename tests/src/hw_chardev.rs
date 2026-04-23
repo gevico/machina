@@ -1,7 +1,9 @@
 use std::sync::{Arc, Mutex};
 
+#[cfg(unix)]
+use machina_hw_core::chardev::SocketChardev;
 use machina_hw_core::chardev::{
-    CharFrontend, Chardev, NullChardev, SocketChardev, StdioChardev,
+    CharFrontend, Chardev, NullChardev, StdioChardev,
 };
 
 #[test]
@@ -83,6 +85,7 @@ fn test_stdio_chardev_write() {
     c.write(b'X');
 }
 
+#[cfg(unix)]
 #[test]
 fn test_socket_chardev_not_connected() {
     let mut c = SocketChardev::new();

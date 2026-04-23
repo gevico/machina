@@ -1,55 +1,32 @@
-use std::ptr;
+use memmap2::MmapMut;
 
-/// mmap-backed host memory allocation.
+/// Anonymous memory allocation backed by the OS.
 ///
-/// Owns a contiguous region of anonymous memory obtained via
-/// `mmap(MAP_PRIVATE | MAP_ANONYMOUS)`.  Freed on drop.
+/// On Unix uses `mmap(MAP_PRIVATE | MAP_ANONYMOUS)`.
+/// On Windows uses `VirtualAlloc`.
+/// Both paths are handled transparently by `memmap2`.
 pub struct RamBlock {
-    ptr: *mut u8,
-    size: u64,
+    mmap: MmapMut,
 }
 
 impl RamBlock {
     pub fn new(size: u64) -> Self {
-        // SAFETY: mmap with MAP_ANONYMOUS returns a fresh
-        // zero-filled mapping or MAP_FAILED.
-        let ptr = unsafe {
-            libc::mmap(
-                ptr::null_mut(),
-                size as usize,
-                libc::PROT_READ | libc::PROT_WRITE,
-                libc::MAP_PRIVATE | libc::MAP_ANONYMOUS,
-                -1,
-                0,
-            ) as *mut u8
-        };
-        assert!(
-            !ptr.is_null() && ptr != libc::MAP_FAILED as *mut u8,
-            "mmap failed for size {size}"
-        );
-        Self { ptr, size }
+        let mmap = MmapMut::map_anon(size as usize).unwrap_or_else(|e| {
+            panic!("failed to allocate {size} bytes of RAM: {e}")
+        });
+        Self { mmap }
     }
 
     pub fn as_ptr(&self) -> *mut u8 {
-        self.ptr
+        self.mmap.as_ptr() as *mut u8
     }
 
     pub fn size(&self) -> u64 {
-        self.size
+        self.mmap.len() as u64
     }
 }
 
-// SAFETY: The mmap'd memory is exclusively owned by this
-// RamBlock instance; no aliasing pointers exist.
+// SAFETY: The anonymous mapping is exclusively owned by this
+// RamBlock; no aliasing pointers exist outside it.
 unsafe impl Send for RamBlock {}
 unsafe impl Sync for RamBlock {}
-
-impl Drop for RamBlock {
-    fn drop(&mut self) {
-        // SAFETY: ptr/size were produced by a successful mmap
-        // in `new` and have not been modified since.
-        unsafe {
-            libc::munmap(self.ptr as *mut libc::c_void, self.size as usize);
-        }
-    }
-}

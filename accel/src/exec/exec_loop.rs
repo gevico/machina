@@ -1,16 +1,6 @@
 use std::sync::atomic::Ordering;
 
-// sigjmp_buf for helper exception handling.
-// On x86-64 Linux, sigjmp_buf = __jmp_buf_tag[1]
-// = 200 bytes (__jmp_buf[8 longs] + int + pad +
-// __sigset_t[16 longs]).
-#[repr(C, align(8))]
-struct SigJmpBuf([u8; 200]);
-
-unsafe extern "C" {
-    #[link_name = "__sigsetjmp"]
-    fn sigsetjmp(env: *mut SigJmpBuf, savemask: i32) -> i32;
-}
+use crate::plat::{self, JmpBuf};
 
 use super::{ExecEnv, PerCpuState, SharedState, MIN_CODE_BUF_REMAINING};
 use crate::cpu::GuestCpu;
@@ -76,12 +66,12 @@ where
     // Set up setjmp context for helper longjmp.
     // Helpers call longjmp(jmp_env, 1) when they need
     // to abort TB execution (e.g. illegal CSR access).
-    let mut jmp_env: SigJmpBuf = std::mem::zeroed();
-    let jmp_ptr = &mut jmp_env as *mut SigJmpBuf;
+    let mut jmp_env: JmpBuf = std::mem::zeroed();
+    let jmp_ptr = &mut jmp_env as *mut JmpBuf;
     cpu.set_jmp_env(jmp_ptr as u64);
 
     'dispatch: loop {
-        if sigsetjmp(jmp_ptr, 0) != 0 {
+        if plat::do_setjmp(jmp_ptr) != 0 {
             // Helper raised an exception via longjmp.
             next_tb_hint = None;
         }
@@ -547,12 +537,12 @@ where
     // max_insns.
     let orig_max = TranslationBlock::max_insns(cflags);
     let mut cur_max = orig_max;
-    let mut jmp_buf: SigJmpBuf = unsafe { std::mem::zeroed() };
-    let jmp_ptr = &mut jmp_buf as *mut SigJmpBuf;
+    let mut jmp_buf: JmpBuf = unsafe { std::mem::zeroed() };
+    let jmp_ptr = &mut jmp_buf as *mut JmpBuf;
     let saved_offset = shared.code_buf().offset();
 
     loop {
-        let rc = unsafe { sigsetjmp(jmp_ptr, 0) };
+        let rc = unsafe { plat::do_setjmp(jmp_ptr) };
         if rc == -2 {
             // Overflow: reset code buffer cursor and
             // retry with fewer instructions.
@@ -660,7 +650,11 @@ where
     let tb_ptr = shared.code_buf().ptr_at(tb.host_offset);
     let env_ptr = cpu.env_ptr();
 
-    let prologue_fn: unsafe extern "C" fn(*mut u8, *const u8) -> usize =
+    // The JIT prologue always uses SysV AMD64 ABI
+    // (RDI/RSI arguments), regardless of host OS, so
+    // we must declare it as "sysv64" — not "C" — to
+    // get the correct register mapping on Windows.
+    let prologue_fn: unsafe extern "sysv64" fn(*mut u8, *const u8) -> usize =
         core::mem::transmute(shared.code_buf().base_ptr());
     prologue_fn(env_ptr, tb_ptr)
 }

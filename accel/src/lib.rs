@@ -5,6 +5,7 @@ pub mod exec;
 pub mod ir;
 pub mod liveness;
 pub mod optimize;
+pub mod plat;
 pub mod regalloc;
 pub mod timer;
 pub mod translate;

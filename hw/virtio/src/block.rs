@@ -1,8 +1,10 @@
 // VirtIO block device backend: mmap'd raw file.
 
-use std::fs::{File, OpenOptions};
+use std::fs::OpenOptions;
 use std::io;
 use std::path::Path;
+
+use memmap2::MmapMut;
 
 use crate::queue::{Desc, VirtQueue, VRING_DESC_F_WRITE};
 use crate::VirtioDevice;
@@ -23,13 +25,11 @@ pub const VIRTIO_F_VERSION_1: u64 = 1 << 32;
 
 /// VirtIO block device backed by a raw file.
 pub struct VirtioBlk {
-    data: *mut u8,
+    mmap: MmapMut,
     capacity: u64,
-    _file: File,
-    _mmap_len: usize,
 }
 
-// SAFETY: mmap pointer is stable for the file's lifetime.
+// SAFETY: MmapMut pointer is stable for the file's lifetime.
 unsafe impl Send for VirtioBlk {}
 
 impl VirtioBlk {
@@ -47,30 +47,23 @@ impl VirtioBlk {
                 ),
             ));
         }
-        let ptr = unsafe {
-            libc::mmap(
-                std::ptr::null_mut(),
-                len,
-                libc::PROT_READ | libc::PROT_WRITE,
-                libc::MAP_SHARED,
-                std::os::unix::io::AsRawFd::as_raw_fd(&file),
-                0,
-            )
-        };
-        if ptr == libc::MAP_FAILED {
-            return Err(io::Error::last_os_error());
-        }
+        // SAFETY: file is opened read-write and remains
+        // alive for the lifetime of the mmap.
+        let mmap = unsafe { MmapMut::map_mut(&file)? };
         Ok(Self {
-            data: ptr as *mut u8,
             capacity: len as u64 / SECTOR_SIZE,
-            _file: file,
-            _mmap_len: len,
+            mmap,
         })
     }
 
     /// Device capacity in 512-byte sectors.
     pub fn capacity(&self) -> u64 {
         self.capacity
+    }
+
+    /// Raw pointer to the start of the mapped data.
+    fn data_ptr(&self) -> *mut u8 {
+        self.mmap.as_ptr() as *mut u8
     }
 
     /// Process a single block request from a descriptor
@@ -155,6 +148,7 @@ impl VirtioBlk {
             Some(o) => o,
             None => return VIRTIO_BLK_S_IOERR,
         };
+        let disk_cap = self.capacity * SECTOR_SIZE;
         for desc in data_descs {
             if desc.flags & VRING_DESC_F_WRITE == 0 {
                 continue;
@@ -167,12 +161,12 @@ impl VirtioBlk {
             if guest_off + len > ram_size {
                 return VIRTIO_BLK_S_IOERR;
             }
-            if disk_off + len > self.capacity * SECTOR_SIZE {
+            if disk_off + len > disk_cap {
                 return VIRTIO_BLK_S_IOERR;
             }
             unsafe {
                 std::ptr::copy_nonoverlapping(
-                    self.data.add(disk_off as usize),
+                    self.data_ptr().add(disk_off as usize),
                     ram.add(guest_off as usize),
                     len as usize,
                 );
@@ -195,6 +189,7 @@ impl VirtioBlk {
             Some(o) => o,
             None => return VIRTIO_BLK_S_IOERR,
         };
+        let disk_cap = self.capacity * SECTOR_SIZE;
         for desc in data_descs {
             if desc.flags & VRING_DESC_F_WRITE != 0 {
                 continue;
@@ -207,13 +202,13 @@ impl VirtioBlk {
             if guest_off + len > ram_size {
                 return VIRTIO_BLK_S_IOERR;
             }
-            if disk_off + len > self.capacity * SECTOR_SIZE {
+            if disk_off + len > disk_cap {
                 return VIRTIO_BLK_S_IOERR;
             }
             unsafe {
                 std::ptr::copy_nonoverlapping(
                     ram.add(guest_off as usize),
-                    self.data.add(disk_off as usize),
+                    self.data_ptr().add(disk_off as usize),
                     len as usize,
                 );
             }
@@ -298,16 +293,6 @@ impl VirtioDevice for VirtioBlk {
 
         queue.write_used_idx(used_idx, ram, ram_base, ram_size);
         processed
-    }
-}
-
-impl Drop for VirtioBlk {
-    fn drop(&mut self) {
-        if !self.data.is_null() {
-            unsafe {
-                libc::munmap(self.data as *mut libc::c_void, self._mmap_len);
-            }
-        }
     }
 }
 

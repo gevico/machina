@@ -919,7 +919,12 @@ fn project_root() -> std::path::PathBuf {
 }
 
 fn bin_path(name: &str) -> std::path::PathBuf {
-    project_root().join("target").join("debug").join(name)
+    let base = project_root().join("target").join("debug").join(name);
+    if cfg!(windows) {
+        base.with_extension("exe")
+    } else {
+        base
+    }
 }
 
 fn sifive_pass_bin() -> std::path::PathBuf {
@@ -927,6 +932,12 @@ fn sifive_pass_bin() -> std::path::PathBuf {
 }
 
 fn ensure_machina_built() {
+    // Serialise concurrent builds: on Windows multiple linkers
+    // cannot write the same .exe simultaneously.
+    use std::sync::{Mutex, OnceLock};
+    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    let _guard = LOCK.get_or_init(Mutex::default).lock().unwrap();
+
     let status = Command::new("cargo")
         .args(["build", "-p", "machina-emu"])
         .current_dir(project_root())

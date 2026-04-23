@@ -36,7 +36,7 @@ pub unsafe fn translate_and_execute(
     // Prologue signature:
     //   fn(env: *mut u8, tb_ptr: *const u8) -> usize
     // RDI = env, RSI = TB code pointer, returns RAX
-    let prologue_fn: unsafe extern "C" fn(*mut u8, *const u8) -> usize =
+    let prologue_fn: unsafe extern "sysv64" fn(*mut u8, *const u8) -> usize =
         core::mem::transmute(buf.base_ptr());
     let tb_ptr = buf.ptr_at(tb_start);
     let raw = prologue_fn(env, tb_ptr);

@@ -7,13 +7,52 @@ on:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    name: test (${{ matrix.name }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            name: linux
+            shell: bash
+          - os: windows-latest
+            name: msys2
+            shell: msys2 {0}
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 90
     env:
       CARGO_TERM_COLOR: always
+    defaults:
+      run:
+        shell: ${{ matrix.shell }}
+
     steps:
       - name: Checkout machina
         uses: actions/checkout@v4
+
+      - name: Set up MSYS2 (Windows)
+        if: matrix.name == 'msys2'
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          path-type: inherit
+          cache: true
+
+      # Disable certificate revocation checks on Windows
+      # to avoid CRYPT_E_REVOCATION_OFFLINE failures on
+      # GitHub-hosted runners without internet CRL access.
+      - name: Configure cargo (Windows)
+        if: matrix.name == 'msys2'
+        shell: pwsh
+        run: |
+          $dir = "$env:USERPROFILE\.cargo"
+          New-Item -ItemType Directory -Force -Path $dir | Out-Null
+          Add-Content -Path "$dir\config.toml" -Value @"
+
+          [http]
+          check-revoke = false
+          "@
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -21,7 +60,8 @@ jobs:
       - name: Cache Cargo
         uses: Swatinem/rust-cache@v2
 
-      - name: Install test dependencies
+      - name: Install test dependencies (Linux)
+        if: matrix.name == 'linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y \
@@ -30,4 +70,4 @@ jobs:
             qemu-user
 
       - name: Run all tests
-        run: make test
+        run: cargo test -p machina-tests

@@ -57,6 +57,7 @@ machina-irbackend   = { version = "0.1.2", path = "tools/irbackend" }
 
 # External dependencies
 libc        = "0.2"
+memmap2     = "0.9"
 serde_json  = "1"
 tempfile    = "3"
 parking_lot = "0.12"
@@ -90,7 +91,9 @@ machina-monitor  = { workspace = true }
 machina-hw-core  = { workspace = true }
 machina-gdbstub  = { workspace = true }
 machina-util     = { workspace = true }
-libc             = { workspace = true }
+
+[target.'cfg(unix)'.dependencies]
+libc = { workspace = true }
 
 [profile.release]
 debug = 1

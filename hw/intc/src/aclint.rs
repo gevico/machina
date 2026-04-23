@@ -317,7 +317,17 @@ impl Aclint {
         }
     }
 
-    fn cancel_timers(&self) {
+    /// Cancel all pending timer threads by bumping the
+    /// cancel generation for every hart.  After this call
+    /// any sleeping timer thread that wakes up will find
+    /// its stored generation stale and return without
+    /// writing to the CPU's neg_align field.
+    ///
+    /// Must be called before the CPU that owns neg_align
+    /// is freed (e.g. immediately after cpu_mgr.run()
+    /// returns) to avoid a use-after-free in timer threads
+    /// that outlive the CPU.
+    pub fn cancel_timers(&self) {
         for gen in &self.timer_state.cancel_gen {
             gen.fetch_add(1, Ordering::SeqCst);
         }

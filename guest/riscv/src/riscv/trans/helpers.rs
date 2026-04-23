@@ -10,7 +10,7 @@
 /// RV64 signed division: div-by-zero -> -1,
 /// MIN/-1 -> MIN.
 #[no_mangle]
-pub extern "C" fn helper_divs64(a: i64, b: i64) -> i64 {
+pub extern "sysv64" fn helper_divs64(a: i64, b: i64) -> i64 {
     if b == 0 {
         -1
     } else if a == i64::MIN && b == -1 {
@@ -23,7 +23,7 @@ pub extern "C" fn helper_divs64(a: i64, b: i64) -> i64 {
 /// RV64 signed remainder: div-by-zero -> a,
 /// MIN/-1 -> 0.
 #[no_mangle]
-pub extern "C" fn helper_rems64(a: i64, b: i64) -> i64 {
+pub extern "sysv64" fn helper_rems64(a: i64, b: i64) -> i64 {
     if b == 0 {
         a
     } else if a == i64::MIN && b == -1 {
@@ -35,7 +35,7 @@ pub extern "C" fn helper_rems64(a: i64, b: i64) -> i64 {
 
 /// RV64 DIVW: 32-bit signed div, sign-extended to 64.
 #[no_mangle]
-pub extern "C" fn helper_divw64(a: i64, b: i64) -> i64 {
+pub extern "sysv64" fn helper_divw64(a: i64, b: i64) -> i64 {
     let a32 = a as i32;
     let b32 = b as i32;
     let r = if b32 == 0 {
@@ -50,7 +50,7 @@ pub extern "C" fn helper_divw64(a: i64, b: i64) -> i64 {
 
 /// RV64 REMW: 32-bit signed rem, sign-extended to 64.
 #[no_mangle]
-pub extern "C" fn helper_remw64(a: i64, b: i64) -> i64 {
+pub extern "sysv64" fn helper_remw64(a: i64, b: i64) -> i64 {
     let a32 = a as i32;
     let b32 = b as i32;
     let r = if b32 == 0 {
@@ -69,7 +69,7 @@ pub extern "C" fn helper_remw64(a: i64, b: i64) -> i64 {
 
 /// Zbb orc.b helper.
 #[no_mangle]
-pub extern "C" fn helper_orc_b(val: u64) -> u64 {
+pub extern "sysv64" fn helper_orc_b(val: u64) -> u64 {
     let mut r = 0u64;
     for i in 0..8 {
         let byte = (val >> (i * 8)) & 0xFF;
@@ -84,7 +84,7 @@ pub extern "C" fn helper_orc_b(val: u64) -> u64 {
 
 /// Reverse bits within each byte.
 #[no_mangle]
-pub extern "C" fn helper_brev8(val: u64) -> u64 {
+pub extern "sysv64" fn helper_brev8(val: u64) -> u64 {
     let mut r = 0u64;
     for i in 0..8 {
         let byte = ((val >> (i * 8)) & 0xFF) as u8;
@@ -98,7 +98,7 @@ pub extern "C" fn helper_brev8(val: u64) -> u64 {
 
 /// 4-bit nibble permutation.
 #[no_mangle]
-pub extern "C" fn helper_xperm4(rs1: u64, rs2: u64) -> u64 {
+pub extern "sysv64" fn helper_xperm4(rs1: u64, rs2: u64) -> u64 {
     let mut r = 0u64;
     for i in 0..16 {
         let idx = ((rs2 >> (i * 4)) & 0xF) as u32;
@@ -110,7 +110,7 @@ pub extern "C" fn helper_xperm4(rs1: u64, rs2: u64) -> u64 {
 
 /// 8-bit byte permutation.
 #[no_mangle]
-pub extern "C" fn helper_xperm8(rs1: u64, rs2: u64) -> u64 {
+pub extern "sysv64" fn helper_xperm8(rs1: u64, rs2: u64) -> u64 {
     let mut r = 0u64;
     for i in 0..8 {
         let idx = ((rs2 >> (i * 8)) & 0xFF) as u32;
@@ -126,7 +126,7 @@ pub extern "C" fn helper_xperm8(rs1: u64, rs2: u64) -> u64 {
 
 /// Carry-less multiply (low half).
 #[no_mangle]
-pub extern "C" fn helper_clmul(rs1: u64, rs2: u64) -> u64 {
+pub extern "sysv64" fn helper_clmul(rs1: u64, rs2: u64) -> u64 {
     let mut result = 0u64;
     for i in 0..64 {
         if (rs2 >> i) & 1 != 0 {
@@ -138,7 +138,7 @@ pub extern "C" fn helper_clmul(rs1: u64, rs2: u64) -> u64 {
 
 /// Carry-less multiply (high half).
 #[no_mangle]
-pub extern "C" fn helper_clmulh(rs1: u64, rs2: u64) -> u64 {
+pub extern "sysv64" fn helper_clmulh(rs1: u64, rs2: u64) -> u64 {
     let mut result = 0u64;
     for i in 1..64 {
         if (rs2 >> i) & 1 != 0 {
@@ -150,7 +150,7 @@ pub extern "C" fn helper_clmulh(rs1: u64, rs2: u64) -> u64 {
 
 /// Carry-less multiply (reversed).
 #[no_mangle]
-pub extern "C" fn helper_clmulr(rs1: u64, rs2: u64) -> u64 {
+pub extern "sysv64" fn helper_clmulr(rs1: u64, rs2: u64) -> u64 {
     let mut result = 0u64;
     for i in 0..64 {
         if (rs2 >> i) & 1 != 0 {
@@ -166,7 +166,7 @@ pub extern "C" fn helper_clmulr(rs1: u64, rs2: u64) -> u64 {
 /// Uses TLB addend for address translation, matching
 /// how qemu_ld/qemu_st resolve guest virtual addresses.
 #[no_mangle]
-pub extern "C" fn helper_sc(
+pub extern "sysv64" fn helper_sc(
     env: *mut super::super::cpu::RiscvCpu,
     addr: u64,
     val: u64,

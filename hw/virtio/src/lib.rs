@@ -1,5 +1,6 @@
 pub mod block;
 pub mod mmio;
+#[cfg(unix)]
 pub mod net;
 pub mod queue;
 
