@@ -11,26 +11,41 @@ APIs.
 **Test pyramid**:
 
 ```
-              +----------------+
-              |    Difftest    |  machina vs QEMU
-              |   (35 tests)   |
-              +----------------+
-              |    Frontend    |  decode -> IR -> codegen -> execute
-              |   (91 tests)   |  RV32I/RV64I/RVC/RV32F
-              +----------------+
-              |  Integration   |  IR -> liveness -> regalloc
-              |  (105 tests)   |  -> codegen -> execute
-              +----------------+
-              |    Machine     |  mtest framework, device tests
-              |   (48 tests)   |  boot tests, MMIO validation
-         +----+----------------+----+
-         |        Unit Tests        |  core(192) + accel(256)
-         |       (685 tests)        |  + decode(93) + exec(26)
-         |                          |  + machine(118)
-         +--+----+----+----+----+---+
++---------------------------------+
+| System / Full VM |
+| machine(48) + softmmu(31) |
+| + riscv_mmu(12) + riscv_pmp(6)|
+| + softmmu_exec(9) |
++---------------------------------+
+| hw_* Device Tests |
+| aclint(12) + plic(10) + uart(11)|
+| + virtio(10) + loader(3) + fdt(3)|
+| + ref_machine(25) + clock(6) |
+| (118 tests) |
++----+---------------------------------+----+
+| Integration / Pipeline | |
+| IR → liveness → regalloc → codegen | |
+| → execute (94 tests) | |
++---------------------------------------+ |
+| Frontend / Difftest / Exec | |
+| RV32I/RV64I/RVC/RV32F/Zb*/Zicbom | |
+| + differential vs QEMU (35 tests) | |
+| + TB cache, exec loop (31 tests) | |
+| + softfloat (48 tests) | |
+| (276 tests) | |
++--+---+---+---+---+---+---+---+---+---+ |
+| Unit Tests |
+| core(242) + backend(248) + decode(93) |
+| + gdbstub(55) + monitor(19) + trace(4) |
+| + tools(6) + disas(42) |
+| + riscv_*(34) + accel_timer(4) |
+| + memory_region(4) + cli_netdev(7) |
+| + system_cpu_manager(5) |
+| (763 tests) |
++--+----+----+----+----+----+----+----+----+              
 ```
 
-**Total: 964 tests**.
+**Total: 1356 tests**.
 
 ---
 
@@ -55,6 +70,14 @@ cargo test -p machina-tests frontend::    # Frontend instruction tests only
 cargo test -p machina-tests integration:: # Integration tests only
 cargo test -p machina-tests difftest      # Difftests only
 cargo test -p machina-tests machine::     # Machine-level tests only
+cargo test -p machina-tests gdbstub::      # GDB stub tests
+cargo test -p machina-tests monitor::      # Monitor (QMP/HMP) tests
+cargo test -p machina-tests virtio::       # Virtio device tests
+cargo test -p machina-tests softfloat::    # Softfloat tests
+cargo test -p machina-tests softmmu::      # Soft MMU tests
+cargo test -p machina-tests tools::        # Auxiliary tools tests
+cargo test -p machina-tests riscv_::       # RISC-V privileged tests
+cargo test -p machina-tests hw_::          # Hardware device tests
 
 # Run a single test
 cargo test -- test_addi
@@ -88,7 +111,34 @@ TCG_STATS=1 target/release/machina <machine-config>
 # Simple performance comparison (native baseline)
 TIMEFORMAT=%R; time target/release/machina <machine-config>
 ```
+### Test by Change Area
 
+The following table helps you quickly choose the right test command
+based on the code you've changed, avoiding unnecessary full test runs.
+
+| Change Area | Recommended Command | Notes |
+|-------------|---------------------|-------|
+| Loader | `cargo test -p machina-tests hw_loader::` | ELF / binary loading |
+| Monitor (QMP/HMP) | `cargo test -p machina-tests monitor::` | QMP/HMP command tests |
+| Virtio | `cargo test -p machina-tests virtio::` | virtio-blk/net simulation |
+| GDB stub | `cargo test -p machina-tests gdbstub::` | Packet parsing, register access |
+| Softfloat | `cargo test -p machina-tests softfloat::` | IEEE 754 operations |
+| Tools | `cargo test -p machina-tests tools::` | irbackend, irdump, sifive_test |
+| Hardware models | `cargo test -p machina-tests hw_` | UART / PLIC / CLINT / Clock / FDT / IRQ |
+| RISC-V privileged | `cargo test -p machina-tests riscv_` | CSR, exceptions, PMP, MMU |
+| Frontend instructions | `cargo test -p machina-tests frontend::` | All RISC-V extension execution |
+| Integration pipeline | `cargo test -p machina-tests integration::` | IR – codegen – execute |
+| Execution loop | `cargo test -p machina-tests exec::` | TB cache, branches, loops |
+| Backend codegen | `cargo test -p machina-tests backend::` | x86-64 instruction encoding |
+| Decoder generator | `cargo test -p machina-tests decode::` | .decode parsing & code generation |
+| Sysbus / MMIO | `cargo test -p machina-tests hw_sysbus::` | Address space routing, device wiring |
+| Reference machine | `cargo test -p machina-tests hw_ref_machine::` | Full VM boot, FDT, IRQ wiring |
+
+**Tests with external dependencies or longer runtime:**
+
+- **Difftests** (`cargo test -p machina-tests difftest`): require `gcc-riscv64-linux-gnu` and `qemu-riscv64`; runtime is relatively long.
+- **Multi‑vCPU concurrency** (`cargo test -p machina-tests exec::multi_vcpu`): use `--test-threads=1` when debugging.
+- **Machine boot tests** (`hw_ref_machine::`): may need firmware built under `tests/mtest/` with a cross compiler.
 ---
 
 ## 3. Test Architecture
@@ -139,16 +189,29 @@ tests/
 
 | Module | Tests | Share | Description |
 |--------|-------|-------|-------------|
-| backend | 256 | 26.6% | x86-64 instruction encoding, code buffer |
-| core | 192 | 19.9% | IR types, Opcode, Temp, Label, Op, Context |
-| machine | 118 | 12.2% | Device models, MMIO dispatch, boot flow |
-| integration | 105 | 10.9% | IR --> codegen --> execute full pipeline |
-| decode | 93 | 9.6% | .decode parsing, code generation, field extraction |
-| frontend | 91 | 9.4% | RISC-V instruction execution (incl. RVC, RV32F) |
-| mtest | 48 | 5.0% | Machine-level firmware tests (UART/Timer/Boot) |
-| difftest | 35 | 3.6% | machina vs QEMU differential comparison |
-| exec | 26 | 2.7% | TB cache, execution loop, multi-threaded vCPU concurrency |
+| backend | 248 | 18.3% | x86-64 instruction encoding and extensions |
+| core | 242 | 17.8% | IR types, Opcode, Temp, Label, Context, regset, mdev, mom, property, serialize |
+| frontend | 162 | 11.9% | RISC-V instruction execution (RV32I/RV64I/RVC/RV32F/Zba/Zbb/Zbc/Zbs/Zicbom) |
+| hw_* | 118 | 8.7% | Hardware devices: aclint, plic, uart, clock, loader, fdt, ref_machine, sysbus, irq, chardev, virtio |
+| integration | 94 | 6.9% | Complete IR → codegen → execute pipeline |
+| decode | 93 | 6.9% | .decode parsing, code generation, field extraction |
+| gdbstub | 55 | 4.1% | GDB remote debugging protocol |
+| softfloat | 48 | 3.5% | IEEE 754 floating-point arithmetic |
+| disas_bitmanip | 42 | 3.1% | Bit‑manipulation disassembly tests |
+| difftest | 35 | 2.6% | machina vs QEMU differential comparison |
+| riscv_* | 34 | 2.5% | RISC-V CSR, exceptions, PMP, MMU |
+| exec | 31 | 2.3% | TB cache, execution loop, multi‑vCPU concurrency |
+| softmmu | 31 | 2.3% | Soft MMU / TLB tests |
+| monitor | 19 | 1.4% | QMP/HMP monitor commands |
+| virtio | 10 | 0.7% | virtio device models |
+| cli_netdev | 7 | 0.5% | Network device CLI parsing |
+| tools | 6 | 0.4% | Standalone tools (irbackend, irdump, sifive_test) |
+| system_cpu_manager | 5 | 0.4% | CPU manager |
+| trace | 4 | 0.3% | Log tracing |
+| memory_region | 4 | 0.3% | Memory region |
+| accel_timer | 4 | 0.3% | Virtual timer |
 
+**Note**: Counts obtained from `cargo test -p machina-tests -- --list` on 2026-04-25; exact numbers may vary with feature flags.
 ---
 
 ## 4. Unit Tests

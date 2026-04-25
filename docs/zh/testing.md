@@ -9,26 +9,41 @@ Machina 采用分层测试策略，从底层数据结构到完整的全系统模
 **测试金字塔**：
 
 ```
-              +----------------+
-              |    Difftest    |  machina vs QEMU
-              |   (35 tests)   |
-              +----------------+
-              |    Frontend    |  decode -> IR -> codegen -> execute
-              |   (91 tests)   |  RV32I/RV64I/RVC/RV32F
-              +----------------+
-              |  Integration   |  IR -> liveness -> regalloc
-              |  (105 tests)   |  -> codegen -> execute
-              +----------------+
-              |    Machine     |  mtest framework, device tests
-              |   (48 tests)   |  boot tests, MMIO validation
-         +----+----------------+----+
-         |        Unit Tests        |  core(192) + accel(256)
-         |       (685 tests)        |  + decode(93) + exec(26)
-         |                          |  + machine(118)
-         +--+----+----+----+----+---+
++---------------------------------+
+| System / Full VM |
+| machine(48) + softmmu(31) |
+| + riscv_mmu(12) + riscv_pmp(6)|
+| + softmmu_exec(9) |
++---------------------------------+
+| hw_* Device Tests |
+| aclint(12) + plic(10) + uart(11)|
+| + virtio(10) + loader(3) + fdt(3)|
+| + ref_machine(25) + clock(6) |
+| (118 tests) |
++----+---------------------------------+----+
+| Integration / Pipeline | |
+| IR → liveness → regalloc → codegen | |
+| → execute (94 tests) | |
++---------------------------------------+ |
+| Frontend / Difftest / Exec | |
+| RV32I/RV64I/RVC/RV32F/Zb*/Zicbom | |
+| + differential vs QEMU (35 tests) | |
+| + TB cache, exec loop (31 tests) | |
+| + softfloat (48 tests) | |
+| (276 tests) | |
++--+---+---+---+---+---+---+---+---+---+ |
+| Unit Tests |
+| core(242) + backend(248) + decode(93) |
+| + gdbstub(55) + monitor(19) + trace(4) |
+| + tools(6) + disas(42) |
+| + riscv_*(34) + accel_timer(4) |
+| + memory_region(4) + cli_netdev(7) |
+| + system_cpu_manager(5) |
+| (763 tests) |
++--+----+----+----+----+----+----+----+----+
 ```
 
-**总计：964 个测试**。
+**总计：1356 个测试**（通过 `cargo test --list` 于 2026-04-25 统计，实际数量可能因编译特性而略有差异）。
 
 ---
 
@@ -53,6 +68,14 @@ cargo test -p machina-tests frontend::    # 仅前端指令测试
 cargo test -p machina-tests integration:: # 仅集成测试
 cargo test -p machina-tests difftest      # 仅差分测试
 cargo test -p machina-tests machine::     # 仅机器级测试
+cargo test -p machina-tests gdbstub::      # GDB 桩测试
+cargo test -p machina-tests monitor::      # 监控接口测试
+cargo test -p machina-tests virtio::       # virtio 设备测试
+cargo test -p machina-tests softfloat::    # 软浮点测试
+cargo test -p machina-tests softmmu::      # 软 MMU 测试
+cargo test -p machina-tests tools::        # 辅助工具测试
+cargo test -p machina-tests riscv_::       # RISC-V 特权相关测试
+cargo test -p machina-tests hw_::          # 硬件设备测试
 
 # 运行单个测试
 cargo test -- test_addi
@@ -86,6 +109,35 @@ TCG_STATS=1 target/release/machina <machine-config>
 # 简单性能对照（本机基线）
 TIMEFORMAT=%R; time target/release/machina <machine-config>
 ```
+
+### 按改动范围运行测试
+
+以下速查表帮助开发者根据改动的模块快速选择所需测试命令，避免运行全量测试浪费时间。
+
+| 改动范围 | 建议运行命令 | 说明 |
+|----------|-------------|------|
+| Loader（镜像加载） | `cargo test -p machina-tests hw_loader::` | ELF/Binary 加载 |
+| Monitor（监控接口） | `cargo test -p machina-tests monitor::` | QMP/HMP 交互测试 |
+| Virtio 设备 | `cargo test -p machina-tests virtio::` | virtio-blk/net 模拟 |
+| GDB 远程调试 | `cargo test -p machina-tests gdbstub::` | 数据包解析、寄存器访问 |
+| 软浮点 | `cargo test -p machina-tests softfloat::` | IEEE 754 运算 |
+| 独立工具 | `cargo test -p machina-tests tools::` | irbackend, irdump, sifive_test |
+| 硬件设备模型 | `cargo test -p machina-tests hw_` | UART/PLIC/CLINT/Clock/FDT/IRQ |
+| RISC-V 特权架构 | `cargo test -p machina-tests riscv_` | CSR、异常、PMP、MMU |
+| 前端指令执行 | `cargo test -p machina-tests frontend::` | 全部 RISC-V 扩展指令 |
+| 集成流水线 | `cargo test -p machina-tests integration::` | IR – 代码生成 – 执行 |
+| 执行循环 | `cargo test -p machina-tests exec::` | TB 缓存、分支、循环 |
+| 后端编码 | `cargo test -p machina-tests backend::` | x86-64 指令编码 |
+| 解码器生成 | `cargo test -p machina-tests decode::` | .decode 解析与生成 |
+| Sysbus/MMIO 分发 | `cargo test -p machina-tests hw_sysbus::` | 地址空间、设备挂载 |
+| 参考机器 | `cargo test -p machina-tests hw_ref_machine::` | 整机启动、FDT、IRQ 接线 |
+
+**耗时较长或依赖外部工具的测试**：
+
+- **差分测试**（`cargo test -p machina-tests difftest`）：需要安装 `gcc-riscv64-linux-gnu` 和 `qemu-riscv64`，运行时间较长。
+- **多 vCPU 并发测试**（`cargo test -p machina-tests exec::multi_vcpu`）：建议在调试时使用 `--test-threads=1`。
+- **机器引导测试**（`hw_ref_machine::`）：可能需要先构建 `tests/mtest/` 下的固件（交叉编译器）。
+
 
 ---
 
@@ -137,17 +189,29 @@ tests/
 
 | 模块 | 测试数 | 占比 | 说明 |
 |------|--------|------|------|
-| backend | 256 | 26.6% | x86-64 指令编码、代码缓冲区 |
-| core | 192 | 19.9% | IR 类型、Opcode、Temp、Label、Op、Context |
-| machine | 118 | 12.2% | 设备模型、MMIO 分发、引导流程 |
-| integration | 105 | 10.9% | IR --> codegen --> 执行全流水线 |
-| decode | 93 | 9.6% | .decode 解析、代码生成、字段提取 |
-| frontend | 91 | 9.4% | RISC-V 指令执行（含 RVC、RV32F） |
-| mtest | 48 | 5.0% | 机器级固件测试（UART/Timer/Boot） |
-| difftest | 35 | 3.6% | machina vs QEMU 差分对比 |
-| exec | 26 | 2.7% | TB 缓存、执行循环、多 vCPU 并发 |
+| backend | 248 | 18.3% | x86-64 指令编码与扩展 |
+| core | 242 | 17.8% | IR 类型、Opcode、Temp、Label、Context、regset、mdev、mom、property、serialize |
+| frontend | 162 | 11.9% | RISC-V 指令执行（RV32I/RV64I/RVC/RV32F/Zba/Zbb/Zbc/Zbs/Zicbom） |
+| hw_* | 118 | 8.7% | 硬件设备：aclint、plic、uart、clock、loader、fdt、ref_machine、sysbus、irq、chardev、virtio |
+| integration | 94 | 6.9% | IR → codegen → 执行全流水线 |
+| decode | 93 | 6.9% | .decode 解析、代码生成、字段提取 |
+| gdbstub | 55 | 4.1% | GDB 远程调试协议 |
+| softfloat | 48 | 3.5% | IEEE 754 浮点运算 |
+| disas_bitmanip | 42 | 3.1% | 位操作反汇编测试 |
+| difftest | 35 | 2.6% | machina vs QEMU 差分对比 |
+| riscv_* | 34 | 2.5% | RISC-V CSR、异常、PMP、MMU |
+| exec | 31 | 2.3% | TB 缓存、执行循环、多 vCPU 并发 |
+| softmmu | 31 | 2.3% | 软 MMU/TLB 测试 |
+| monitor | 19 | 1.4% | QMP/HMP 监控命令 |
+| virtio | 10 | 0.7% | virtio 设备模型 |
+| cli_netdev | 7 | 0.5% | 网络设备 CLI 解析 |
+| tools | 6 | 0.4% | 独立工具（irbackend、irdump、sifive_test） |
+| system_cpu_manager | 5 | 0.4% | CPU 管理器 |
+| trace | 4 | 0.3% | 日志跟踪 |
+| memory_region | 4 | 0.3% | 内存区域 |
+| accel_timer | 4 | 0.3% | 虚拟定时器 |
 
----
+**统计说明**：基于 `cargo test -p machina-tests -- --list` 输出归类，日期 2026-04-25，具体数量可能随功能开关变化。---
 
 ## 4. 单元测试
 
