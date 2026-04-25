@@ -43,7 +43,7 @@ fn handle_connection(
     let _ = writeln!(stream, "{}", GREETING);
     let _ = stream.flush();
 
-    let reader = BufReader::new(stream.try_clone().expect("failed to clone monitor stream"));
+    let reader = BufReader::new(stream.try_clone().expect("monitor mutex poisoned"));
     let mut caps_done = false;
 
     for line in reader.lines() {
