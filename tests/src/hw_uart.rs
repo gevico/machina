@@ -309,7 +309,15 @@ fn test_uart_realize_via_sysbus_installs_runtime_wiring() {
     }
 
     assert!(address_space.is_mapped(GPA::new(0x1000_0000), 4));
-    std::thread::sleep(std::time::Duration::from_millis(10));
+
+    // Poll until the RX byte arrives (start_input spawns a thread).
+    for _ in 0..50 {
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        let lsr = uart.read(5);
+        if lsr & 0x01 != 0 {
+            break;
+        }
+    }
 
     {
         assert!(uart.realized());
