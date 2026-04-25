@@ -1,5 +1,6 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use machina_core::address::GPA;
 use machina_hw_core::bus::SysBus;
@@ -10,6 +11,26 @@ use machina_memory::region::MemoryRegion;
 
 struct TestIrqSink {
     levels: Vec<AtomicBool>,
+}
+
+/// Wait for a condition to become true with a deadline.
+/// Returns true if the condition was met within the timeout.
+fn wait_with_deadline<F>(condition: F, timeout: Duration) -> bool
+where
+    F: Fn() -> bool,
+{
+    let start = Instant::now();
+    let deadline = start + timeout;
+
+    while Instant::now() < deadline {
+        if condition() {
+            return true;
+        }
+        // Small sleep to avoid busy-waiting
+        std::thread::sleep(Duration::from_millis(1));
+    }
+
+    false
 }
 
 impl TestIrqSink {
@@ -239,13 +260,26 @@ fn test_aclint_timer_thread_asserts_mti() {
     // Set mtime near current wall clock, mtimecmp 10ms
     // in the future. The timer thread should assert MTI.
     let now = aclint.read(0xBFF8, 8);
-    aclint.write(0x4000, 8, now + 100_000); // 10ms
+    let mtimecmp = now + 100_000; // 10ms
+    aclint.write(0x4000, 8, mtimecmp);
 
     assert!(!sink.level(mti), "MTI should be low before deadline");
 
-    // Wait for timer thread to fire.
-    std::thread::sleep(std::time::Duration::from_millis(30));
-    assert!(sink.level(mti), "MTI should be high after timer deadline");
+    // Wait for timer thread to fire with deadline
+    let timeout = Duration::from_millis(100);
+    let success = wait_with_deadline(|| sink.level(mti), timeout);
+
+    // Get current state for diagnostics
+    let current_mtime = aclint.read(0xBFF8, 8);
+    let current_mtimecmp = aclint.read(0x4000, 8);
+
+    assert!(
+        success,
+        "MTI should be high after timer deadline. Current state: mtime={}, mtimecmp={}, waited for {:?}",
+        current_mtime,
+        current_mtimecmp,
+        timeout
+    );
 }
 
 #[test]
@@ -265,21 +299,40 @@ fn test_aclint_retarget_future_cancels_stale_timer() {
 
     // After 50ms, old timer would have fired but MTI
     // should still be low because it was cancelled.
-    std::thread::sleep(std::time::Duration::from_millis(50));
+    let timeout1 = Duration::from_millis(50);
+    std::thread::sleep(timeout1);
+
+    // Get current state for diagnostics
+    let current_mtime1 = aclint.read(0xBFF8, 8);
+    let current_mtimecmp1 = aclint.read(0x4000, 8);
+
     assert!(
         !sink.level(mti),
-        "MTI must stay low after retarget cancelled \
-         the old 20ms timer"
+        "MTI must stay low after retarget cancelled the old 20ms timer. Current state: mtime={}, mtimecmp={}, waited for {:?}",
+        current_mtime1,
+        current_mtimecmp1,
+        timeout1
     );
 
     // Now retarget to near future (10ms from current).
     let now2 = aclint.read(0xBFF8, 8);
-    aclint.write(0x4000, 8, now2 + 100_000); // 10ms
-    std::thread::sleep(std::time::Duration::from_millis(30));
+    let mtimecmp2 = now2 + 100_000; // 10ms
+    aclint.write(0x4000, 8, mtimecmp2);
+
+    // Wait for timer thread to fire with deadline
+    let timeout2 = Duration::from_millis(100);
+    let success = wait_with_deadline(|| sink.level(mti), timeout2);
+
+    // Get current state for diagnostics
+    let current_mtime2 = aclint.read(0xBFF8, 8);
+    let current_mtimecmp2 = aclint.read(0x4000, 8);
+
     assert!(
-        sink.level(mti),
-        "MTI should be high after retarget to near \
-         future"
+        success,
+        "MTI should be high after retarget to near future. Current state: mtime={}, mtimecmp={}, waited for {:?}",
+        current_mtime2,
+        current_mtimecmp2,
+        timeout2
     );
 }
 
