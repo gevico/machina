@@ -88,6 +88,21 @@ fn test_property_required_blocks_realize() {
 }
 
 #[test]
+fn test_property_required_default_allows_realize() {
+    let mut state = MDeviceState::new("uart0");
+    state
+        .define_property(
+            MPropertySpec::new("label", MPropertyType::String)
+                .required()
+                .default(MPropertyValue::String("serial0".to_string())),
+        )
+        .unwrap();
+
+    state.mark_realized().unwrap();
+    assert!(state.is_realized());
+}
+
+#[test]
 fn test_property_set_and_realize() {
     let mut dev = TestPropertyDevice::new("uart0");
     dev.mdevice_state_mut()
@@ -115,6 +130,35 @@ fn test_property_type_mismatch_rejected() {
             actual: MPropertyType::Bool,
         }
     );
+}
+
+#[test]
+fn test_property_default_type_mismatch_rejected() {
+    let mut state = MDeviceState::new("uart0");
+    let err = state
+        .define_property(
+            MPropertySpec::new("label", MPropertyType::String)
+                .default(MPropertyValue::Bool(true)),
+        )
+        .expect_err("default value type mismatch must fail");
+    assert_eq!(
+        err,
+        MDeviceError::PropertyTypeMismatch {
+            name: "label".to_string(),
+            expected: MPropertyType::String,
+            actual: MPropertyType::Bool,
+        }
+    );
+}
+
+#[test]
+fn test_property_unknown_property_rejected() {
+    let mut dev = TestPropertyDevice::new("uart0");
+    let err = dev
+        .mdevice_state_mut()
+        .set_property("baud", MPropertyValue::U32(115200))
+        .expect_err("unknown property must fail");
+    assert_eq!(err, MDeviceError::UnknownProperty("baud".to_string()));
 }
 
 #[test]
@@ -187,6 +231,22 @@ fn test_property_schema_late_mutation_rejected() {
         .define_property(MPropertySpec::new("baud", MPropertyType::U32))
         .expect_err("property schema must freeze after realize");
     assert_eq!(err, MDeviceError::LateMutation("property_schema"));
+}
+
+#[test]
+fn test_property_names_are_sorted() {
+    let mut state = MDeviceState::new("uart0");
+    state
+        .define_property(MPropertySpec::new("zeta", MPropertyType::Bool))
+        .unwrap();
+    state
+        .define_property(MPropertySpec::new("alpha", MPropertyType::Bool))
+        .unwrap();
+    state
+        .define_property(MPropertySpec::new("middle", MPropertyType::Bool))
+        .unwrap();
+
+    assert_eq!(state.property_names(), vec!["alpha", "middle", "zeta"]);
 }
 
 #[test]
