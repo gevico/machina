@@ -209,3 +209,77 @@ fn f32_nan_compare_signals_invalid() {
     assert!(!nan.lt(one, &mut e));
     assert!(e.flags().contains(ExcFlags::INVALID));
 }
+
+// ---------------------------------------------------------------------------
+// Float32 min/max edge cases (IEEE 754 representative tests)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn f32_minmax_zero_boundary() {
+    let mut e = env();
+    let p0 = Float32::from_f32(0.0);
+    let n0 = Float32::from_bits(0x8000_0000); // -0.0
+
+    // min(+0, -0) should be -0
+    let mn = p0.min(n0, &mut e);
+    assert_eq!(mn.to_bits(), 0x8000_0000);
+
+    // max(+0, -0) should be +0
+    let mx = p0.max(n0, &mut e);
+    assert_eq!(mx.to_bits(), 0x0000_0000);
+}
+
+#[test]
+fn f32_minmax_qnan_behaviour() {
+    let mut e = env();
+    let qnan = Float32::from_bits(QNAN);
+    let finite = Float32::from_f32(3.14);
+
+    // min(qNaN, finite) -> finite; no INVALID for qNaN
+    let mn = qnan.min(finite, &mut e);
+    assert_eq!(mn.to_f32(), 3.14);
+    assert!(e.flags().is_empty());
+
+    // max(qNaN, finite) -> finite; no INVALID for qNaN
+    let mx = qnan.max(finite, &mut e);
+    assert_eq!(mx.to_f32(), 3.14);
+    assert!(e.flags().is_empty());
+}
+
+#[test]
+fn f32_minmax_snan_behaviour() {
+    let mut e = env();
+    let snan = Float32::from_bits(SNAN);
+    let finite = Float32::from_f32(3.14);
+
+    // min(sNaN, finite) -> finite; INVALID is signalled
+    let mn = snan.min(finite, &mut e);
+    assert_eq!(mn.to_f32(), 3.14);
+    assert!(e.flags().contains(ExcFlags::INVALID));
+
+    // max(sNaN, finite) -> finite; INVALID is signalled
+    let mx = snan.max(finite, &mut e);
+    assert_eq!(mx.to_f32(), 3.14);
+    assert!(e.flags().contains(ExcFlags::INVALID));
+}
+
+#[test]
+fn f32_minmax_signed_ordering() {
+    let mut e = env();
+    let a = Float32::from_f32(-2.0);
+    let b = Float32::from_f32(-1.0);
+    // min(-2, -1) -> -2
+    assert_eq!(a.min(b, &mut e).to_f32(), -2.0);
+    // max(-2, -1) -> -1
+    assert_eq!(a.max(b, &mut e).to_f32(), -1.0);
+
+    // cross-sign: ensure correctness with a negative and a positive
+    // Use -1.0 to verify cross-sign behavior
+    let c = Float32::from_f32(1.0);
+    let d = Float32::from_f32(-1.0);
+    // min(-1.0, +1.0) -> -1.0
+    assert_eq!(d.min(c, &mut e).to_f32(), -1.0);
+    // max(-1.0, +1.0) -> +1.0
+    assert_eq!(d.max(c, &mut e).to_f32(), 1.0);
+}
+
