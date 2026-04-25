@@ -27,7 +27,7 @@ pub fn run_tcp(listener: TcpListener, svc: Arc<Mutex<MonitorService>>) {
                 }
             }
             Err(_) => {
-                if svc.lock().unwrap().state.is_quit_requested() {
+                if svc.lock().expect("monitor mutex poisoned").state.is_quit_requested() {
                     break;
                 }
             }
@@ -43,7 +43,7 @@ fn handle_connection(
     let _ = writeln!(stream, "{}", GREETING);
     let _ = stream.flush();
 
-    let reader = BufReader::new(stream.try_clone().unwrap());
+    let reader = BufReader::new(stream.try_clone().expect("failed to clone monitor stream"));
     let mut caps_done = false;
 
     for line in reader.lines() {
@@ -104,7 +104,7 @@ fn handle_connection(
 
 /// Dispatch a command and return the JSON response.
 pub fn dispatch(cmd: &str, svc: &Arc<Mutex<MonitorService>>) -> Value {
-    let s = svc.lock().unwrap();
+    let s = svc.lock().expect("monitor mutex poisoned");
     match cmd {
         "qmp_capabilities" => json!({"return": {}}),
         "query-status" => {
