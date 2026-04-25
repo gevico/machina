@@ -2,19 +2,6 @@
 
 本文档面向希望参与 Machina 开发的新贡献者，提供从克隆代码到提交 PR 的完整可复现流程。
 
-借助github codespace
-已经具备了make环境，执行curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh，构建rust环境，source "$HOME/.cargo/env"在当前终端下构建环境变量 执行make release随后执行sudo apt-get update
-sudo apt-get install gcc-riscv64-linux-gnu
-
-sudo apt-get install -y qemu-system-riscv64 qemu-user
-
-
-
-
-# Machina 本地开发与测试指南
-
-本文档面向希望参与 Machina 开发的新贡献者，提供从克隆代码到提交 PR 的完整可复现流程。
-
 > **推荐环境**：GitHub Codespace（已预置 make）
 
 ## 环境准备
