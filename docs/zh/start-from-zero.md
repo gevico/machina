@@ -15,7 +15,7 @@ sudo apt-get install -y qemu-system-riscv64 qemu-user
 
 本文档面向希望参与 Machina 开发的新贡献者，提供从克隆代码到提交 PR 的完整可复现流程。
 
-> **推荐环境**：GitHub Codespace（已预置 make 等基础工具链）
+> **推荐环境**：GitHub Codespace（已预置 make）
 
 ## 环境准备
 
