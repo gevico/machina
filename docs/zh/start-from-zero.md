@@ -48,3 +48,4 @@ sudo apt-get install -y qemu-system-riscv64 qemu-user
 
 # 验证安装
 qemu-system-riscv64 --version
+```
