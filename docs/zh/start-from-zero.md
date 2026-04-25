@@ -19,8 +19,6 @@ sudo apt-get install -y qemu-system-riscv64 qemu-user
 
 ## 环境准备
 
-### 1. 安装 Rust 工具链
-
 GitHub Codespace 已具备 make 环境，需要手动安装 Rust：
 
 ```bash
