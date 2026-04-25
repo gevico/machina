@@ -31,6 +31,24 @@ fn test_decode_hex_bytes_odd_len() {
 }
 
 #[test]
+fn test_decode_hex_bytes_non_hex() {
+    // 'z' / 'g' / 'x' are not hex digits; must Err, not
+    // silently parse as 0.
+    assert!(protocol::decode_hex_bytes("zz").is_err());
+    assert!(protocol::decode_hex_bytes("0g").is_err());
+    assert!(protocol::decode_hex_bytes("12xz").is_err());
+    // Pre-existing valid input still works.
+    assert!(protocol::decode_hex_bytes("00ff").is_ok());
+}
+
+#[test]
+fn test_decode_hex_bytes_mixed_case() {
+    // Mixed upper/lower case must remain valid.
+    let decoded = protocol::decode_hex_bytes("AaBbCcDd").unwrap();
+    assert_eq!(decoded, vec![0xaa, 0xbb, 0xcc, 0xdd]);
+}
+
+#[test]
 fn test_parse_hex() {
     assert_eq!(protocol::parse_hex("0"), 0);
     assert_eq!(protocol::parse_hex("ff"), 255);
@@ -49,8 +67,19 @@ fn test_encode_reg_hex() {
 
 #[test]
 fn test_decode_reg_hex() {
-    assert_eq!(protocol::decode_reg_hex("0100000000000000"), 1,);
-    assert_eq!(protocol::decode_reg_hex("efbeadde00000000"), 0xdead_beef,);
+    assert_eq!(protocol::decode_reg_hex("0100000000000000").unwrap(), 1,);
+    assert_eq!(
+        protocol::decode_reg_hex("efbeadde00000000").unwrap(),
+        0xdead_beef,
+    );
+}
+
+#[test]
+fn test_decode_reg_hex_non_hex() {
+    // Non-hex chars must surface as an error rather than
+    // silently decoding to 0.
+    assert!(protocol::decode_reg_hex("zzzzzzzzzzzzzzzz").is_err());
+    assert!(protocol::decode_reg_hex("0g00000000000000").is_err());
 }
 
 #[test]
@@ -73,6 +102,47 @@ fn test_recv_packet_checksum_mismatch() {
     let data = b"$OK#00+".to_vec();
     let mut cursor = std::io::Cursor::new(data);
     assert!(protocol::recv_packet(&mut cursor).is_err());
+}
+
+#[test]
+fn test_recv_packet_invalid_checksum_chars() {
+    // Non-hex characters in the checksum field must be
+    // rejected as InvalidData (not silently parsed as 0
+    // nibbles, which could spuriously pass when payload
+    // sums to 0).
+    use std::io::Cursor;
+
+    // Two-cursor adapter so recv_packet can write the NAK
+    // even though our underlying buffer is read-only.
+    struct RW {
+        rd: Cursor<Vec<u8>>,
+        wr: Vec<u8>,
+    }
+    impl std::io::Read for RW {
+        fn read(&mut self, b: &mut [u8]) -> std::io::Result<usize> {
+            self.rd.read(b)
+        }
+    }
+    impl std::io::Write for RW {
+        fn write(&mut self, b: &[u8]) -> std::io::Result<usize> {
+            self.wr.extend_from_slice(b);
+            Ok(b.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    let mut io = RW {
+        rd: Cursor::new(b"$OK#zz".to_vec()),
+        wr: Vec::new(),
+    };
+    let res = protocol::recv_packet(&mut io);
+    assert!(res.is_err(), "non-hex checksum must fail");
+    let err = res.unwrap_err();
+    assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
+    // Must NAK so peer can retry rather than hang.
+    assert_eq!(io.wr, b"-", "expected NAK on invalid checksum chars");
 }
 
 #[test]

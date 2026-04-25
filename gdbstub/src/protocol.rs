@@ -36,8 +36,20 @@ pub fn recv_packet<R: Read + Write>(stream: &mut R) -> io::Result<String> {
     let mut cksum_buf = [0u8; 2];
     stream.read_exact(&mut cksum_buf)?;
 
-    // Verify checksum.
-    let expected = (hex_val(cksum_buf[0]) << 4) | hex_val(cksum_buf[1]);
+    // Strictly parse the checksum hex; non-hex characters
+    // (e.g. malformed packet from a buggy peer) must NAK
+    // and return an error rather than be silently treated
+    // as zero nibbles.
+    let (Some(hi), Some(lo)) = (hex_val(cksum_buf[0]), hex_val(cksum_buf[1]))
+    else {
+        let _ = stream.write_all(b"-");
+        let _ = stream.flush();
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "non-hex checksum character",
+        ));
+    };
+    let expected = (hi << 4) | lo;
     let actual: u8 = data.iter().fold(0u8, |acc, &b| acc.wrapping_add(b));
     if expected != actual {
         // Send NAK.
@@ -88,12 +100,15 @@ pub fn send_packet_wait_ack<R: Read, W: Write>(
 }
 
 /// Parse a hex nibble from an ASCII byte.
-fn hex_val(b: u8) -> u8 {
+///
+/// Returns `None` for non-hex bytes so callers can reject
+/// malformed input instead of silently treating it as 0.
+fn hex_val(b: u8) -> Option<u8> {
     match b {
-        b'0'..=b'9' => b - b'0',
-        b'a'..=b'f' => b - b'a' + 10,
-        b'A'..=b'F' => b - b'A' + 10,
-        _ => 0,
+        b'0'..=b'9' => Some(b - b'0'),
+        b'a'..=b'f' => Some(b - b'a' + 10),
+        b'A'..=b'F' => Some(b - b'A' + 10),
+        _ => None,
     }
 }
 
@@ -114,6 +129,12 @@ pub fn encode_hex_bytes(data: &[u8]) -> String {
 }
 
 /// Parse a hex-encoded byte slice.
+///
+/// Returns `Err(InvalidData)` when the input has odd length
+/// OR contains any non-hex character. A non-hex byte is
+/// rejected outright rather than silently parsed as 0, so
+/// callers handling RSP register/memory writes can detect
+/// malformed peer packets and respond with `E01`.
 pub fn decode_hex_bytes(hex: &str) -> io::Result<Vec<u8>> {
     if !hex.len().is_multiple_of(2) {
         return Err(io::Error::new(
@@ -121,10 +142,21 @@ pub fn decode_hex_bytes(hex: &str) -> io::Result<Vec<u8>> {
             "odd hex length",
         ));
     }
+    let bytes = hex.as_bytes();
     let mut out = Vec::with_capacity(hex.len() / 2);
     for i in (0..hex.len()).step_by(2) {
-        let hi = hex_val(hex.as_bytes()[i]);
-        let lo = hex_val(hex.as_bytes()[i + 1]);
+        let hi = hex_val(bytes[i]).ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                "non-hex character in hex string",
+            )
+        })?;
+        let lo = hex_val(bytes[i + 1]).ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                "non-hex character in hex string",
+            )
+        })?;
         out.push((hi << 4) | lo);
     }
     Ok(out)
@@ -140,10 +172,19 @@ pub fn encode_reg_hex(val: u64) -> String {
 }
 
 /// Parse a little-endian hex register value.
-pub fn decode_reg_hex(hex: &str) -> u64 {
-    let bytes = decode_hex_bytes(hex).unwrap_or_default();
+///
+/// Uses strict hex decoding: non-hex characters yield
+/// `Err(InvalidData)` so register writes from a malformed
+/// peer don't silently land as 0.
+///
+/// # Errors
+///
+/// Returns `Err(InvalidData)` when `hex` has odd length or
+/// contains a non-hex character.
+pub fn decode_reg_hex(hex: &str) -> io::Result<u64> {
+    let bytes = decode_hex_bytes(hex)?;
     let mut arr = [0u8; 8];
     let len = bytes.len().min(8);
     arr[..len].copy_from_slice(&bytes[..len]);
-    u64::from_le_bytes(arr)
+    Ok(u64::from_le_bytes(arr))
 }
