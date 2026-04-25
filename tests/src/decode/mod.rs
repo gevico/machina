@@ -1077,3 +1077,55 @@ fn generate_16bit_trait_dedup() {
         assert!(seen.insert(name), "duplicate trait method: {name}");
     }
 }
+#[cfg(test)]
+mod decode_error_tests {
+    use super::*;
+
+    #[test]
+    fn test_unknown_format_ref() {
+        let src = r#"
+@valid_fmt 0000
+add 1010 @missing_fmt
+        "#;
+        let err = parse_with_width(src, 32).unwrap_err();
+        assert!(err.contains("unknown format reference @missing_fmt"));
+        assert!(err.contains("line"));
+    }
+
+    #[test]
+    fn test_bad_field_segment() {
+        let src = r#"
+%rs 9-4
+add 0000
+        "#;
+        let err = parse_with_width(src, 32).unwrap_err();
+        assert!(err.contains("invalid segment '9-4'"));
+    }
+
+    #[test]
+    fn test_bit_exceed_max_width() {
+        let src = r#"
+add 000000000000000000000000000000001
+        "#;
+        let err = parse_with_width(src, 32).unwrap_err();
+        assert!(err.contains("exceeds 32 bits"));
+    }
+
+    #[test]
+    fn test_inline_field_non_numeric_len() {
+        let src = r#"
+add 0000 imm:abc
+        "#;
+        let err = parse_with_width(src, 32).unwrap_err();
+        assert!(err.contains("invalid length"));
+    }
+
+    #[test]
+    fn test_invalid_attribute_expr() {
+        let src = r#"
+add 0000 key=hello
+        "#;
+        let err = parse_with_width(src, 32).unwrap_err();
+        assert!(err.contains("only field ref or integer constant allowed"));
+    }
+}
