@@ -146,12 +146,18 @@ fn parse_args() -> Result<CliArgs, String> {
             }
             "-kernel" => {
                 i += 1;
-                cli.kernel = Some(
-                    args.get(i)
-                        .ok_or("-kernel requires argument")?
-                        .clone()
-                        .into(),
-                );
+                let path: PathBuf = args
+                    .get(i)
+                    .ok_or("-kernel requires argument")?
+                    .clone()
+                    .into();
+                if !path.exists() {
+                    return Err(format!(
+                        "-kernel: file not found: {}",
+                        path.display()
+                    ));
+                }
+                cli.kernel = Some(path);
             }
             "-nographic" => {
                 cli.nographic = true;
