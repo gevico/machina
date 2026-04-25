@@ -1077,3 +1077,51 @@ fn generate_16bit_trait_dedup() {
         assert!(seen.insert(name), "duplicate trait method: {name}");
     }
 }
+// ── Error Tests (Fixed & Compile-Safe) ────────────────────────────
+
+#[test]
+fn test_unknown_format_ref() {
+    let src = r#"
+@valid_fmt 0000
+add 1010 @missing_fmt
+"#;
+    let res = parse_with_width(src, 32);
+    assert!(res.is_err());
+}
+
+#[test]
+fn test_bad_field_segment() {
+    let src = r#"
+%rs 9-4
+add 0000
+"#;
+    let res = parse_with_width(src, 32);
+    assert!(res.is_err());
+}
+
+#[test]
+fn test_bit_exceed_max_width() {
+    let src = r#"
+add 000000000000000000000000000000001
+"#;
+    let res = parse_with_width(src, 32);
+    assert!(res.is_err());
+}
+
+#[test]
+fn test_inline_field_non_numeric_len() {
+    let src = r#"
+add 0000 imm:abc
+"#;
+    let res = parse_with_width(src, 32);
+    assert!(res.is_err());
+}
+
+#[test]
+fn test_invalid_attribute_expr() {
+    let src = r#"
+add 0000 key=hello
+"#;
+    let res = parse_with_width(src, 32);
+    assert!(res.is_err());
+}
