@@ -151,11 +151,21 @@ fn parse_args() -> Result<CliArgs, String> {
                     .ok_or("-kernel requires argument")?
                     .clone()
                     .into();
-                if !path.exists() {
-                    return Err(format!(
-                        "-kernel: file not found: {}",
-                        path.display()
-                    ));
+                match path.try_exists() {
+                    Ok(true) => {}
+                    Ok(false) => {
+                        return Err(format!(
+                            "-kernel: file not found: {}",
+                            path.display()
+                        ));
+                    }
+                    Err(e) => {
+                        return Err(format!(
+                            "-kernel: cannot access {}: {}",
+                            path.display(),
+                            e
+                        ));
+                    }
                 }
                 cli.kernel = Some(path);
             }
