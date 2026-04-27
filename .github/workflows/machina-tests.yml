@@ -14,17 +14,12 @@ jobs:
         include:
           - os: ubuntu-latest
             name: linux
-            shell: bash
           - os: windows-latest
             name: msys2
-            shell: msys2 {0}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 90
     env:
       CARGO_TERM_COLOR: always
-    defaults:
-      run:
-        shell: ${{ matrix.shell }}
 
     steps:
       - name: Checkout machina
@@ -69,5 +64,11 @@ jobs:
             gcc-riscv64-linux-gnu \
             qemu-user
 
-      - name: Run all tests
+      - name: Run all tests (Linux)
+        if: matrix.name == 'linux'
+        run: cargo test -p machina-tests
+
+      - name: Run all tests (Windows)
+        if: matrix.name == 'msys2'
+        shell: msys2 {0}
         run: cargo test -p machina-tests
