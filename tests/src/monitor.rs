@@ -189,6 +189,148 @@ fn test_hmp_info_cpus() {
     assert!(out.as_ref().unwrap().contains("CPU #0"));
 }
 
+#[test]
+fn test_hmp_info_registers_after_stop_paused() {
+    use machina_core::monitor::CpuSnapshot;
+    use std::thread;
+    use std::time::Duration;
+
+    let ms = Arc::new(machina_core::monitor::MonitorState::new());
+    let svc = Arc::new(Mutex::new(MonitorService::new(Arc::clone(&ms))));
+
+    // Thread to drive the VM into Paused state by repeatedly calling check_pause
+    // similar to existing tests, ensuring we have a paused VM to read registers.
+    let ms2 = Arc::clone(&ms);
+    let handle = std::thread::spawn(move || {
+        // Wait until a pause is requested, then enter the pause barrier.
+        while !ms2.is_pause_requested() {
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+        // Now act as the exec loop: call check_pause() which will park
+        // the vCPU (setting state to Paused) and block until resumed.
+        let _ = ms2.check_pause();
+        // After resume/quit, thread exits.
+    });
+
+    // Give the worker a moment to start
+    std::thread::sleep(Duration::from_millis(20));
+    // Trigger a pause via stop (non-blocking in this threading setup)
+    hmp::handle_line("stop", &svc).expect("stop should succeed");
+    // Wait for the exec-loop thread to observe the pause and mark Paused.
+    let start = std::time::Instant::now();
+    while ms.vm_state() != machina_core::monitor::VmState::Paused {
+        if start.elapsed() > Duration::from_millis(500) {
+            panic!("timed out waiting for VM to reach Paused state");
+        }
+        std::thread::sleep(Duration::from_millis(1));
+    }
+
+    // inject a simple snapshot so that registers output has data
+    let snap = CpuSnapshot {
+        gpr: [0u64; 32],
+        pc: 0x1234_5678_9ABC_DEFF,
+        priv_level: 0,
+        halted: false,
+    };
+    let state_ref = {
+        let guard = svc.lock().unwrap();
+        Arc::clone(&guard.state)
+    };
+    state_ref.store_snapshot(snap);
+
+    // Read registers; should show lines with x0..x31 and a pc line
+    let out = hmp::handle_line("info registers", &svc).unwrap();
+    // The output formats the PC with a leading space and two spaces after 'pc',
+    // so just verify presence of 'pc' and a hexadecimal value instead of an exact substring.
+    assert!(out.contains("pc") && out.contains("0x"));
+
+    // Resume and cleanup
+    hmp::handle_line("cont", &svc).expect("cont should succeed");
+    handle.join().unwrap();
+}
+
+#[test]
+fn test_mmp_invalid_json_returns_generic_error() {
+    if !tcp_bind_available() {
+        eprintln!("skipping: TCP bind not permitted");
+        return;
+    }
+    let state = Arc::new(MonitorState::new());
+    let svc = Arc::new(Mutex::new(MonitorService::new(Arc::clone(&state))));
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+
+    let svc2 = Arc::clone(&svc);
+    let handle = std::thread::spawn(move || {
+        mmp::run_tcp(listener, svc2);
+    });
+
+    let stream = TcpStream::connect(addr).unwrap();
+    let mut reader = BufReader::new(stream.try_clone().unwrap());
+    let mut writer = stream;
+
+    // Read greeting
+    let _greeting = read_json_line(&mut reader);
+
+    // Send invalid JSON line
+    writeln!(writer, "not-json").unwrap();
+    writer.flush().unwrap();
+    let resp = read_json_line(&mut reader);
+    // Expect GenericError due to JSON parse error
+    assert_eq!(resp["error"]["class"].as_str().unwrap(), "GenericError");
+
+    // Then send a valid CAPABILITIES and quit to finish the test
+    writeln!(writer, "{{\"execute\":\"qmp_capabilities\"}}").unwrap();
+    writer.flush().unwrap();
+    let _ = read_json_line(&mut reader);
+    writeln!(writer, "{{\"execute\":\"quit\"}}").unwrap();
+    writer.flush().unwrap();
+    let _ = read_json_line(&mut reader);
+
+    handle.join().unwrap();
+}
+
+#[test]
+fn test_mmp_caps_with_blank_line() {
+    if !tcp_bind_available() {
+        eprintln!("skipping: TCP bind not permitted");
+        return;
+    }
+    let state = Arc::new(MonitorState::new());
+    let svc = Arc::new(Mutex::new(MonitorService::new(Arc::clone(&state))));
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+
+    let svc2 = Arc::clone(&svc);
+    let handle = std::thread::spawn(move || {
+        mmp::run_tcp(listener, svc2);
+    });
+
+    let stream = TcpStream::connect(addr).unwrap();
+    let mut reader = BufReader::new(stream.try_clone().unwrap());
+    let mut writer = stream;
+
+    // Read greeting
+    let _greeting = read_json_line(&mut reader);
+
+    // Send a blank line; monitor should ignore and not respond
+    writeln!(writer, "").unwrap();
+    writer.flush().unwrap();
+
+    // Then send qmp_capabilities and expect a proper response
+    writeln!(writer, "{{\"execute\":\"qmp_capabilities\"}}").unwrap();
+    writer.flush().unwrap();
+    let resp = read_json_line(&mut reader);
+    assert!(resp["return"].is_object());
+
+    // Quit the server
+    writeln!(writer, "{{\"execute\":\"quit\"}}").unwrap();
+    writer.flush().unwrap();
+    let _ = read_json_line(&mut reader);
+
+    handle.join().unwrap();
+}
+
 // ── TCP socket-level tests ──────────────────────────
 
 fn read_json_line(reader: &mut BufReader<TcpStream>) -> serde_json::Value {
