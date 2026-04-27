@@ -3,6 +3,8 @@ mod accel_timer;
 #[cfg(test)]
 mod backend;
 #[cfg(test)]
+mod cli_kernel;
+#[cfg(test)]
 mod cli_netdev;
 #[cfg(test)]
 mod core;
