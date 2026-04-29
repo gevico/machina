@@ -1402,13 +1402,13 @@ APIs.
               |    (35 tests)     |
               +-------------------+
               |     Frontend      |  decode -> IR -> codegen
-              |   (252 tests)     |  -> execute
+              |   (217 tests)     |  -> execute
               +-------------------+  RV32I/RV64I/RVC/RV32F/Zb*
               |   Integration     |  IR -> liveness -> regalloc
               |   (105 tests)     |  -> codegen -> execute
               +-------------------+
               | System & Hardware |  RISC-V CSR/MMU/PMP, devices
-              |   (277 tests)     |  VirtIO, boot, exec loop
+              |   (312 tests)     |  VirtIO, boot, exec, tools
          +----+-------------------+----+
          |          Unit Tests         |  core(224) + backend(277)
          |         (756 tests)         |  + decode(93) + softfloat(62)
@@ -1467,19 +1467,19 @@ tests/
 | Module | Tests | Share | Description |
 |--------|-------|-------|-------------|
 | backend | 277 | 19.4% | x86-64 instruction encoding, code buffer |
-| frontend | 252 | 17.7% | RISC-V instruction execution (RV32I/RV64I/RVC/RV32F/Zb*) |
 | core | 224 | 15.7% | IR types, Opcode, Temp, Label, Op, Context, Address |
+| frontend | 217 | 15.2% | RISC-V instruction execution (RV32I/RV64I/RVC/RV32F/Zb*, excl. difftest) |
 | hw_* | 108 | 7.6% | Device models: PLIC, ACLINT, UART, QDev, SysBus, FDT |
 | integration | 105 | 7.4% | IR --> codegen --> execute full pipeline |
 | decode | 93 | 6.5% | .decode parsing, code generation, field extraction |
+| other | 91 | 6.4% | Timer, CLI netdev, memory region, monitor, softmmu, CPU manager, tools, trace |
 | softfloat | 62 | 4.4% | IEEE 754 floating-point operations |
 | gdbstub | 57 | 4.0% | GDB remote protocol handling |
-| disas_bitmanip | 43 | 3.0% | Disassembler and bit-manipulation tests |
 | virtio | 44 | 3.1% | VirtIO MMIO transport, block, and net devices |
-| exec | 31 | 2.2% | TB cache, execution loop, multi-threaded vCPU |
+| disas_bitmanip | 43 | 3.0% | Disassembler and bit-manipulation tests |
 | riscv_* | 38 | 2.7% | CSR, MMU, PMP, exception handling |
 | difftest | 35 | 2.5% | machina vs QEMU differential comparison |
-| other | 56 | 3.9% | Monitor, softmmu, system, tools, trace |
+| exec | 31 | 2.2% | TB cache, execution loop, multi-threaded vCPU |
 
 ---
 
@@ -1572,7 +1572,7 @@ cargo test -p machina-tests integration::
 
 ---
 
-### 6. Frontend Instruction Tests (252 tests)
+### 6. Frontend Instruction Tests (217 tests)
 
 **Source file**: `tests/src/frontend/mod.rs`
 

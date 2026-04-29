@@ -1327,13 +1327,13 @@ Machina 采用分层测试策略，从底层数据结构到完整的全系统模
               |    (35 tests)     |
               +-------------------+
               |     Frontend      |  decode -> IR -> codegen
-              |   (252 tests)     |  -> execute
+              |   (217 tests)     |  -> execute
               +-------------------+  RV32I/RV64I/RVC/RV32F/Zb*
               |   Integration     |  IR -> liveness -> regalloc
               |   (105 tests)     |  -> codegen -> execute
               +-------------------+
               | System & Hardware |  RISC-V CSR/MMU/PMP, devices
-              |   (277 tests)     |  VirtIO, boot, exec loop
+              |   (312 tests)     |  VirtIO, boot, exec, tools
          +----+-------------------+----+
          |          Unit Tests         |  core(224) + backend(277)
          |         (756 tests)         |  + decode(93) + softfloat(62)
@@ -1392,19 +1392,19 @@ tests/
 | 模块 | 测试数 | 占比 | 说明 |
 |------|--------|------|------|
 | backend | 277 | 19.4% | x86-64 指令编码、代码缓冲区 |
-| frontend | 252 | 17.7% | RISC-V 指令执行（RV32I/RV64I/RVC/RV32F/Zb*） |
 | core | 224 | 15.7% | IR 类型、Opcode、Temp、Label、Op、Context、Address |
+| frontend | 217 | 15.2% | RISC-V 指令执行（RV32I/RV64I/RVC/RV32F/Zb*，不含 difftest） |
 | hw_* | 108 | 7.6% | 设备模型：PLIC、ACLINT、UART、QDev、SysBus、FDT |
 | integration | 105 | 7.4% | IR --> codegen --> 执行全流水线 |
 | decode | 93 | 6.5% | .decode 解析、代码生成、字段提取 |
+| 其他 | 91 | 6.4% | 定时器、CLI netdev、内存区域、控制台、softmmu、CPU 管理器、工具、跟踪 |
 | softfloat | 62 | 4.4% | IEEE 754 浮点运算 |
 | gdbstub | 57 | 4.0% | GDB 远程协议处理 |
-| disas_bitmanip | 43 | 3.0% | 反汇编器和位操作测试 |
 | virtio | 44 | 3.1% | VirtIO MMIO 传输、块和网络设备 |
-| exec | 31 | 2.2% | TB 缓存、执行循环、多 vCPU |
+| disas_bitmanip | 43 | 3.0% | 反汇编器和位操作测试 |
 | riscv_* | 38 | 2.7% | CSR、MMU、PMP、异常处理 |
 | difftest | 35 | 2.5% | machina vs QEMU 差分对比 |
-| 其他 | 56 | 3.9% | 控制台、softmmu、系统、工具、跟踪 |
+| exec | 31 | 2.2% | TB 缓存、执行循环、多 vCPU |
 
 ---
 
@@ -1495,7 +1495,7 @@ cargo test -p machina-tests integration::
 
 ---
 
-### 6. 前端指令测试（252 tests）
+### 6. 前端指令测试（217 tests）
 
 **源文件**：`tests/src/frontend/mod.rs`
 
