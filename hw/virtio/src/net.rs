@@ -375,9 +375,11 @@ impl VirtioNet {
                 .checked_sub(ram_base)
                 .and_then(|o| o.checked_add(2))
             {
-                Some(o) if o.checked_add(2).is_some_and(
-                    |end| end <= ram_size,
-                ) => o,
+                Some(o)
+                    if o.checked_add(2).is_some_and(|end| end <= ram_size) =>
+                {
+                    o
+                }
                 _ => return 0,
             };
             // SAFETY: bounds-checked above.
@@ -622,11 +624,7 @@ unsafe fn fill_rx_queue_raw(
             .checked_sub(ram_base)
             .and_then(|o| o.checked_add(2))
         {
-            Some(o) if o.checked_add(2)
-                .is_some_and(|end| end <= ram_size) =>
-            {
-                o
-            }
+            Some(o) if o.checked_add(2).is_some_and(|end| end <= ram_size) => o,
             _ => return 0,
         };
         // SAFETY: bounds-checked above.

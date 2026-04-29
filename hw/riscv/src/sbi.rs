@@ -67,6 +67,7 @@ fn is_supported_eid(eid: u64) -> bool {
             | EID_IPI
             | EID_RFENCE
             | EID_SRST
+            | EID_DBCN
     )
 }
 
