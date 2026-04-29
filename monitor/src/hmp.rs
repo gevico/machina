@@ -27,15 +27,15 @@ pub fn handle_line(
     match cmd {
         "info" => handle_info(arg, svc),
         "stop" => {
-            svc.lock().unwrap().stop();
+            svc.lock().expect("monitor mutex poisoned").stop();
             Some(String::new())
         }
         "cont" | "c" => {
-            svc.lock().unwrap().cont();
+            svc.lock().expect("monitor mutex poisoned").cont();
             Some(String::new())
         }
         "quit" | "q" => {
-            svc.lock().unwrap().quit();
+            svc.lock().expect("monitor mutex poisoned").quit();
             None // signals exit
         }
         "help" | "?" => Some(help_text()),
@@ -44,7 +44,7 @@ pub fn handle_line(
 }
 
 fn handle_info(arg: &str, svc: &Arc<Mutex<MonitorService>>) -> Option<String> {
-    let s = svc.lock().unwrap();
+    let s = svc.lock().expect("monitor mutex poisoned");
     match arg.trim() {
         "status" => {
             let running = s.query_status();
