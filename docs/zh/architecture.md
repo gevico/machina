@@ -46,7 +46,7 @@ machina/
 +-- tools/irdump/   # IR 转储工具
 +-- tools/irbackend/# 后端测试工具
 +-- tests/          # 测试层：单元、集成、difftest、多 vCPU 并发
-+-- tests/mtest/    # 机器级测试
++-- tests/mtest/    # 机器级测试 crate（占位）
 ```
 
 **设计意图**：遵循 QEMU 的 `include/tcg/`（定义）与 `tcg/`（实现）分离原则。`machina-core` 是纯粹的数据定义，不包含任何平台相关代码或 `unsafe`，`machina-guest-riscv` 和 `machina-accel`（含优化器）都只需依赖 `machina-core`。`decode` 是独立的构建时工具 crate，解析 QEMU 风格的 `.decode` 文件并生成 Rust 解码器代码。`memory/` 和 `hw/` 层提供全系统仿真所需的地址空间模型和设备树。测试独立成 crate 是为了保持源码文件干净，且外部 crate 测试能验证公共 API 的完整性。

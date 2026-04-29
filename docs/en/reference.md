@@ -1454,12 +1454,9 @@ tests/
 |   +-- riscv_*.rs                # RISC-V subsystem tests (38)
 |   +-- system_cpu_manager.rs     # CPU manager tests (6)
 |   +-- ...                       # Other modules
-+-- mtest/                        # mtest test firmware
-    +-- Makefile
-    +-- src/
-        +-- uart_echo.S           # UART loopback test
-        +-- timer_irq.S           # Timer interrupt test
-        +-- boot_hello.S          # Minimal boot test
++-- mtest/                        # Placeholder crate (0 tests)
+    +-- Cargo.toml
+    +-- src/lib.rs                # Empty; reserved for future use
 ```
 
 #### Test Distribution by Module
@@ -1791,44 +1788,30 @@ bit patterns.
 
 ---
 
-### 8. Machine-Level Tests (mtest Framework)
+### 8. Hardware and System Tests
 
-**Directory**: `tests/mtest/`
+Hardware and system tests verify device models, the reference
+machine platform, and end-to-end tool integration. Tests live
+in individual `hw_*.rs` modules under `tests/src/`, plus
+`hw_ref_machine.rs` for platform-level tests and `tools.rs`
+for smoke/integration tests against the machina binary.
 
-mtest is machina's full system-level test framework. It runs
-bare-metal firmware inside a complete virtual machine environment,
-verifying end-to-end correctness of device models, interrupt
-controllers, memory-mapped I/O, and boot flows.
+> The `tests/mtest/` crate exists as a placeholder (0 tests).
+> It is reserved for future bare-metal firmware tests.
 
-#### 8.1 Architecture Overview
+#### 8.1 Test Modules
 
-```
-+------------------+     +------------------+
-|   mtest runner   |     |  machina binary  |
-|  (Rust test fn)  |---->|  (full VM boot)  |
-+------------------+     +--------+---------+
-                                  |
-                    +-------------+-------------+
-                    |             |             |
-                    v             v             v
-              +---------+  +-----------+  +----------+
-              |  UART   |  |   CLINT   |  |  Memory  |
-              | (ns16550)|  |  (timer)  |  |  (DRAM)  |
-              +---------+  +-----------+  +----------+
-                    |             |             |
-                    v             v             v
-              +---------+  +-----------+  +----------+
-              | stdout  |  |  IRQ trap |  |  R/W ok  |
-              | capture |  |  handler  |  |  verify  |
-              +---------+  +-----------+  +----------+
-```
-
-#### 8.2 Test Categories
-
-| Category | Tests | Description |
-|----------|-------|-------------|
-| Device models | 20 | UART register read/write, CLINT MMIO, PLIC dispatch |
-| MMIO dispatch | 10 | AddressSpace routing, overlapping regions, unmapped access |
-| Boot flow | 8 | Minimal firmware loading, PC reset vector, M-mode initialization |
-| Interrupts | 6 | Timer interrupt trigger and response, external interrupt routing |
-| Multi-core | 4 | SMP startup, IPI send and receive |
+| Module | Tests | Description |
+|--------|-------|-------------|
+| hw_ref_machine | 31 | RefMachine init, memory map, FDT, IRQ wiring, boot, UART, VirtIO, PLIC, multi-hart |
+| hw_uart | 12 | UART 16550A register read/write, TX/RX, FIFO |
+| hw_aclint | 13 | ACLINT timer MMIO, IPI, mtime/mtimecmp |
+| hw_plic | 9 | PLIC priority, pending, enable, claim/complete |
+| hw_qdev | 8 | QDev object lifecycle, property, realize |
+| hw_sysbus | 7 | SysBus MMIO mapping, device attachment |
+| hw_irq | 7 | IRQ line raise/lower, sink/source wiring |
+| hw_chardev | 7 | Character device backend interface |
+| hw_clock | 6 | Clock frequency, scaling |
+| hw_loader | 5 | ELF/binary loader, kernel/initrd loading |
+| hw_fdt | 3 | FDT generation and node structure |
+| tools | 7 | irdump, irbackend, SBI smoke boot, sifive_test |

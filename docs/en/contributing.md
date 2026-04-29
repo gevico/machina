@@ -857,7 +857,7 @@ cargo test -p machina-tests decode::      # Decode module
 cargo test -p machina-tests frontend::    # Frontend tests
 cargo test -p machina-tests integration:: # Integration tests
 cargo test -p machina-tests difftest      # Difftests only
-cargo test -p machina-tests machine::     # Machine-level
+cargo test -p machina-tests hw_           # Hardware tests
 
 # Run a single test
 cargo test -- test_addi
@@ -1087,44 +1087,38 @@ fn test_uart_tx_fifo() {
 }
 ```
 
-#### Boot Tests
+#### Platform Tests
 
-Boot tests load bare-metal firmware in a complete VM and
-verify the full path from reset to output:
+Platform tests use `RefMachine::new()` to construct a full
+virtual machine and verify device wiring, memory layout, FDT
+generation, and boot state:
 
 ```rust
 #[test]
-fn test_boot_hello() {
-    let vm = MachineBuilder::new()
-        .memory_size(64 * 1024 * 1024)
-        .load_firmware(
-            "tests/mtest/bin/boot_hello.bin",
-        )
-        .build();
-    let output =
-        vm.run_until_halt(Duration::from_secs(5));
-    assert_eq!(
-        output.uart_output(),
-        "Hello from M-mode!\n",
-    );
-    assert_eq!(output.exit_code(), 0);
+fn test_ref_machine_init() {
+    let mut m = RefMachine::new();
+    m.init(&default_opts()).expect("init failed");
+    assert_eq!(m.cpu_count(), 1);
+    assert_eq!(m.ram_size(), 128 * 1024 * 1024);
 }
 ```
+
+See `tests/src/hw_ref_machine.rs` for 31 platform tests.
 
 #### Running Commands
 
 ```bash
-# All machine-level tests
-cargo test -p machina-tests machine::
+# All hardware tests
+cargo test -p machina-tests hw_
 
-# Device model tests only
-cargo test -p machina-tests machine::device
+# Reference machine tests only
+cargo test -p machina-tests hw_ref_machine::
 
-# Boot flow tests only
-cargo test -p machina-tests machine::boot
+# UART tests only
+cargo test -p machina-tests hw_uart::
 
-# Build mtest firmware (requires cross compiler)
-cd tests/mtest && make
+# Tool smoke tests
+cargo test -p machina-tests tools::
 ```
 
 ### Adding New Tests
@@ -1163,15 +1157,13 @@ fn test_c_new() {
 
 See "Adding New Difftests" earlier in this part.
 
-#### Adding a Machine-Level Test
+#### Adding a Hardware/Platform Test
 
-1. Create a bare-metal assembly or C firmware source file
-   under `tests/mtest/src/`
-2. Add build rules to `tests/mtest/Makefile`
-3. Add a corresponding Rust test function under
-   `tests/src/machine/`
-4. Use `MachineBuilder` to construct a VM instance and verify
-   output
+1. Add a new `hw_<device>.rs` module under `tests/src/`
+2. Declare the module in `tests/src/lib.rs`
+3. For device-level tests, instantiate the device directly
+4. For platform-level tests, use `RefMachine::new()` and
+   `MachineOpts`
 
 **Device test template**:
 
@@ -1184,21 +1176,14 @@ fn test_new_device_register() {
 }
 ```
 
-**Boot test template**:
+**Platform test template**:
 
 ```rust
 #[test]
-fn test_new_firmware() {
-    let vm = MachineBuilder::new()
-        .memory_size(64 * 1024 * 1024)
-        .load_firmware(
-            "tests/mtest/bin/new_test.bin",
-        )
-        .build();
-    let output =
-        vm.run_until_halt(Duration::from_secs(5));
-    assert!(
-        output.uart_output().contains("PASS"),
-    );
+fn test_new_platform_feature() {
+    let mut m = RefMachine::new();
+    m.init(&default_opts()).expect("init failed");
+    let as_ = m.address_space();
+    // Verify device MMIO, FDT nodes, IRQ wiring, etc.
 }
 ```

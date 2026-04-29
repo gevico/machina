@@ -48,7 +48,7 @@ machina/
 +-- tools/irdump/   # IR dump tool
 +-- tools/irbackend/# Backend test tool
 +-- tests/          # Test layer: unit, integration, difftest, multi-vCPU
-+-- tests/mtest/    # Machine-level tests
++-- tests/mtest/    # Machine-level test crate (placeholder)
 ```
 
 **Design intent**: Following QEMU's separation principle between `include/tcg/` (definitions) and `tcg/` (implementation). `machina-core` is a pure data definition crate containing no platform-specific code or `unsafe`. Both `machina-guest-riscv` and `machina-accel` (including the optimizer) only need to depend on `machina-core`. `decode` is a standalone build-time tool crate that parses QEMU-style `.decode` files and generates Rust decoder code. The `memory/` and `hw/` layers provide the address space model and device tree required for full-system emulation. Tests are separated into their own crate to keep source files clean, and external crate tests can verify the completeness of public APIs.

@@ -798,7 +798,7 @@ cargo test -p machina-tests decode::      # 仅 decode 模块
 cargo test -p machina-tests frontend::    # 仅前端指令测试
 cargo test -p machina-tests integration:: # 仅集成测试
 cargo test -p machina-tests difftest      # 仅差分测试
-cargo test -p machina-tests machine::     # 仅机器级测试
+cargo test -p machina-tests hw_           # 仅硬件测试
 
 # 运行单个测试
 cargo test -- test_addi
@@ -1019,44 +1019,37 @@ fn test_uart_tx_fifo() {
 }
 ```
 
-#### 引导测试
+#### 平台测试
 
-引导测试在完整 VM 中加载裸机固件，验证从复位到输出
-的全路径：
+平台测试使用 `RefMachine::new()` 构造完整虚拟机，
+验证设备接线、内存布局、FDT 生成和启动状态：
 
 ```rust
 #[test]
-fn test_boot_hello() {
-    let vm = MachineBuilder::new()
-        .memory_size(64 * 1024 * 1024)
-        .load_firmware(
-            "tests/mtest/bin/boot_hello.bin",
-        )
-        .build();
-    let output =
-        vm.run_until_halt(Duration::from_secs(5));
-    assert_eq!(
-        output.uart_output(),
-        "Hello from M-mode!\n",
-    );
-    assert_eq!(output.exit_code(), 0);
+fn test_ref_machine_init() {
+    let mut m = RefMachine::new();
+    m.init(&default_opts()).expect("init failed");
+    assert_eq!(m.cpu_count(), 1);
+    assert_eq!(m.ram_size(), 128 * 1024 * 1024);
 }
 ```
+
+详见 `tests/src/hw_ref_machine.rs`（31 个平台测试）。
 
 #### 运行命令
 
 ```bash
-# 全部机器级测试
-cargo test -p machina-tests machine::
+# 全部硬件测试
+cargo test -p machina-tests hw_
 
-# 仅设备模型测试
-cargo test -p machina-tests machine::device
+# 仅参考机器测试
+cargo test -p machina-tests hw_ref_machine::
 
-# 仅引导流程测试
-cargo test -p machina-tests machine::boot
+# 仅 UART 测试
+cargo test -p machina-tests hw_uart::
 
-# 构建 mtest 固件（需要交叉编译器）
-cd tests/mtest && make
+# 工具烟雾测试
+cargo test -p machina-tests tools::
 ```
 
 ### 新增测试指南
@@ -1095,14 +1088,12 @@ fn test_c_new() {
 
 参见本文档「新增 Difftest 指南」一节。
 
-#### 新增机器级测试
+#### 新增硬件/平台测试
 
-1. 在 `tests/mtest/src/` 下创建裸机汇编或 C 固件
-   源文件
-2. 在 `tests/mtest/Makefile` 中添加构建规则
-3. 在 `tests/src/machine/` 下添加对应的 Rust 测试
-   函数
-4. 使用 `MachineBuilder` 构造 VM 实例并验证输出
+1. 在 `tests/src/` 下新建 `hw_<device>.rs` 模块
+2. 在 `tests/src/lib.rs` 中声明该模块
+3. 设备级测试直接实例化设备
+4. 平台级测试使用 `RefMachine::new()` 和 `MachineOpts`
 
 **设备测试模板**：
 
@@ -1115,21 +1106,14 @@ fn test_new_device_register() {
 }
 ```
 
-**引导测试模板**：
+**平台测试模板**：
 
 ```rust
 #[test]
-fn test_new_firmware() {
-    let vm = MachineBuilder::new()
-        .memory_size(64 * 1024 * 1024)
-        .load_firmware(
-            "tests/mtest/bin/new_test.bin",
-        )
-        .build();
-    let output =
-        vm.run_until_halt(Duration::from_secs(5));
-    assert!(
-        output.uart_output().contains("PASS"),
-    );
+fn test_new_platform_feature() {
+    let mut m = RefMachine::new();
+    m.init(&default_opts()).expect("init failed");
+    let as_ = m.address_space();
+    // 验证设备 MMIO、FDT 节点、IRQ 接线等
 }
 ```

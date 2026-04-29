@@ -1379,12 +1379,9 @@ tests/
 |   +-- riscv_*.rs                # RISC-V 子系统测试 (38)
 |   +-- system_cpu_manager.rs     # CPU 管理器测试 (6)
 |   +-- ...                       # 其他模块
-+-- mtest/                        # mtest 测试固件
-    +-- Makefile
-    +-- src/
-        +-- uart_echo.S           # UART 回环测试
-        +-- timer_irq.S           # Timer 中断测试
-        +-- boot_hello.S          # 最小引导测试
++-- mtest/                        # 占位 crate（0 测试）
+    +-- Cargo.toml
+    +-- src/lib.rs                # 空；预留未来使用
 ```
 
 #### 模块测试分布
@@ -1708,43 +1705,29 @@ x3 不能作为测试寄存器，因为 QEMU 侧的 `la gp, save_area`
 
 ---
 
-### 8. 机器级测试（mtest 框架）
+### 8. 硬件和系统测试
 
-**目录**：`tests/mtest/`
+硬件和系统测试验证设备模型、参考机器平台和端到端工具集成。
+测试位于 `tests/src/` 下的各 `hw_*.rs` 模块中，
+`hw_ref_machine.rs` 用于平台级测试，`tools.rs` 用于
+烟雾/集成测试。
 
-mtest 是 machina 的全系统级测试框架，在完整的虚拟机环境中
-运行裸机固件，验证设备模型、中断控制器、内存映射 I/O 以及
-引导流程的端到端正确性。
+> `tests/mtest/` crate 目前为占位（0 测试），
+> 预留用于未来裸机固件测试。
 
-#### 8.1 架构概览
+#### 8.1 测试模块
 
-```
-+------------------+     +------------------+
-|   mtest runner   |     |  machina binary  |
-|  (Rust test fn)  |---->|  (full VM boot)  |
-+------------------+     +--------+---------+
-                                  |
-                    +-------------+-------------+
-                    |             |             |
-                    v             v             v
-              +---------+  +-----------+  +----------+
-              |  UART   |  |   CLINT   |  |  Memory  |
-              | (ns16550)|  |  (timer)  |  |  (DRAM)  |
-              +---------+  +-----------+  +----------+
-                    |             |             |
-                    v             v             v
-              +---------+  +-----------+  +----------+
-              | stdout  |  |  IRQ trap |  |  R/W ok  |
-              | capture |  |  handler  |  |  verify  |
-              +---------+  +-----------+  +----------+
-```
-
-#### 8.2 测试类别
-
-| 类别 | 测试数 | 说明 |
+| 模块 | 测试数 | 说明 |
 |------|--------|------|
-| 设备模型 | 20 | UART 寄存器读写、CLINT MMIO、PLIC 分发 |
-| MMIO 分发 | 10 | AddressSpace 路由、重叠区间、未映射访问 |
-| 引导流程 | 8 | 最小固件加载、PC 复位向量、M-mode 初始化 |
-| 中断 | 6 | Timer 中断触发与响应、外部中断路由 |
-| 多核 | 4 | SMP 启动、IPI 发送与接收 |
+| hw_ref_machine | 31 | RefMachine 初始化、内存映射、FDT、IRQ 接线、启动、UART、VirtIO、PLIC、多核 |
+| hw_uart | 12 | UART 16550A 寄存器读写、TX/RX、FIFO |
+| hw_aclint | 13 | ACLINT 定时器 MMIO、IPI、mtime/mtimecmp |
+| hw_plic | 9 | PLIC 优先级、pending、enable、claim/complete |
+| hw_qdev | 8 | QDev 对象生命周期、属性、realize |
+| hw_sysbus | 7 | SysBus MMIO 映射、设备挂载 |
+| hw_irq | 7 | IRQ 线 raise/lower、sink/source 接线 |
+| hw_chardev | 7 | 字符设备后端接口 |
+| hw_clock | 6 | 时钟频率、缩放 |
+| hw_loader | 5 | ELF/二进制加载器、内核/initrd 加载 |
+| hw_fdt | 3 | FDT 生成和节点结构 |
+| tools | 7 | irdump、irbackend、SBI 烟雾启动、sifive_test |
