@@ -76,8 +76,8 @@ body:
       options:
         - label: >
             I confirmed the agent has fully read the relevant
-            `docs/` content (design, coding-style, testing,
-            backend-specific docs, etc.) before preparing
+            `docs/` content (architecture, reference,
+            contributing, etc.) before preparing
             this feature request.
           required: false
   - type: checkboxes

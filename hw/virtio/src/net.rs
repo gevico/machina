@@ -370,10 +370,18 @@ impl VirtioNet {
             unsafe { queue.read_avail_idx(ram, ram_base, ram_size) };
         let mut processed = 0u32;
         let mut used_idx = {
-            let off = queue.used_addr + 2 - ram_base;
-            if off + 2 > ram_size {
-                return 0;
-            }
+            let off = match queue
+                .used_addr
+                .checked_sub(ram_base)
+                .and_then(|o| o.checked_add(2))
+            {
+                Some(o)
+                    if o.checked_add(2).is_some_and(|end| end <= ram_size) =>
+                {
+                    o
+                }
+                _ => return 0,
+            };
             // SAFETY: bounds-checked above.
             unsafe { (ram.add(off as usize) as *const u16).read_unaligned() }
         };
@@ -396,7 +404,12 @@ impl VirtioNet {
             let mut pkt = Vec::new();
             for desc in &chain {
                 let off = match desc.addr.checked_sub(ram_base) {
-                    Some(o) if o + desc.len as u64 <= ram_size => o,
+                    Some(o)
+                        if o.checked_add(desc.len as u64)
+                            .is_some_and(|e| e <= ram_size) =>
+                    {
+                        o
+                    }
                     _ => continue,
                 };
                 // SAFETY: bounds-checked above.
@@ -606,10 +619,14 @@ unsafe fn fill_rx_queue_raw(
     }
 
     let mut used_idx = {
-        let off = queue.used_addr + 2 - ram_base;
-        if off + 2 > ram_size {
-            return 0;
-        }
+        let off = match queue
+            .used_addr
+            .checked_sub(ram_base)
+            .and_then(|o| o.checked_add(2))
+        {
+            Some(o) if o.checked_add(2).is_some_and(|end| end <= ram_size) => o,
+            _ => return 0,
+        };
         // SAFETY: bounds-checked above.
         unsafe { (ram.add(off as usize) as *const u16).read_unaligned() }
     };
@@ -638,7 +655,12 @@ unsafe fn fill_rx_queue_raw(
             continue;
         }
         let off = match desc.addr.checked_sub(ram_base) {
-            Some(o) if o + desc.len as u64 <= ram_size => o,
+            Some(o)
+                if o.checked_add(desc.len as u64)
+                    .is_some_and(|e| e <= ram_size) =>
+            {
+                o
+            }
             _ => continue,
         };
         let copy_len = remaining.len().min(desc.len as usize);

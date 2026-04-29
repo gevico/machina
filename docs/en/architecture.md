@@ -1,10 +1,14 @@
-# Machina Design Document
+# Machina Architecture Document
+
+> Target audience: developers implementing or extending machina
+> internals, with familiarity in JIT compilers, ISA emulation,
+> or QEMU architecture.
 
 ## 1. Overview
 
 Machina is a RISC-V full-system emulator that reimplements QEMU's TCG (Tiny Code Generator) dynamic binary translation engine in Rust. It translates guest architecture instructions into host machine code at runtime, and provides complete device models, a memory subsystem, and interrupt controllers to support full-system emulation.
 
-For the current MOM device-model architecture, see `docs/en/mom.md`.
+For the current MOM device-model architecture, see [Device Model Reference](reference.md#part-3-device-model-reference).
 
 ```
 +-------------+    +------------+    +--------+    +-----------+    +----------+
@@ -44,7 +48,7 @@ machina/
 +-- tools/irdump/   # IR dump tool
 +-- tools/irbackend/# Backend test tool
 +-- tests/          # Test layer: unit, integration, difftest, multi-vCPU
-+-- tests/mtest/    # Machine-level tests
++-- tests/mtest/    # Machine-level test crate (placeholder)
 ```
 
 **Design intent**: Following QEMU's separation principle between `include/tcg/` (definitions) and `tcg/` (implementation). `machina-core` is a pure data definition crate containing no platform-specific code or `unsafe`. Both `machina-guest-riscv` and `machina-accel` (including the optimizer) only need to depend on `machina-core`. `decode` is a standalone build-time tool crate that parses QEMU-style `.decode` files and generates Rust decoder code. The `memory/` and `hw/` layers provide the address space model and device tree required for full-system emulation. Tests are separated into their own crate to keep source files clean, and external crate tests can verify the completeness of public APIs.

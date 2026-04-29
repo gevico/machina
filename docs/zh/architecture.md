@@ -1,10 +1,12 @@
-# Machina 设计文档
+# Machina 架构文档
+
+> 目标读者：实现或扩展 machina 内部功能的开发者，需熟悉 JIT 编译器、ISA 模拟或 QEMU 架构。
 
 ## 1. 概述
 
 Machina 是一个 RISC-V 全系统仿真器，使用 Rust 重新实现了 QEMU 的 TCG（Tiny Code Generator）动态二进制翻译引擎。在运行时将客户架构指令转换为宿主机器码，并提供完整的设备模型、内存子系统和中断控制器，以支持全系统仿真。
 
-当前 MOM 设备模型架构说明见 `docs/zh/mom.md`。
+当前 MOM 设备模型架构说明见[设备模型参考](reference.md#part-3-设备模型参考)。
 
 ```
 +-------------+    +------------+    +--------+    +-----------+    +----------+
@@ -44,7 +46,7 @@ machina/
 +-- tools/irdump/   # IR 转储工具
 +-- tools/irbackend/# 后端测试工具
 +-- tests/          # 测试层：单元、集成、difftest、多 vCPU 并发
-+-- tests/mtest/    # 机器级测试
++-- tests/mtest/    # 机器级测试 crate（占位）
 ```
 
 **设计意图**：遵循 QEMU 的 `include/tcg/`（定义）与 `tcg/`（实现）分离原则。`machina-core` 是纯粹的数据定义，不包含任何平台相关代码或 `unsafe`，`machina-guest-riscv` 和 `machina-accel`（含优化器）都只需依赖 `machina-core`。`decode` 是独立的构建时工具 crate，解析 QEMU 风格的 `.decode` 文件并生成 Rust 解码器代码。`memory/` 和 `hw/` 层提供全系统仿真所需的地址空间模型和设备树。测试独立成 crate 是为了保持源码文件干净，且外部 crate 测试能验证公共 API 的完整性。

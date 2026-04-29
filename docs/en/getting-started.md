@@ -1,9 +1,52 @@
-# Booting RISC-V Linux on Machina
+# Getting Started with Machina
 
-This guide describes how to boot a standard RISC-V Linux
+> Target audience: developers who want to build, run, and boot
+> guest software on machina.
+
+## Quick Start
+
+### Build
+
+```bash
+git clone https://github.com/gevico/machina.git
+cd machina
+make release
+```
+
+### Run
+
+```bash
+# Boot a kernel
+./target/release/machina -nographic -bios none \
+    -kernel path/to/kernel.elf
+
+# With VirtIO block device
+./target/release/machina -nographic \
+    -drive file=path/to/disk.img \
+    -kernel path/to/kernel.elf
+
+# With monitor console (QMP over TCP)
+./target/release/machina -nographic \
+    -monitor tcp:127.0.0.1:4444 \
+    -bios none -kernel path/to/kernel.elf
+```
+
+## Build Commands
+
+| Command | Description |
+|---------|-------------|
+| `make build` | Build all crates (debug) |
+| `make release` | Build all crates (release) |
+| `make test` | Run all tests |
+| `make clippy` | Lint with `-D warnings` |
+| `make fmt` | Auto-format all code |
+
+## Booting RISC-V Linux on Machina
+
+This section describes how to boot a standard RISC-V Linux
 kernel on the machina `riscv64-ref` platform.
 
-## Prerequisites
+### Prerequisites
 
 | Component | Version | Notes |
 |-----------|---------|-------|
@@ -13,7 +56,7 @@ kernel on the machina `riscv64-ref` platform.
 | Root filesystem | initramfs (cpio.gz) | busybox recommended |
 | Cross toolchain | riscv64-linux-gnu-gcc | for building kernel |
 
-## Quick Start
+### Linux Boot Quick Start
 
 ```bash
 # 1. Build machina
@@ -40,9 +83,9 @@ Linux version 6.12.51 ...
 Please press Enter to activate this console.
 ```
 
-## Boot Modes
+### Boot Modes
 
-### Mode 1: OpenSBI (Recommended)
+#### Mode 1: OpenSBI (Recommended)
 
 Use an external OpenSBI `fw_dynamic.bin`:
 
@@ -61,7 +104,7 @@ OpenSBI sources:
 - **Buildroot**: built under `output/host/share/qemu/`
 - **Manual build**: https://github.com/riscv-software-src/opensbi
 
-### Mode 2: Embedded RustSBI
+#### Mode 2: Embedded RustSBI
 
 Omit the `-bios` flag to use the built-in RustSBI v0.4.0:
 
@@ -73,7 +116,7 @@ Omit the `-bios` flag to use the built-in RustSBI v0.4.0:
     -append "earlycon=ns16550a,mmio,0x10000000 console=ttyS0 root=/dev/ram rdinit=/sbin/init"
 ```
 
-### Mode 3: Bare-metal (No SBI)
+#### Mode 3: Bare-metal (No SBI)
 
 For firmware or bare-metal binaries without SBI:
 
@@ -86,7 +129,7 @@ For firmware or bare-metal binaries without SBI:
 
 The binary loads at `0x80000000` and starts in M-mode.
 
-## CLI Options
+### CLI Options
 
 | Flag | Description |
 |------|-------------|
@@ -100,7 +143,7 @@ The binary loads at `0x80000000` and starts in M-mode.
 | `-s` | GDB server on `tcp::1234` |
 | `-S` | Freeze CPU at startup (use with GDB) |
 
-## Kernel Command Line
+### Kernel Command Line
 
 Recommended parameters:
 
@@ -115,7 +158,7 @@ earlycon=ns16550a,mmio,0x10000000 console=ttyS0 root=/dev/ram rdinit=/sbin/init
 | `root=/dev/ram` | Root filesystem is initramfs |
 | `rdinit=/sbin/init` | Init process path in initramfs |
 
-## Building the Kernel
+### Building the Kernel
 
 A minimal kernel config for machina (no modules, no
 network, initramfs):
@@ -136,7 +179,7 @@ make -j$(nproc) Image
 
 The `Image` file is in `arch/riscv/boot/Image`.
 
-## Building the Root Filesystem
+### Building the Root Filesystem
 
 Using busybox for a minimal initramfs:
 
@@ -167,23 +210,23 @@ chmod +x init
 find . | cpio -o --format=newc | gzip > ../rootfs.cpio.gz
 ```
 
-## Platform Details
+### Platform Details
 
 The `riscv64-ref` machine emulates:
 
 | Device | Address | IRQ |
 |--------|---------|-----|
-| MROM (reset vector) | `0x0000_1000` | — |
-| SiFive Test (shutdown) | `0x0010_0000` | — |
+| MROM (reset vector) | `0x0000_1000` | -- |
+| SiFive Test (shutdown) | `0x0010_0000` | -- |
 | ACLINT (timer+IPI) | `0x0200_0000` | MTI/MSI |
 | PLIC (interrupt controller) | `0x0C00_0000` | MEI/SEI |
 | UART 16550A | `0x1000_0000` | 10 |
 | VirtIO MMIO slot 0 | `0x1000_1000` | 1 |
-| DRAM | `0x8000_0000` | — |
+| DRAM | `0x8000_0000` | -- |
 
 ISA: `rv64imafdc_zba_zbb_zbc_zbs_zicsr_zifencei`
 
-## Troubleshooting
+### Troubleshooting
 
 **No console output**: Ensure `-append` includes
 `earlycon=ns16550a,mmio,0x10000000`.
@@ -194,3 +237,13 @@ Zfh, Zbkb, or Vector extensions are not supported.
 
 **Stuck at DMA init**: Upgrade to the latest machina
 (the neg_align fix in PR #23 resolves this).
+
+## Keyboard Shortcuts
+
+In `-nographic` mode, the escape prefix is `Ctrl+A`:
+
+| Key | Action |
+|-----|--------|
+| Ctrl+A, X | Exit emulator |
+| Ctrl+A, C | Toggle monitor console |
+| Ctrl+A, H | Show help |
