@@ -39,8 +39,8 @@ about: Submit a change for review
 Cursor, etc.), please confirm the following.*
 
 - [ ] **Docs read**: I confirmed the agent has fully read the relevant
-      `docs/` content (design, coding-style, testing, backend-specific
-      docs, etc.) before preparing this PR.
+      `docs/` content (architecture, reference, contributing, etc.)
+      before preparing this PR.
 - [ ] **Tests added**: For bug fixes and new features, corresponding
       tests have been added or updated in the `tests/` crate
       (`machina-tests`).

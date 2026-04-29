@@ -57,6 +57,11 @@ make release
 | Ctrl+A, C | 切换 Monitor 控制台 |
 | Ctrl+A, H | 显示帮助 |
 
+## 文档
+
+完整文档提供英文和中文版本：
+**[文档索引](docs/README.md)**
+
 ## 贡献
 
 Machina 是一个 AI Agent 协作开发项目，欢迎人类和 AI Agent 贡献。

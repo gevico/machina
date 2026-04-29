@@ -1,10 +1,14 @@
-# Machina Design Document
+# Machina Architecture Document
+
+> Target audience: developers implementing or extending machina
+> internals, with familiarity in JIT compilers, ISA emulation,
+> or QEMU architecture.
 
 ## 1. Overview
 
 Machina is a RISC-V full-system emulator that reimplements QEMU's TCG (Tiny Code Generator) dynamic binary translation engine in Rust. It translates guest architecture instructions into host machine code at runtime, and provides complete device models, a memory subsystem, and interrupt controllers to support full-system emulation.
 
-For the current MOM device-model architecture, see `docs/en/mom.md`.
+For the current MOM device-model architecture, see `reference.md#device-model-reference`.
 
 ```
 +-------------+    +------------+    +--------+    +-----------+    +----------+

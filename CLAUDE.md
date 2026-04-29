@@ -58,7 +58,7 @@ crate to call.
 - `cargo clippy -- -D warnings` must pass with zero warnings
 - English comments only, and only at key logic points
 
-Full style guide: `docs/en/coding-style.md` / `docs/zh/coding-style.md`
+Full style guide: `docs/en/contributing.md` / `docs/zh/contributing.md`
 
 ## Commit Rules
 
@@ -68,7 +68,7 @@ Full style guide: `docs/en/coding-style.md` / `docs/zh/coding-style.md`
 - Add `Signed-off-by: Name <email>` for commits in this repository
 - No AI-related sign-off lines (e.g. `Co-Authored-By: Claude`)
 
-Full git guidelines: `docs/en/git-guidelines.md` / `docs/zh/git-guidelines.md`
+Full git guidelines: `docs/en/contributing.md#part-4-git-guidelines` / `docs/zh/contributing.md#part-4-git-指南`
 
 ## Testing Rules
 
@@ -80,7 +80,7 @@ Full git guidelines: `docs/en/git-guidelines.md` / `docs/zh/git-guidelines.md`
 - Run the narrowest useful tests while iterating, then full validation before
   finishing
 
-Full testing guide: `docs/en/testing.md` / `docs/zh/testing.md`
+Full testing guide: `docs/en/contributing.md#part-5-testing-guide` / `docs/zh/contributing.md#part-5-测试指南`
 
 ## Documentation
 
@@ -89,17 +89,10 @@ docs under `docs/`. Existing documentation:
 
 | File | Content |
 |------|---------|
-| `coding-style.md` | Line width, formatting, naming conventions |
-| `coding-guidelines.md` | General coding guidelines |
-| `rust-guidelines.md` | Rust-specific guidelines |
-| `git-guidelines.md` | Git commit and PR conventions |
-| `testing.md` | Test organization and policies |
-| `design.md` | Architecture and design docs |
-| `ir-ops.md` | IR opcode reference |
-| `x86_64-backend.md` | x86-64 code generation docs |
-| `linux-boot.md` | Linux boot guide |
-| `mom.md` | Memory management docs |
-| `performance.md` | Performance analysis |
+| `getting-started.md` | Build, run, and boot guide |
+| `architecture.md` | Architecture and design docs |
+| `reference.md` | IR opcodes, x86-64 backend, device model, performance, test architecture |
+| `contributing.md` | Code style, coding/Rust/Git guidelines, testing guide |
 
 ## Quality Gates
 

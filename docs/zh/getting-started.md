@@ -1,9 +1,51 @@
-# 在 Machina 上启动 RISC-V Linux 内核
+# Machina 快速入门
+
+> 目标读者：希望构建、运行和引导客户软件的开发者。
+
+## 快速开始
+
+### 构建
+
+```bash
+git clone https://github.com/gevico/machina.git
+cd machina
+make release
+```
+
+### 运行
+
+```bash
+# 引导内核
+./target/release/machina -nographic -bios none \
+    -kernel path/to/kernel.elf
+
+# 带 VirtIO 块设备
+./target/release/machina -nographic \
+    -drive file=path/to/disk.img \
+    -kernel path/to/kernel.elf
+
+# 带 Monitor 控制台（QMP over TCP）
+./target/release/machina -nographic \
+    -monitor tcp:127.0.0.1:4444 \
+    -bios none -kernel path/to/kernel.elf
+```
+
+## Build Commands
+
+| Command | Description |
+|---------|-------------|
+| `make build` | Build all crates (debug) |
+| `make release` | Build all crates (release) |
+| `make test` | Run all tests |
+| `make clippy` | Lint with `-D warnings` |
+| `make fmt` | Auto-format all code |
+
+## 在 Machina 上启动 RISC-V Linux 内核
 
 本文档介绍如何在 machina `riscv64-ref` 平台上启动标准
 RISC-V Linux 内核。
 
-## 环境要求
+### 环境要求
 
 | 组件 | 版本 | 说明 |
 |------|------|------|
@@ -13,7 +55,7 @@ RISC-V Linux 内核。
 | 根文件系统 | initramfs (cpio.gz) | 推荐 busybox |
 | 交叉编译工具链 | riscv64-linux-gnu-gcc | 编译内核用 |
 
-## 快速开始
+### 快速开始
 
 ```bash
 # 1. 编译 machina
@@ -40,9 +82,9 @@ Linux version 6.12.51 ...
 Please press Enter to activate this console.
 ```
 
-## 启动模式
+### 启动模式
 
-### 模式一：OpenSBI（推荐）
+#### 模式一：OpenSBI（推荐）
 
 使用外部 OpenSBI `fw_dynamic.bin`：
 
@@ -61,7 +103,7 @@ OpenSBI 获取方式：
 - **Buildroot**：编译产物在 `output/host/share/qemu/` 下
 - **手动编译**：https://github.com/riscv-software-src/opensbi
 
-### 模式二：内嵌 RustSBI
+#### 模式二：内嵌 RustSBI
 
 省略 `-bios` 参数即使用内置的 RustSBI v0.4.0：
 
@@ -73,7 +115,7 @@ OpenSBI 获取方式：
     -append "earlycon=ns16550a,mmio,0x10000000 console=ttyS0 root=/dev/ram rdinit=/sbin/init"
 ```
 
-### 模式三：裸机模式（无 SBI）
+#### 模式三：裸机模式（无 SBI）
 
 适用于裸机固件或 riscv-tests：
 
@@ -86,7 +128,7 @@ OpenSBI 获取方式：
 
 二进制文件加载到 `0x80000000`，以 M-mode 启动。
 
-## 命令行参数
+### 命令行参数
 
 | 参数 | 说明 |
 |------|------|
@@ -100,7 +142,7 @@ OpenSBI 获取方式：
 | `-s` | 在 `tcp::1234` 启动 GDB 服务器 |
 | `-S` | 启动时冻结 CPU（配合 GDB 使用） |
 
-## 内核命令行参数
+### 内核命令行参数
 
 推荐参数：
 
@@ -115,7 +157,7 @@ earlycon=ns16550a,mmio,0x10000000 console=ttyS0 root=/dev/ram rdinit=/sbin/init
 | `root=/dev/ram` | 根文件系统为 initramfs |
 | `rdinit=/sbin/init` | initramfs 中 init 进程路径 |
 
-## 编译内核
+### 编译内核
 
 最小内核配置（无模块、无网络、使用 initramfs）：
 
@@ -135,7 +177,7 @@ make -j$(nproc) Image
 
 产出的 `Image` 文件在 `arch/riscv/boot/Image`。
 
-## 制作根文件系统
+### 制作根文件系统
 
 使用 busybox 制作最小 initramfs：
 
@@ -166,7 +208,7 @@ chmod +x init
 find . | cpio -o --format=newc | gzip > ../rootfs.cpio.gz
 ```
 
-## 平台硬件信息
+### 平台硬件信息
 
 `riscv64-ref` 模拟的设备：
 
@@ -182,7 +224,7 @@ find . | cpio -o --format=newc | gzip > ../rootfs.cpio.gz
 
 指令集：`rv64imafdc_zba_zbb_zbc_zbs_zicsr_zifencei`
 
-## 常见问题
+### 常见问题
 
 **没有控制台输出**：确认 `-append` 中包含
 `earlycon=ns16550a,mmio,0x10000000`。
@@ -192,3 +234,13 @@ find . | cpio -o --format=newc | gzip > ../rootfs.cpio.gz
 
 **卡在 DMA 初始化**：请更新到最新版 machina
 （PR #23 中的 neg_align 修复解决了此问题）。
+
+## 快捷键
+
+在 `-nographic` 模式下，转义前缀为 `Ctrl+A`：
+
+| 按键 | 功能 |
+|------|------|
+| Ctrl+A, X | 退出模拟器 |
+| Ctrl+A, C | 切换 Monitor 控制台 |
+| Ctrl+A, H | 显示帮助 |

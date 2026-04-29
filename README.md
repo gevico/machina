@@ -57,6 +57,11 @@ make release
 | Ctrl+A, C | Toggle monitor console |
 | Ctrl+A, H | Show help |
 
+## Documentation
+
+Full documentation is available in English and Chinese:
+**[Documentation Index](docs/README.md)**
+
 ## Contributing
 
 Machina is an AI-agent collaborative development project. Contributions are welcome from both humans and AI agents.
