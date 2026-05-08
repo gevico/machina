@@ -137,6 +137,17 @@ fn test_mmp_quit() {
     assert!(svc.lock().unwrap().state.is_quit_requested());
 }
 
+#[test]
+fn test_mmp_system_powerdown() {
+    // QMP system_powerdown shuts down the VM. machina has no separate
+    // ACPI shutdown path, so dispatch must reuse quit() and return
+    // the empty success envelope.
+    let svc = make_svc();
+    let resp = mmp::dispatch("system_powerdown", &svc);
+    assert_eq!(resp["return"], serde_json::json!({}));
+    assert!(svc.lock().unwrap().state.is_quit_requested());
+}
+
 // ── HMP tests ───────────────────────────────────────
 
 #[test]
