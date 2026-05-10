@@ -101,7 +101,7 @@ fn handle_connection(
         if cmd == "qmp_capabilities" {
             caps_done = true;
         }
-        if cmd == "quit" {
+        if cmd == "quit" || cmd == "system_powerdown" {
             return true;
         }
     }
@@ -127,6 +127,13 @@ pub fn dispatch(cmd: &str, svc: &Arc<Mutex<MonitorService>>) -> Value {
             json!({"return": {}})
         }
         "quit" => {
+            s.quit();
+            json!({"return": {}})
+        }
+        "system_powerdown" => {
+            // QMP system_powerdown shuts down the VM. machina has no
+            // separate ACPI shutdown path, so reuse quit() which signals
+            // the run loop to stop -- semantically equivalent here.
             s.quit();
             json!({"return": {}})
         }
