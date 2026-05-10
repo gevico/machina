@@ -137,6 +137,14 @@ fn test_mmp_quit() {
     assert!(svc.lock().unwrap().state.is_quit_requested());
 }
 
+#[test]
+fn test_mmp_system_powerdown() {
+    let svc = make_svc();
+    let resp = mmp::dispatch("system_powerdown", &svc);
+    assert_eq!(resp["return"], serde_json::json!({}));
+    assert!(svc.lock().unwrap().state.is_quit_requested());
+}
+
 // ── HMP tests ───────────────────────────────────────
 
 #[test]

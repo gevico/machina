@@ -130,6 +130,10 @@ pub fn dispatch(cmd: &str, svc: &Arc<Mutex<MonitorService>>) -> Value {
             s.quit();
             json!({"return": {}})
         }
+        "system_powerdown" => {
+            s.quit();
+            json!({"return": {}})
+        }
         "query-cpus-fast" => {
             let cpus = s.query_cpus();
             let arr: Vec<Value> = cpus
