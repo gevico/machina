@@ -1319,6 +1319,40 @@ fn translated_gcsrwr_and_gcsrrd_access_guest_csr_state() {
 }
 
 #[test]
+fn translated_gcsrxchg_masks_guest_csr_state() {
+    // GCSRXCHG (rj >= 2) is the masked read-modify-write form of the
+    // guest-CSR accessors: rd supplies the new bits and receives the
+    // old value, while rj selects which bits actually change.
+    let mut cpu = LoongArchCpu::new();
+    cpu.gcsr_write(CSR_EENTRY, 0x9000_0000);
+    cpu.write_gpr(6, 0x1000_0000); // rj: mask selects bit 28 only
+    cpu.write_gpr(7, 0x2000_0000); // rd: candidate new value bits
+
+    assert_eq!(run_priv_la(&mut cpu, &[gcsr_insn(CSR_EENTRY, 6, 7)]), 0);
+
+    // rd receives the old CSR value.
+    assert_eq!(cpu.read_gpr(7), 0x9000_0000);
+    // Only the masked bit 28 changes (cleared, since rd's bit 28 is 0);
+    // bit 31 is preserved and rd's unmasked bit 29 is ignored.
+    assert_eq!(cpu.gcsr_read(CSR_EENTRY), 0x8000_0000);
+}
+
+#[test]
+fn translated_gcsrxchg_with_zero_mask_only_reads() {
+    // A zero mask must leave the guest CSR untouched while still
+    // returning the old value into rd.
+    let mut cpu = LoongArchCpu::new();
+    cpu.gcsr_write(CSR_EENTRY, 0x9000_0000);
+    cpu.write_gpr(6, 0); // rj: empty mask
+    cpu.write_gpr(7, 0x2000_0000);
+
+    assert_eq!(run_priv_la(&mut cpu, &[gcsr_insn(CSR_EENTRY, 6, 7)]), 0);
+
+    assert_eq!(cpu.read_gpr(7), 0x9000_0000);
+    assert_eq!(cpu.gcsr_read(CSR_EENTRY), 0x9000_0000);
+}
+
+#[test]
 fn translated_hvcl_raises_hvc_exception() {
     let mut cpu = LoongArchCpu::new();
     cpu.csr_write(CSR_EENTRY, 0x9000_0000);
