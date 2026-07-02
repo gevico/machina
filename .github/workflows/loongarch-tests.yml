@@ -1,0 +1,52 @@
+name: loongarch-tests
+
+# Run the committed LoongArch bare-metal smoke binaries under
+# loongarch64-ref and classify pass/fail/timeout by machina's exit code,
+# mirroring the riscv-tests workflow. The smokes are prebuilt flat
+# binaries (tests/firmware/loongarch_*.bin), so no LoongArch cross
+# toolchain is needed here; to run an external corpus instead, build it
+# with a cached toolchain and set LOONGARCH_TESTS_DIR for the script.
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  loongarch-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout machina
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build and run loongarch-tests on machina
+        run: |
+          chmod +x ./scripts/run-loongarch-tests.sh
+          ./scripts/run-loongarch-tests.sh
+
+      - name: Publish summary
+        if: always()
+        run: |
+          if [ -f target/loongarch-tests/summary.txt ]; then
+            cat target/loongarch-tests/summary.txt >> "${GITHUB_STEP_SUMMARY}"
+          fi
+
+      - name: Upload loongarch-tests artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: loongarch-tests-results
+          path: |
+            target/loongarch-tests/pass.txt
+            target/loongarch-tests/fail.txt
+            target/loongarch-tests/timeout.txt
+            target/loongarch-tests/summary.txt

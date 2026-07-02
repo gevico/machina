@@ -13,8 +13,9 @@ use machina_hw_loongarch::virt_machine::{
     VIRT_FWCFG_BASE, VIRT_FWCFG_SIZE, VIRT_IPI_BASE, VIRT_IPI_SIZE,
     VIRT_LEGACY_IO_BASE, VIRT_LEGACY_IO_SIZE, VIRT_PCH_MSI_BASE,
     VIRT_PCH_MSI_SIZE, VIRT_PCH_PIC_BASE, VIRT_PCH_PIC_SIZE, VIRT_RAM_BASE,
-    VIRT_RTC_BASE, VIRT_RTC_SIZE, VIRT_UART1_BASE, VIRT_UART1_SIZE,
-    VIRT_UART_BASE, VIRT_UART_SIZE, VIRT_VIRTIO_BASE, VIRT_VIRTIO_SIZE,
+    VIRT_RTC_BASE, VIRT_RTC_SIZE, VIRT_TEST_FINISHER_BASE, VIRT_UART1_BASE,
+    VIRT_UART1_SIZE, VIRT_UART_BASE, VIRT_UART_SIZE, VIRT_VIRTIO_BASE,
+    VIRT_VIRTIO_SIZE,
 };
 
 const EFI_SYSTEM_TABLE_SIGNATURE: u64 = 0x5453_5953_2049_4249;
@@ -1184,5 +1185,41 @@ fn task43_direct_boot_rejects_out_of_ram_raw_image() {
     assert!(
         err.to_string().contains("outside LoongArch RAM"),
         "unexpected error: {err}"
+    );
+}
+
+#[test]
+fn direct_boot_reserves_test_finisher_page() {
+    // With enough RAM to cover the finisher's low-physical address, the
+    // EFI memory map must carve out the finisher MMIO page so a guest
+    // kernel never treats it as conventional RAM and corrupts allocations
+    // or accidentally triggers the finisher (#160).
+    let mut opts = default_opts();
+    opts.ram_size = VIRT_TEST_FINISHER_BASE + 0x2000;
+    let (machine, _kernel) = boot_minimal_elf(&mut opts);
+
+    let system_table_addr = machine.cpu().lock().unwrap().read_gpr(6);
+    let memmap_addr = config_table_ptr(
+        &machine,
+        system_table_addr,
+        LINUX_EFI_BOOT_MEMMAP_GUID,
+    );
+    let memmap_descs = read_efi_memmap(&machine, boot_guest_addr(memmap_addr));
+
+    let addr = VIRT_TEST_FINISHER_BASE;
+    let covers = |ranges: &[(u64, u64)]| {
+        ranges
+            .iter()
+            .any(|&(start, size)| start <= addr && addr < start + size)
+    };
+    let reserved = desc_ranges(&memmap_descs, EFI_RESERVED_MEMORY);
+    let conventional = desc_ranges(&memmap_descs, EFI_CONVENTIONAL_MEMORY);
+    assert!(
+        covers(&reserved),
+        "finisher page must be EFI-reserved; reserved={reserved:?}"
+    );
+    assert!(
+        !covers(&conventional),
+        "finisher must not be conventional RAM; got {conventional:?}"
     );
 }

@@ -33,6 +33,7 @@ use crate::interrupt::{
     LOONGARCH_UART_PCH_IRQ, LOONGARCH_VIRTIO_PCH_IRQ_BASE,
 };
 use crate::iocsr::VirtIocsrBus;
+use crate::test_finisher::{LoongArchTestFinisher, LoongArchTestFinisherMmio};
 
 type UartRxCallback = Arc<Mutex<dyn FnMut(u8) + Send>>;
 type LoongArchPFlash = PFlashCfi01<MemBackend>;
@@ -84,6 +85,8 @@ pub const VIRT_VIRTIO_BASE: u64 = 0x1000_8000;
 pub const VIRT_VIRTIO_SIZE: u64 = 0x1000;
 pub const VIRT_FWCFG_BASE: u64 = 0x1E02_0000;
 pub const VIRT_FWCFG_SIZE: u64 = 0x18;
+pub const VIRT_TEST_FINISHER_BASE: u64 = 0x1FE0_8000;
+pub const VIRT_TEST_FINISHER_SIZE: u64 = 0x8;
 pub const VIRT_PCI_CFG_BASE: u64 = 0x00FE_0000_0000;
 pub const VIRT_PCI_HT_CFG_BASE: u64 = 0x0EFE_0000_0000;
 pub const VIRT_PCI_CFG_SIZE: u64 = 0x2000_0000;
@@ -126,6 +129,7 @@ pub struct LoongArchVirtMachine {
     iocsr_bus: Option<Arc<VirtIocsrBus>>,
     virtio_mmio: Option<VirtioMmio>,
     fw_cfg: Option<Arc<FwCfg>>,
+    test_finisher: Option<Arc<LoongArchTestFinisher>>,
     kernel_path: Option<PathBuf>,
     initrd_path: Option<PathBuf>,
     kernel_cmdline: Option<String>,
@@ -156,6 +160,7 @@ impl LoongArchVirtMachine {
             iocsr_bus: None,
             virtio_mmio: None,
             fw_cfg: None,
+            test_finisher: None,
             kernel_path: None,
             initrd_path: None,
             kernel_cmdline: None,
@@ -198,6 +203,14 @@ impl LoongArchVirtMachine {
     #[must_use]
     pub fn uart1(&self) -> Arc<Uart16550> {
         Arc::clone(self.uart1.as_ref().expect("machine not initialized"))
+    }
+
+    /// Install the callback fired when a guest writes the test-finisher
+    /// MMIO register. `pass` is true for a passing result.
+    pub fn install_finish_handler(&self, handler: Box<dyn Fn(bool) + Send>) {
+        if let Some(test_finisher) = &self.test_finisher {
+            test_finisher.set_finish_handler(handler);
+        }
     }
 
     pub fn take_runtime_cpu_state(
@@ -568,6 +581,21 @@ impl Machine for LoongArchVirtMachine {
             ),
             GPA::new(VIRT_LEGACY_IO_BASE),
         );
+
+        // Test-completion device: lets bare-metal ISA tests report
+        // pass/fail by an MMIO write (loongarch64-ref has no other way
+        // to terminate the run cleanly). The callback is installed by
+        // the execution driver at run time.
+        let test_finisher = LoongArchTestFinisher::new();
+        root.add_subregion(
+            MemoryRegion::io(
+                "test-finisher",
+                VIRT_TEST_FINISHER_SIZE,
+                Arc::new(LoongArchTestFinisherMmio(Arc::clone(&test_finisher))),
+            ),
+            GPA::new(VIRT_TEST_FINISHER_BASE),
+        );
+        self.test_finisher = Some(test_finisher);
 
         let fw_cfg = FwCfg::new_named("fw_cfg0");
         let fw_cfg_cpu_count = u16::try_from(opts.cpu_count)

@@ -884,6 +884,20 @@ fn run_loongarch_machine_cycle(
 
     let mut cpu_mgr = CpuManager::new();
     let stop_flag = cpu_mgr.running_flag();
+
+    // Wire the test-finisher device to execution control: a guest MMIO
+    // write records the pass/fail result and stops the CPU loop.
+    let finish_result: Arc<std::sync::Mutex<Option<bool>>> =
+        Arc::new(std::sync::Mutex::new(None));
+    {
+        let slot = Arc::clone(&finish_result);
+        let flag = Arc::clone(&stop_flag);
+        machine.install_finish_handler(Box::new(move |pass| {
+            *slot.lock().unwrap() = Some(pass);
+            flag.store(false, Ordering::SeqCst);
+        }));
+    }
+
     let cpu_states = match machine.take_runtime_cpu_states() {
         Ok(parts) => parts,
         Err(e) => {
@@ -911,6 +925,13 @@ fn run_loongarch_machine_cycle(
     }
 
     let exit = unsafe { cpu_mgr.run(&shared) };
+    if let Some(pass) = finish_result.lock().unwrap().take() {
+        return if pass {
+            Some(ShutdownReason::Pass)
+        } else {
+            Some(ShutdownReason::Fail(1))
+        };
+    }
     loongarch_shutdown_reason(exit)
 }
 

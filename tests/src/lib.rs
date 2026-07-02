@@ -73,6 +73,8 @@ mod hw_k230_wdt;
 #[cfg(test)]
 mod hw_loader;
 #[cfg(test)]
+mod hw_loongarch_test_finisher;
+#[cfg(test)]
 mod hw_misc;
 #[cfg(test)]
 mod hw_mom;

@@ -22,8 +22,9 @@ use crate::virt_machine::{
     VIRT_LEGACY_IPI_BASE, VIRT_LEGACY_IPI_STRIDE, VIRT_PCH_MSI_BASE,
     VIRT_PCH_MSI_SIZE, VIRT_PCH_PIC_BASE, VIRT_PCH_PIC_SIZE, VIRT_PCI_CFG_BASE,
     VIRT_PCI_CFG_SIZE, VIRT_PCI_HT_CFG_BASE, VIRT_RAM_BASE, VIRT_RTC_BASE,
-    VIRT_RTC_SIZE, VIRT_UART1_BASE, VIRT_UART1_SIZE, VIRT_UART_BASE,
-    VIRT_UART_SIZE, VIRT_VIRTIO_BASE, VIRT_VIRTIO_SIZE,
+    VIRT_RTC_SIZE, VIRT_TEST_FINISHER_BASE, VIRT_TEST_FINISHER_SIZE,
+    VIRT_UART1_BASE, VIRT_UART1_SIZE, VIRT_UART_BASE, VIRT_UART_SIZE,
+    VIRT_VIRTIO_BASE, VIRT_VIRTIO_SIZE,
 };
 
 pub const KERNEL_ENTRY_DEFAULT: u64 = 0x9000_0000_0020_0000;
@@ -561,6 +562,11 @@ fn low_ram_reserved_ranges(ram_size: u64, cpu_count: u32) -> Vec<(u64, u64)> {
     push_reserved_range(&mut ranges, VIRT_FLASH1_BASE, VIRT_FLASH1_SIZE);
     push_reserved_range(&mut ranges, VIRT_FWCFG_BASE, VIRT_FWCFG_SIZE);
     push_reserved_range(&mut ranges, VIRT_UART_BASE, VIRT_UART_SIZE);
+    push_reserved_range(
+        &mut ranges,
+        VIRT_TEST_FINISHER_BASE,
+        VIRT_TEST_FINISHER_SIZE,
+    );
     if cpu_count > 1 {
         push_reserved_range(
             &mut ranges,
