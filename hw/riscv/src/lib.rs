@@ -3,6 +3,7 @@ pub mod k230;
 pub mod k230_boot;
 pub mod k230_dtb;
 pub mod k230_gzip_dma;
+pub mod k230_kpu;
 pub mod k230_pufs;
 pub mod ref_machine;
 pub mod sbi;

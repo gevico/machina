@@ -31,6 +31,7 @@ use machina_memory::region::MemoryRegion;
 use crate::k230_gzip_dma::{
     K230GzipDma, K230GzipDmaMmio, K230_GZIP_DMA_MMIO_SIZE,
 };
+use crate::k230_kpu::{K230Kpu, K230KpuCfgMmio, K230KpuL2Mmio};
 use crate::k230_pufs::{K230Pufs, K230PufsMmio, K230_PUFS_MMIO_SIZE};
 
 #[derive(Clone, Copy)]
@@ -412,6 +413,7 @@ pub struct K230Machine {
     sdhcis: Vec<Arc<Sdhci>>,
     gzip_dma: Option<Arc<K230GzipDma>>,
     pufs: Option<Arc<K230Pufs>>,
+    kpu: Option<Arc<K230Kpu>>,
     unimp: Vec<Arc<Unimp>>,
     pub(crate) cpus: Arc<Mutex<Vec<Option<RiscvCpu>>>>,
     pub(crate) shared_mip: Arc<AtomicU64>,
@@ -450,6 +452,7 @@ impl K230Machine {
             sdhcis: Vec::new(),
             gzip_dma: None,
             pufs: None,
+            kpu: None,
             unimp: Vec::new(),
             cpus: Arc::new(Mutex::new(Vec::new())),
             shared_mip: Arc::new(AtomicU64::new(0)),
@@ -660,6 +663,9 @@ impl K230Machine {
         if let Some(pufs) = &self.pufs {
             Self::track_mom_info(&mut tree, pufs.object_info());
         }
+        if let Some(kpu) = &self.kpu {
+            Self::track_mom_info(&mut tree, kpu.object_info());
+        }
         for dev in &self.unimp {
             Self::track_mom_info(
                 &mut tree,
@@ -720,6 +726,28 @@ impl K230Machine {
             Arc::new(K230PufsMmio(Arc::clone(&dev))),
         );
         dev.register_mmio(region, GPA::new(entry.base))?;
+        Ok(dev)
+    }
+
+    fn map_kpu(
+        sysbus: &mut SysBus,
+    ) -> Result<Arc<K230Kpu>, Box<dyn std::error::Error>> {
+        let dev = K230Kpu::new_named("k230-kpu");
+        dev.attach_to_bus(sysbus)?;
+        let cfg = K230_MEMMAP[K230MemMap::KpuCfg as usize];
+        let cfg_region = MemoryRegion::io(
+            "k230-kpu-cfg",
+            cfg.size,
+            Arc::new(K230KpuCfgMmio(Arc::clone(&dev))),
+        );
+        dev.register_mmio(cfg_region, GPA::new(cfg.base))?;
+        let l2 = K230_MEMMAP[K230MemMap::KpuL2Cache as usize];
+        let l2_region = MemoryRegion::io(
+            "k230-kpu-l2-cache",
+            l2.size,
+            Arc::new(K230KpuL2Mmio(Arc::clone(&dev))),
+        );
+        dev.register_mmio(l2_region, GPA::new(l2.base))?;
         Ok(dev)
     }
 
@@ -818,8 +846,6 @@ impl K230Machine {
 
     fn unimp_specs() -> &'static [(K230MemMap, &'static str)] {
         &[
-            (K230MemMap::KpuL2Cache, "kpu.l2-cache"),
-            (K230MemMap::KpuCfg, "kpu_cfg"),
             (K230MemMap::Fft, "fft"),
             (K230MemMap::Ai2d, "2d-engine.ai"),
             (K230MemMap::NonAi2d, "2d-engine.non-ai"),
@@ -1024,6 +1050,7 @@ impl Machine for K230Machine {
 
         let gzip_dma = Self::map_gzip_dma(&mut sysbus)?;
         let pufs = Self::map_pufs(&mut sysbus)?;
+        let kpu = Self::map_kpu(&mut sysbus)?;
 
         let mut unimp = Vec::with_capacity(Self::unimp_specs().len());
         for &(map, name) in Self::unimp_specs() {
@@ -1073,6 +1100,7 @@ impl Machine for K230Machine {
             }
             gzip_dma.realize_onto(&mut sysbus, address_space)?;
             pufs.realize_onto(&mut sysbus, address_space)?;
+            kpu.realize_onto(&mut sysbus, address_space)?;
             for dev in &unimp {
                 dev.realize_onto(&mut sysbus, address_space)?;
             }
@@ -1095,6 +1123,7 @@ impl Machine for K230Machine {
         self.sdhcis = sdhcis;
         self.gzip_dma = Some(gzip_dma);
         self.pufs = Some(pufs);
+        self.kpu = Some(kpu);
         self.unimp = unimp;
         self.sysbus = Some(sysbus);
         self.refresh_mom_tree();
@@ -1123,6 +1152,9 @@ impl Machine for K230Machine {
         }
         if let Some(pufs) = &self.pufs {
             pufs.reset_runtime();
+        }
+        if let Some(kpu) = &self.kpu {
+            kpu.reset_runtime();
         }
         for dev in &self.unimp {
             dev.reset_runtime();

@@ -58,7 +58,8 @@ fn k230_machine_maps_real_devices_and_unimp_windows() {
     assert!(sysbus.mappings().iter().any(|m| m.owner == "uart4"));
     assert!(sysbus.mappings().iter().any(|m| m.owner == "k230-wdt0"));
     assert!(sysbus.mappings().iter().any(|m| m.owner == "k230-wdt1"));
-    assert!(sysbus.mappings().iter().any(|m| m.owner == "kpu.l2-cache"));
+    // The KPU is now a real device (k230-kpu), not an unimp window.
+    assert!(sysbus.mappings().iter().any(|m| m.owner == "k230-kpu"));
     assert!(machine.wdt(K230WdtIndex::Wdt0).is_some());
     assert!(machine.wdt(K230WdtIndex::Wdt1).is_some());
 }

@@ -65,6 +65,8 @@ mod hw_irq;
 #[cfg(test)]
 mod hw_k230_gzip_dma;
 #[cfg(test)]
+mod hw_k230_kpu;
+#[cfg(test)]
 mod hw_k230_machine;
 #[cfg(test)]
 mod hw_k230_pufs;
