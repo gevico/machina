@@ -302,7 +302,29 @@ fn parse_args() -> Result<CliArgs, String> {
                     i += 1;
                     continue;
                 }
+                // On non-Unix hosts virtio-net-device has no backend;
+                // give a specific reason rather than the generic
+                // unsupported-device error below (#85). Match the exact
+                // class only, so unknown names like "virtio-net-device-x"
+                // still get the unsupported-device rejection.
+                #[cfg(not(unix))]
+                if val == "virtio-net-device"
+                    || val.starts_with("virtio-net-device,")
+                {
+                    return Err("-device virtio-net-device requires a Unix \
+                         host (TAP backend)"
+                        .to_string());
+                }
+                // Block devices are wired up via -drive, not -device,
+                // so the value is otherwise ignored. Warn and point at
+                // the right option instead of dropping it silently
+                // (#85).
                 if val.starts_with("virtio-blk-device") {
+                    eprintln!(
+                        "machina: warning: -device virtio-blk-device \
+                         is ignored; configure block devices via \
+                         -drive file=<path>"
+                    );
                     i += 1;
                     continue;
                 }
